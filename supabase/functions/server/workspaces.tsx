@@ -196,13 +196,159 @@ export async function resolveWorkspace(
   return await ensureDefaultWorkspace(user);
 }
 
-// Deletes a workspace, its memberships, and all scoped data keys.
+// Deletes a workspace, its memberships, invitations, and all scoped data keys.
 export async function deleteWorkspace(workspaceId: string) {
   const members = await getMembers(workspaceId);
   for (const m of members) {
     await removeFromUserIndex(m.user_id, workspaceId);
   }
+  const tokens: string[] = (await kv.get(`ws_invites:${workspaceId}`)) ?? [];
+  if (tokens.length) {
+    await kv.mdel(tokens.map((t) => `ws_invite:${t}`));
+    await kv.del(`ws_invites:${workspaceId}`);
+  }
   await kv.mdel(WORKSPACE_DATA_KEYS.map((k) => wsDataKey(workspaceId, k)));
   await kv.del(`ws_members:${workspaceId}`);
   await kv.del(`workspace:${workspaceId}`);
+}
+
+// ── Invitations (Fase 14.2) ───────────────────────────────────────────────────
+// KV layout:
+//   ws_invite:{token}      → Invitation (single-use, expiring token)
+//   ws_invites:{wsId}      → string[] (tokens issued for the workspace)
+
+export type InvitationStatus = "pending" | "accepted" | "revoked" | "expired";
+
+export interface Invitation {
+  token: string;
+  workspace_id: string;
+  workspace_name: string;
+  email: string;
+  role: WorkspaceRole;
+  invited_by: string;
+  status: InvitationStatus;
+  created_at: string;
+  expires_at: string;
+}
+
+export const INVITE_TTL_DAYS = 7;
+
+const randomToken = () => {
+  const bytes = new Uint8Array(24);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+};
+
+export async function getInvitation(token: string): Promise<Invitation | null> {
+  return (await kv.get(`ws_invite:${token}`)) ?? null;
+}
+
+export async function saveInvitation(invitation: Invitation) {
+  await kv.set(`ws_invite:${invitation.token}`, invitation);
+}
+
+// Lazily marks a pending invitation as expired once past its expiry date.
+export async function freshInvitation(
+  invitation: Invitation,
+): Promise<Invitation> {
+  if (
+    invitation.status === "pending" &&
+    new Date(invitation.expires_at) < new Date()
+  ) {
+    const expired = { ...invitation, status: "expired" as InvitationStatus };
+    await saveInvitation(expired);
+    return expired;
+  }
+  return invitation;
+}
+
+export async function listInvitations(
+  workspaceId: string,
+): Promise<Invitation[]> {
+  const tokens: string[] = (await kv.get(`ws_invites:${workspaceId}`)) ?? [];
+  const items: Invitation[] = [];
+  for (const token of tokens) {
+    const invitation = await getInvitation(token);
+    if (invitation) items.push(await freshInvitation(invitation));
+  }
+  return items.sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
+}
+
+export async function createInvitation(
+  workspace: Workspace,
+  inviter: any,
+  email: string,
+  role: WorkspaceRole,
+): Promise<Invitation> {
+  // Re-invite: revoke any previous pending invitation for the same email.
+  const existing = await listInvitations(workspace.id);
+  for (const inv of existing) {
+    if (inv.status === "pending" && inv.email === email) {
+      await saveInvitation({ ...inv, status: "revoked" });
+    }
+  }
+  const now = new Date();
+  const expires = new Date(now);
+  expires.setDate(expires.getDate() + INVITE_TTL_DAYS);
+  const invitation: Invitation = {
+    token: randomToken(),
+    workspace_id: workspace.id,
+    workspace_name: workspace.name,
+    email,
+    role,
+    invited_by: displayName(inviter),
+    status: "pending",
+    created_at: now.toISOString(),
+    expires_at: expires.toISOString(),
+  };
+  await saveInvitation(invitation);
+  const tokens: string[] = (await kv.get(`ws_invites:${workspace.id}`)) ?? [];
+  await kv.set(`ws_invites:${workspace.id}`, [...tokens, invitation.token]);
+  return invitation;
+}
+
+// Sends the invitation email via Resend when RESEND_API_KEY is configured;
+// otherwise logs the link (dev fallback — the API also returns invite_url so
+// the owner can share it manually).
+export async function sendInvitationEmail(
+  invitation: Invitation,
+  inviteUrl: string,
+): Promise<boolean> {
+  const apiKey = Deno.env.get("RESEND_API_KEY");
+  const from =
+    Deno.env.get("INVITE_FROM_EMAIL") ?? "LokaSync <onboarding@resend.dev>";
+  if (!apiKey) {
+    console.log(
+      `RESEND_API_KEY not set — invite for ${invitation.email}: ${inviteUrl}`,
+    );
+    return false;
+  }
+  const res = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      from,
+      to: [invitation.email],
+      subject: `${invitation.invited_by} invited you to "${invitation.workspace_name}" on LokaSync`,
+      html: `
+        <div style="font-family:sans-serif;max-width:480px;margin:0 auto">
+          <h2>You're invited to ${invitation.workspace_name}</h2>
+          <p><strong>${invitation.invited_by}</strong> invited you to join the
+          workspace <strong>${invitation.workspace_name}</strong> on LokaSync
+          as a <strong>${invitation.role}</strong>.</p>
+          <p><a href="${inviteUrl}" style="display:inline-block;padding:10px 20px;background:#6366f1;color:#fff;border-radius:6px;text-decoration:none">Accept invitation</a></p>
+          <p style="color:#888;font-size:13px">This invitation expires on
+          ${new Date(invitation.expires_at).toUTCString()}. If you didn't expect
+          this email, you can safely ignore it.</p>
+        </div>`,
+    }),
+  });
+  if (!res.ok) {
+    console.log("Resend error:", res.status, await res.text());
+    return false;
+  }
+  return true;
 }

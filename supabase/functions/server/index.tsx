@@ -1535,6 +1535,159 @@ app.delete("/workspaces/:id/members/:userId", async (c) => {
   }
 });
 
+// ── Workspace invitations (Fase 14.2) ─────────────────────────────────────────
+// Single-use tokens with a 7-day expiry. Owners create/revoke; the invitee
+// accepts while signed in with the invited email address.
+
+app.get("/workspaces/:id/invites", async (c) => {
+  try {
+    const user = c.get("user");
+    const id = c.req.param("id");
+    const membership = await ws.getMembership(id, user.id);
+    if (!membership) return c.json({ error: "Workspace not found" }, 404);
+    if (membership.role !== "owner") {
+      return c.json({ error: "Only the owner can view invitations", code: "owner_required" }, 403);
+    }
+    const invitations = await ws.listInvitations(id);
+    // Tokens are secrets — only expose them for still-pending invitations so
+    // the owner can copy the invite link.
+    return c.json(
+      invitations.map((inv) => ({
+        ...inv,
+        token: inv.status === "pending" ? inv.token : null,
+      })),
+    );
+  } catch (e) {
+    console.log("GET /workspaces/:id/invites error:", e);
+    return c.json({ error: String(e) }, 500);
+  }
+});
+
+app.post("/workspaces/:id/invites", async (c) => {
+  try {
+    const user = c.get("user");
+    const id = c.req.param("id");
+    const membership = await ws.getMembership(id, user.id);
+    if (!membership) return c.json({ error: "Workspace not found" }, 404);
+    if (membership.role !== "owner") {
+      return c.json({ error: "Only the owner can invite members", code: "owner_required" }, 403);
+    }
+    const body = await c.req.json();
+    const email = String(body.email ?? "").trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return c.json({ error: "A valid email address is required" }, 400);
+    }
+    const role = body.role === "owner" ? "owner" : "member";
+
+    const members = await ws.getMembers(id);
+    if (members.some((m) => m.email.toLowerCase() === email)) {
+      return c.json({ error: "This person is already a member of the workspace", code: "already_member" }, 409);
+    }
+
+    const workspace = await ws.getWorkspace(id);
+    if (!workspace) return c.json({ error: "Workspace not found" }, 404);
+
+    const invitation = await ws.createInvitation(workspace, user, email, role);
+    const origin = c.req.header("Origin") ?? "";
+    const inviteUrl = `${origin}/invite/${invitation.token}`;
+    const emailSent = await ws.sendInvitationEmail(invitation, inviteUrl);
+
+    return c.json({ ...invitation, invite_url: inviteUrl, email_sent: emailSent }, 201);
+  } catch (e) {
+    console.log("POST /workspaces/:id/invites error:", e);
+    return c.json({ error: String(e) }, 500);
+  }
+});
+
+app.delete("/workspaces/:id/invites/:token", async (c) => {
+  try {
+    const user = c.get("user");
+    const id = c.req.param("id");
+    const token = c.req.param("token");
+    const membership = await ws.getMembership(id, user.id);
+    if (!membership) return c.json({ error: "Workspace not found" }, 404);
+    if (membership.role !== "owner") {
+      return c.json({ error: "Only the owner can revoke invitations", code: "owner_required" }, 403);
+    }
+    const invitation = await ws.getInvitation(token);
+    if (!invitation || invitation.workspace_id !== id) {
+      return c.json({ error: "Invitation not found" }, 404);
+    }
+    await ws.saveInvitation({ ...invitation, status: "revoked" });
+    return c.json({ ok: true });
+  } catch (e) {
+    console.log("DELETE /workspaces/:id/invites/:token error:", e);
+    return c.json({ error: String(e) }, 500);
+  }
+});
+
+// Public preview for the accept page — the token itself is the secret, so the
+// invitee can see what they were invited to before signing in/registering.
+app.get("/invites/:token", async (c) => {
+  try {
+    const invitation = await ws.getInvitation(c.req.param("token"));
+    if (!invitation) return c.json({ error: "Invitation not found" }, 404);
+    const fresh = await ws.freshInvitation(invitation);
+    return c.json({
+      workspace_name: fresh.workspace_name,
+      email: fresh.email,
+      role: fresh.role,
+      invited_by: fresh.invited_by,
+      status: fresh.status,
+      expires_at: fresh.expires_at,
+    });
+  } catch (e) {
+    console.log("GET /invites/:token error:", e);
+    return c.json({ error: String(e) }, 500);
+  }
+});
+
+app.post("/invites/accept", async (c) => {
+  try {
+    const user = await getAuthedUser(c);
+    if (!user) return c.json({ error: "Unauthorized" }, 401);
+    const body = await c.req.json();
+    const token = String(body.token ?? "");
+    const invitation = token ? await ws.getInvitation(token) : null;
+    if (!invitation) return c.json({ error: "Invitation not found" }, 404);
+
+    const fresh = await ws.freshInvitation(invitation);
+    if (fresh.status === "revoked") {
+      return c.json({ error: "This invitation has been revoked", code: "invite_revoked" }, 400);
+    }
+    if (fresh.status === "expired") {
+      return c.json({ error: "This invitation has expired", code: "invite_expired" }, 410);
+    }
+    if (fresh.status === "accepted") {
+      return c.json({ error: "This invitation has already been used", code: "invite_used" }, 400);
+    }
+    if ((user.email ?? "").toLowerCase() !== fresh.email.toLowerCase()) {
+      return c.json(
+        { error: "This invitation was sent to a different email address", code: "invite_email_mismatch" },
+        403,
+      );
+    }
+
+    const workspace = await ws.getWorkspace(fresh.workspace_id);
+    if (!workspace) return c.json({ error: "This workspace no longer exists" }, 410);
+
+    const alreadyMember = !!(await ws.getMembership(workspace.id, user.id));
+    if (!alreadyMember) {
+      await ws.addMember(workspace.id, user, fresh.role);
+    }
+    await ws.saveInvitation({ ...fresh, status: "accepted" });
+
+    return c.json({
+      ok: true,
+      already_member: alreadyMember,
+      workspace: { id: workspace.id, name: workspace.name, role: fresh.role },
+    });
+  } catch (e) {
+    console.log("POST /invites/accept error:", e);
+    return c.json({ error: String(e) }, 500);
+  }
+});
+
 // ── Reset workspace data ──────────────────────────────────────────────────────
 
 app.delete("/workspace-data", async (c) => {

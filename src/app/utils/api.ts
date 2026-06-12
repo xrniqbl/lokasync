@@ -497,6 +497,65 @@ export const removeWorkspaceMember = (id: string, userId: string) =>
     { method: "DELETE" },
   );
 
+// ── Workspace invitations (Fase 14.2) ─────────────────────────────────────────
+
+export type InvitationStatus = "pending" | "accepted" | "revoked" | "expired";
+
+export interface WorkspaceInvitation {
+  /** Secret invite token; null for non-pending invitations. */
+  token: string | null;
+  workspace_id: string;
+  workspace_name: string;
+  email: string;
+  role: WorkspaceRole;
+  invited_by: string;
+  status: InvitationStatus;
+  created_at: string;
+  expires_at: string;
+}
+
+export interface CreatedInvitation extends WorkspaceInvitation {
+  token: string;
+  /** Shareable accept link (also emailed when the provider is configured). */
+  invite_url: string;
+  email_sent: boolean;
+}
+
+export interface InvitePreview {
+  workspace_name: string;
+  email: string;
+  role: WorkspaceRole;
+  invited_by: string;
+  status: InvitationStatus;
+  expires_at: string;
+}
+
+export const getWorkspaceInvites = (workspaceId: string) =>
+  request<WorkspaceInvitation[]>(
+    `/workspaces/${encodeURIComponent(workspaceId)}/invites`,
+  );
+export const createWorkspaceInvite = (
+  workspaceId: string,
+  input: { email: string; role: WorkspaceRole },
+) =>
+  request<CreatedInvitation>(
+    `/workspaces/${encodeURIComponent(workspaceId)}/invites`,
+    { method: "POST", body: JSON.stringify(input) },
+  );
+export const revokeWorkspaceInvite = (workspaceId: string, token: string) =>
+  request<{ ok: boolean }>(
+    `/workspaces/${encodeURIComponent(workspaceId)}/invites/${encodeURIComponent(token)}`,
+    { method: "DELETE" },
+  );
+export const getInvitePreview = (token: string) =>
+  request<InvitePreview>(`/invites/${encodeURIComponent(token)}`);
+export const acceptInvite = (token: string) =>
+  request<{
+    ok: boolean;
+    already_member: boolean;
+    workspace: { id: string; name: string; role: WorkspaceRole };
+  }>("/invites/accept", { method: "POST", body: JSON.stringify({ token }) });
+
 // ── Workspace admin ───────────────────────────────────────────────────────────
 
 export const resetWorkspaceData = () =>
