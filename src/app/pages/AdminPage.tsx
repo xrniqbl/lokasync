@@ -3,6 +3,7 @@ import { Link } from "react-router";
 import {
   ArrowLeft,
   BellRing,
+  Database,
   LayoutDashboard,
   Ticket,
   Trash2,
@@ -40,7 +41,13 @@ const dateFmt = new Intl.DateTimeFormat("en-US", {
   year: "numeric",
 });
 
-type Tab = "overview" | "vouchers" | "subscribers" | "maintenance" | "notifications";
+type Tab =
+  | "overview"
+  | "vouchers"
+  | "subscribers"
+  | "maintenance"
+  | "notifications"
+  | "migration";
 
 const TABS: { id: Tab; label: string; icon: typeof LayoutDashboard }[] = [
   { id: "overview", label: "Overview", icon: LayoutDashboard },
@@ -48,6 +55,7 @@ const TABS: { id: Tab; label: string; icon: typeof LayoutDashboard }[] = [
   { id: "subscribers", label: "Subscribers", icon: Users },
   { id: "maintenance", label: "Maintenance", icon: Wrench },
   { id: "notifications", label: "Notifications", icon: BellRing },
+  { id: "migration", label: "Migration", icon: Database },
 ];
 
 /* ── Overview ─────────────────────────────────────────────────────────────── */
@@ -699,6 +707,138 @@ function NotificationsTab() {
   );
 }
 
+/* ── Migration (Fase 14.4) ────────────────────────────────────────────────── */
+
+function MigrationTab() {
+  const [running, setRunning] = useState(false);
+  const [purgeLegacy, setPurgeLegacy] = useState(false);
+  const [report, setReport] = useState<api.MigrationReport | null>(null);
+
+  const run = async (dryRun: boolean) => {
+    if (!dryRun) {
+      const warning = purgeLegacy
+        ? "Run the REAL migration AND delete the legacy global keys afterwards? This cannot be undone."
+        : "Run the REAL migration? Legacy global keys are kept as a backup.";
+      if (!window.confirm(warning)) return;
+    }
+    setRunning(true);
+    try {
+      const result = await api.adminMigrateWorkspaces({
+        dry_run: dryRun,
+        purge_legacy: !dryRun && purgeLegacy,
+      });
+      setReport(result);
+      toast.success(
+        result.dry_run
+          ? "Dry run complete — nothing was written"
+          : `Migration complete — ${result.keys_copied} keys copied`,
+      );
+    } catch (err) {
+      toast.error(err instanceof api.ApiError ? err.message : "Migration failed");
+    } finally {
+      setRunning(false);
+    }
+  };
+
+  return (
+    <div className="flex flex-col gap-6">
+      <Card className="border-neutral-800 bg-[#1a1a1a]">
+        <CardHeader>
+          <CardTitle className="text-neutral-50">
+            Workspace data migration
+          </CardTitle>
+          <CardDescription className="text-neutral-400">
+            Copies the pre-workspace global data (tasks, projects, files, …) into
+            each user's default workspace. Idempotent — keys that already exist
+            (e.g. via lazy migration) are skipped. Always start with a dry run.
+          </CardDescription>
+        </CardHeader>
+        <CardPanel className="flex flex-col gap-4">
+          <div className="flex items-center gap-2">
+            <Checkbox
+              id="purge-legacy"
+              checked={purgeLegacy}
+              onCheckedChange={(v) => setPurgeLegacy(v === true)}
+            />
+            <Label htmlFor="purge-legacy" className="text-[13px] text-neutral-200">
+              Purge legacy global keys after a real run{" "}
+              <span className="text-amber-400/90">(final cutover — irreversible)</span>
+            </Label>
+          </div>
+          <div className="flex gap-2">
+            <Button onClick={() => run(true)} loading={running}>
+              Run dry run
+            </Button>
+            <Button
+              onClick={() => run(false)}
+              loading={running}
+              className="bg-amber-600 hover:bg-amber-500"
+            >
+              Run real migration
+            </Button>
+          </div>
+        </CardPanel>
+      </Card>
+
+      {report && (
+        <Card className="border-neutral-800 bg-[#1a1a1a]">
+          <CardHeader>
+            <CardTitle className="text-neutral-50">
+              {report.dry_run ? "Dry run report" : "Migration report"}
+            </CardTitle>
+            <CardDescription className="text-neutral-400">
+              Legacy keys found: {report.legacy_keys_found.length}
+              {report.legacy_purged && " · legacy keys purged"}
+            </CardDescription>
+          </CardHeader>
+          <CardPanel className="flex flex-col gap-4">
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+              <StatCard label="Users processed" value={String(report.users_processed)} />
+              <StatCard
+                label="Workspaces created"
+                value={String(report.workspaces_created)}
+                sub={report.dry_run ? "would be created" : undefined}
+              />
+              <StatCard
+                label="Keys copied"
+                value={String(report.keys_copied)}
+                sub={report.dry_run ? "would be copied" : undefined}
+              />
+              <StatCard label="Keys skipped" value={String(report.keys_skipped)} sub="already migrated" />
+            </div>
+            {report.details.length > 0 && (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-[12px]">
+                  <thead>
+                    <tr className="border-b border-neutral-800 text-neutral-500">
+                      <th className="py-2 pr-4 font-normal">User</th>
+                      <th className="py-2 pr-4 font-normal">Workspace</th>
+                      <th className="py-2 pr-4 font-normal">Copied</th>
+                      <th className="py-2 font-normal">Skipped</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {report.details.map((d) => (
+                      <tr key={d.email} className="border-b border-neutral-800/50 text-neutral-300">
+                        <td className="py-2 pr-4">{d.email}</td>
+                        <td className="py-2 pr-4 text-neutral-500">
+                          {d.workspace_created ? "(new)" : (d.workspace_id ?? "—").slice(0, 8)}
+                        </td>
+                        <td className="py-2 pr-4">{d.copied}</td>
+                        <td className="py-2">{d.skipped}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </CardPanel>
+        </Card>
+      )}
+    </div>
+  );
+}
+
 /* ── Page shell ───────────────────────────────────────────────────────────── */
 
 export function AdminPage() {
@@ -768,6 +908,7 @@ export function AdminPage() {
           {tab === "subscribers" && <SubscribersTab />}
           {tab === "maintenance" && <MaintenanceTab />}
           {tab === "notifications" && <NotificationsTab />}
+          {tab === "migration" && <MigrationTab />}
         </div>
       </main>
     </div>
