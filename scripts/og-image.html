@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8" />
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Lexend:wght@300;400;600;700&display=swap');
+  * { margin: 0; box-sizing: border-box; }
+  body {
+    width: 1200px; height: 630px;
+    font-family: 'Lexend', sans-serif;
+    color: #fafafa;
+    background:
+      radial-gradient(ellipse 75% 60% at 50% -15%, rgba(99,102,241,0.28), transparent 60%),
+      radial-gradient(ellipse 50% 45% at 105% 80%, rgba(139,92,246,0.16), transparent 65%),
+      linear-gradient(180deg, #131318 0%, #0f0f0f 60%, #12121a 100%);
+    display: flex; flex-direction: column;
+    justify-content: center; align-items: center;
+    text-align: center;
+  }
+  .wordmark {
+    font-size: 26px; font-weight: 700; letter-spacing: 0.12em;
+  }
+  .eyebrow {
+    margin-top: 56px;
+    font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
+    font-size: 20px; color: #737373; letter-spacing: 0.04em;
+  }
+  .eyebrow span { color: #525252; }
+  h1 {
+    margin-top: 26px;
+    font-size: 84px; font-weight: 400; line-height: 1.1;
+  }
+  h1 .accent {
+    background: linear-gradient(90deg, #a5b4fc, #fafafa 70%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+  .sub {
+    margin-top: 30px;
+    font-size: 26px; font-weight: 300; color: #a3a3a3; max-width: 760px; line-height: 1.5;
+  }
+  .pill {
+    margin-top: 44px;
+    display: inline-flex; align-items: center; gap: 10px;
+    border: 1px solid rgba(255,255,255,0.1);
+    background: rgba(255,255,255,0.05);
+    border-radius: 999px; padding: 12px 26px;
+    font-size: 19px; color: #d4d4d4;
+  }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: #6366f1; }
+</style>
+</head>
+<body>
+  <div class="wordmark">LOKASYNC</div>
+  <div class="eyebrow">loka <span>/ˈlo·ka/ — n. a place</span></div>
+  <h1>Every project,<br /><span class="accent">one place.</span></h1>
+  <div class="sub">Tasks, timelines, files, and reporting — in one minimal workspace.</div>
+  <div class="pill"><span class="dot"></span> Free for up to 3 projects</div>
+</body>
+</html>

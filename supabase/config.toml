@@ -1,0 +1,4 @@
+# Midtrans webhook calls /server/payments/webhook without an Authorization
+# header; authenticity is verified in-code via the SHA512 signature_key.
+[functions.server]
+verify_jwt = false
