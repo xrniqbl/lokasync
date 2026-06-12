@@ -137,6 +137,7 @@ export function SettingsPage() {
   const [members, setMembers] = useState<any[]>([]);
   const [pendingList, setPendingList] = useState<any[]>([]);
   const [billing, setBilling] = useState<any | null>(null);
+  const [quota, setQuota] = useState<api.QuotaInfo | null>(null);
   const [profileData, setProfileData] = useState<any>({});
   const [workspaceData, setWorkspaceData] = useState<any>({});
   const [showInvite, setShowInvite] = useState(false);
@@ -254,6 +255,13 @@ export function SettingsPage() {
   useEffect(() => {
     if (subSectionMap[subSection]) setActiveNav(subSectionMap[subSection]);
   }, [subSection]);
+
+  // Fetch storage quota when Billing section is active (Fase 12.9)
+  useEffect(() => {
+    if (activeNav === "Billing") {
+      api.getStorageQuota().then(setQuota).catch(() => {});
+    }
+  }, [activeNav]);
 
   const toggleIntegration = (name: string) => {
     setIntegrations((prev) =>
@@ -1081,23 +1089,30 @@ export function SettingsPage() {
                 </div>
               </Section>
               <Section title="Usage" description="Current usage against your plan limits.">
-                <div className="space-y-4">
-                  {[
-                    { label: "Members", used: billing?.usage?.members ?? 0, limit: billing?.usage?.memberLimit ?? 0, color: "#818cf8" },
-                    { label: "Active projects", used: billing?.usage?.projects ?? 0, limit: billing?.usage?.projectLimit ?? 0, color: "#34d399" },
-                    { label: "Storage", used: billing?.usage?.storage ?? 0, limit: billing?.usage?.storageLimit ?? 0, unit: " GB", color: "#f59e0b" },
-                  ].map((u: any) => (
-                    <div key={u.label}>
-                      <div className="flex justify-between text-[12px] mb-1.5">
-                        <span className="text-neutral-400">{u.label}</span>
-                        <span className="text-neutral-300">{u.used}{u.unit} <span className="text-neutral-600">/ {u.limit}{u.unit}</span></span>
-                      </div>
-                      <div className="h-1.5 bg-neutral-800 rounded-full overflow-hidden">
-                        <div className="h-full rounded-full" style={{ width: `${Math.min((u.used / Math.max(u.limit, 1)) * 100, 100)}%`, backgroundColor: u.color }} />
-                      </div>
+                {(() => {
+                  const usedGB = quota ? (quota.unlimited ? "∞" : (quota.used / (1024 * 1024 * 1024)).toFixed(2)) : "—";
+                  const limitGB = quota ? (quota.unlimited ? "∞" : (quota.limit / (1024 * 1024 * 1024)).toFixed(0)) : "—";
+                  const pct = quota && !quota.unlimited && quota.limit > 0 ? Math.round((quota.used / quota.limit) * 100) : 0;
+                  return (
+                    <div className="space-y-4">
+                      {[
+                        { label: "Members", used: billing?.usage?.members ?? 0, limit: billing?.usage?.memberLimit ?? 0, color: "#818cf8" },
+                        { label: "Active projects", used: billing?.usage?.projects ?? 0, limit: billing?.usage?.projectLimit ?? 0, color: "#34d399" },
+                        { label: "Storage", used: usedGB, limit: limitGB, unit: " GB", color: "#f59e0b", pct },
+                      ].map((u: any) => (
+                        <div key={u.label}>
+                          <div className="flex justify-between text-[12px] mb-1.5">
+                            <span className="text-neutral-400">{u.label}</span>
+                            <span className="text-neutral-300">{u.used}{u.unit} <span className="text-neutral-600">/ {u.limit}{u.unit}</span></span>
+                          </div>
+                          <div className="h-1.5 bg-neutral-800 rounded-full overflow-hidden">
+                            <div className="h-full rounded-full" style={{ width: `${Math.min(typeof u.pct === 'number' ? u.pct : (u.used / Math.max(u.limit, 1)) * 100, 100)}%`, backgroundColor: u.color }} />
+                          </div>
+                        </div>
+                      ))}
                     </div>
-                  ))}
-                </div>
+                  );
+                })()}
               </Section>
               <Section title="Payment Method">
                 <div className="flex items-center justify-between p-3 bg-[#141414] border border-neutral-800/60 rounded-xl">

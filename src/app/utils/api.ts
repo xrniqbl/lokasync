@@ -30,12 +30,18 @@ export class ApiError extends Error {
 }
 
 async function request<T>(path: string, opts: RequestInit = {}): Promise<T> {
+  const headers: Record<string, string> = {
+    Authorization: `Bearer ${userAccessToken ?? publicAnonKey}`,
+    ...(activeWorkspaceId ? { "X-Workspace-Id": activeWorkspaceId } : {}),
+  };
+  // Don't set Content-Type for FormData — browser sets the boundary automatically
+  if (opts?.body && !(opts.body instanceof FormData)) {
+    headers["Content-Type"] = "application/json";
+  }
   const res = await fetch(BASE + path, {
     ...opts,
     headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${userAccessToken ?? publicAnonKey}`,
-      ...(activeWorkspaceId ? { "X-Workspace-Id": activeWorkspaceId } : {}),
+      ...headers,
       ...opts.headers,
     },
   });
@@ -305,6 +311,14 @@ export const adminDeleteVoucher = (code: string) =>
 export const adminGetSubscribers = () =>
   request<SubscriberRow[]>("/admin/subscribers");
 
+// ── Subscription reminders (Fase 13.4) ────────────────────────────────────────
+
+export const sendReminders = (days: number = 7) =>
+  request<{ sent: number; skipped: number; daysAhead: number }>(
+    "/admin/send-reminders",
+    { method: "POST", body: JSON.stringify({ days }) },
+  );
+
 // Fase 14.4 — batch migration of legacy global KV data into per-user default
 // workspaces. Defaults to dry-run; purge_legacy only applies to a real run.
 export interface MigrationReport {
@@ -440,11 +454,21 @@ export const deleteCalendarEvent = (dateKey: string, index: number) =>
 export interface FileItem {
   name: string;
   type: string;
-  size: string;
+  size: number;          // bytes
+  sizeHuman: string;     // "2.4 MB"
   modified: string;
   owner: string;
   shared: boolean;
   archived: boolean;
+  storagePath: string | null;
+  url: string | null;
+  urlExpiresAt: string | null;
+}
+
+export interface QuotaInfo {
+  used: number;
+  limit: number;
+  unlimited: boolean;
 }
 
 export interface Folder {
@@ -462,6 +486,41 @@ export const deleteFile = (name: string) =>
   request<{ ok: boolean }>(`/files/${encodeURIComponent(name)}`, { method: "DELETE" });
 export const createFolder = (folder: Folder) =>
   request<Folder>("/files/folders", { method: "POST", body: JSON.stringify(folder) });
+
+// ── File upload/download & storage quota (Fase 12) ───────────────────────────
+
+/** Human-readable size string (e.g. "2.4 MB") */
+export function humanSize(bytes: number): string {
+  if (bytes === 0) return "0 B";
+  const k = 1024;
+  const sizes = ["B", "KB", "MB", "GB", "TB"];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + " " + sizes[i];
+}
+
+/** Upload a real file via multipart/form-data */
+export const uploadFile = (
+  file: File,
+  metadata?: { owner?: string; shared?: boolean },
+) => {
+  const form = new FormData();
+  form.append("file", file);
+  if (metadata) form.append("metadata", JSON.stringify(metadata));
+  return request<FileItem>("/files/upload", {
+    method: "POST",
+    body: form,
+  });
+};
+
+/** Get a signed download URL for a file */
+export const getDownloadUrl = (name: string) =>
+  request<{ url: string; expiresIn: number }>(
+    `/files/download/${encodeURIComponent(name)}`,
+  );
+
+/** Get storage quota for the active workspace */
+export const getStorageQuota = () =>
+  request<QuotaInfo>("/files/quota");
 
 // ── Settings ──────────────────────────────────────────────────────────────────
 

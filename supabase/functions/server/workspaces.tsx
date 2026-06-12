@@ -11,6 +11,7 @@
 // the workspace-scoped key.
 
 import * as kv from "./kv_store.tsx";
+import * as emails from "./emails.tsx";
 
 export type WorkspaceRole = "owner" | "member";
 
@@ -314,41 +315,18 @@ export async function sendInvitationEmail(
   invitation: Invitation,
   inviteUrl: string,
 ): Promise<boolean> {
-  const apiKey = Deno.env.get("RESEND_API_KEY");
-  const from =
-    Deno.env.get("INVITE_FROM_EMAIL") ?? "LokaSync <onboarding@resend.dev>";
-  if (!apiKey) {
-    console.log(
-      `RESEND_API_KEY not set — invite for ${invitation.email}: ${inviteUrl}`,
-    );
-    return false;
-  }
-  const res = await fetch("https://api.resend.com/emails", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
-      from,
-      to: [invitation.email],
-      subject: `${invitation.invited_by} invited you to "${invitation.workspace_name}" on LokaSync`,
-      html: `
-        <div style="font-family:sans-serif;max-width:480px;margin:0 auto">
-          <h2>You're invited to ${invitation.workspace_name}</h2>
-          <p><strong>${invitation.invited_by}</strong> invited you to join the
-          workspace <strong>${invitation.workspace_name}</strong> on LokaSync
-          as a <strong>${invitation.role}</strong>.</p>
-          <p><a href="${inviteUrl}" style="display:inline-block;padding:10px 20px;background:#6366f1;color:#fff;border-radius:6px;text-decoration:none">Accept invitation</a></p>
-          <p style="color:#888;font-size:13px">This invitation expires on
-          ${new Date(invitation.expires_at).toUTCString()}. If you didn't expect
-          this email, you can safely ignore it.</p>
-        </div>`,
-    }),
-  });
-  if (!res.ok) {
-    console.log("Resend error:", res.status, await res.text());
-    return false;
-  }
-  return true;
+  return emails.sendEmail(
+    invitation.email,
+    `${invitation.invited_by} invited you to "${invitation.workspace_name}" on LokaSync`,
+    `<div style="font-family:sans-serif;max-width:480px;margin:0 auto">
+      <h2>You're invited to ${invitation.workspace_name}</h2>
+      <p><strong>${invitation.invited_by}</strong> invited you to join the
+      workspace <strong>${invitation.workspace_name}</strong> on LokaSync
+      as a <strong>${invitation.role}</strong>.</p>
+      <p><a href="${inviteUrl}" style="display:inline-block;padding:10px 20px;background:#6366f1;color:#fff;border-radius:6px;text-decoration:none">Accept invitation</a></p>
+      <p style="color:#888;font-size:13px">This invitation expires on
+      ${new Date(invitation.expires_at).toUTCString()}. If you didn't expect
+      this email, you can safely ignore it.</p>
+    </div>`,
+  );
 }

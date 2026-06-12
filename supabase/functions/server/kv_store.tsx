@@ -85,3 +85,14 @@ export const getByPrefix = async (prefix: string): Promise<any[]> => {
   }
   return data?.map((d) => d.value) ?? [];
 };
+
+// List all keys matching a prefix — used by the reminder scanner.
+export const list = async (prefix: string): Promise<string[]> => {
+  const supabase = client()
+  const { data, error } = await supabase
+    .from("kv_store_827698a1")
+    .select("key")
+    .like("key", `${prefix}%`);
+  if (error) throw new Error(error.message);
+  return (data ?? []).map((row: any) => row.key);
+};

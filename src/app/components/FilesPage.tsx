@@ -21,11 +21,12 @@ const typeConfig: Record<string, { label: string; color: string; bg: string; ico
   diagram: { label: "Diagram", color: "#6366f1", bg: "bg-indigo-950/40", icon: <GitBranch size={16} /> },
 };
 
-function FileMenu({ fileName, onDelete, onRename, onPreview }: {
+function FileMenu({ fileName, onDelete, onRename, onPreview, onDownload }: {
   fileName: string;
   onDelete: () => void;
   onRename: () => void;
   onPreview: () => void;
+  onDownload: () => void;
 }) {
   return (
     <DropdownMenu.Root>
@@ -45,7 +46,7 @@ function FileMenu({ fileName, onDelete, onRename, onPreview }: {
         >
           {[
             { label: "Preview", action: (e: React.MouseEvent) => { e.stopPropagation(); onPreview(); } },
-            { label: "Download", action: (e: React.MouseEvent) => { e.stopPropagation(); toast.success(`Downloading "${fileName}"`); } },
+            { label: "Download", action: (e: React.MouseEvent) => { e.stopPropagation(); onDownload(); } },
             { label: "Rename", action: (e: React.MouseEvent) => { e.stopPropagation(); onRename(); } },
             { label: "Share", action: (e: React.MouseEvent) => { e.stopPropagation(); toast.success("Share link copied to clipboard"); } },
           ].map((item) => (
@@ -153,6 +154,15 @@ export function FilesPage() {
     setFiles((prev) => prev.map((f) => f.name === oldName ? { ...f, name: newName } : f));
     try { await api.renameFile(oldName, newName); }
     catch (e) { console.log("Failed to rename file:", e); }
+  };
+
+  const handleDownload = async (fileName: string) => {
+    try {
+      const { url } = await api.getDownloadUrl(fileName);
+      window.open(url, "_blank");
+    } catch (e) {
+      toast.error("Failed to generate download link");
+    }
   };
 
   const openFolder = (name: string) => {
@@ -264,10 +274,10 @@ export function FilesPage() {
                         <span className={`inline-block text-[10px] px-1.5 py-0.5 rounded mt-0.5 ${type.bg}`} style={{ color: type.color }}>{type.label}</span>
                       </div>
                     </div>
-                    <div className="text-neutral-500 text-[12px] hidden md:block">{file.size}</div>
+                    <div className="text-neutral-500 text-[12px] hidden md:block">{file.sizeHuman}</div>
                     <div className="text-neutral-500 text-[12px] hidden md:block">{file.modified}</div>
                     <div className="w-6 h-6 rounded-full bg-neutral-800 flex items-center justify-center text-[10px] text-neutral-400 hidden md:flex">{file.owner}</div>
-                    <FileMenu fileName={file.name} onDelete={() => deleteFile(file.name)} onRename={() => startRename(file.name)} onPreview={() => setPreviewFile(file)} />
+                    <FileMenu fileName={file.name} onDelete={() => deleteFile(file.name)} onRename={() => startRename(file.name)} onPreview={() => setPreviewFile(file)} onDownload={() => handleDownload(file.name)} />
                   </div>
                 );
               })}
@@ -281,9 +291,9 @@ export function FilesPage() {
                 <div key={file.name} onClick={() => setPreviewFile(file)} className="bg-[#141414] border border-neutral-800/60 rounded-xl p-4 hover:border-neutral-700/60 transition-colors cursor-pointer group relative">
                   <div className="mb-3" style={{ color: type.color }}>{type.icon}</div>
                   <div className="text-neutral-200 text-[12px] truncate mb-1">{file.name}</div>
-                  <div className="text-neutral-600 text-[11px]">{file.size} · {file.modified}</div>
+                  <div className="text-neutral-600 text-[11px]">{file.sizeHuman} · {file.modified}</div>
                   <div className="absolute top-3 right-3">
-                    <FileMenu fileName={file.name} onDelete={() => deleteFile(file.name)} onRename={() => startRename(file.name)} onPreview={() => setPreviewFile(file)} />
+                    <FileMenu fileName={file.name} onDelete={() => deleteFile(file.name)} onRename={() => startRename(file.name)} onPreview={() => setPreviewFile(file)} onDownload={() => handleDownload(file.name)} />
                   </div>
                 </div>
               );
@@ -296,11 +306,7 @@ export function FilesPage() {
         )}
       </div>
 
-      <UploadModal open={showUpload} onClose={() => setShowUpload(false)} onUpload={async (f) => {
-        const file = { ...f, archived: false };
-        setFiles((prev) => [file, ...prev]);
-        try { await api.createFile(file); } catch (e) { console.log("Failed to save file:", e); }
-      }} />
+      <UploadModal open={showUpload} onClose={() => setShowUpload(false)} onUpload={(uploaded) => setFiles((prev) => [uploaded, ...prev])} />
       <NewFolderModal open={showNewFolder} onClose={() => setShowNewFolder(false)} onAdd={async (f) => {
         setFolders((prev) => [f, ...prev]);
         try { await api.createFolder(f); } catch (e) { console.log("Failed to save folder:", e); }

@@ -5,6 +5,7 @@ import {
   BellRing,
   Database,
   LayoutDashboard,
+  MailWarning,
   Ticket,
   Trash2,
   Users,
@@ -55,6 +56,7 @@ const TABS: { id: Tab; label: string; icon: typeof LayoutDashboard }[] = [
   { id: "subscribers", label: "Subscribers", icon: Users },
   { id: "maintenance", label: "Maintenance", icon: Wrench },
   { id: "notifications", label: "Notifications", icon: BellRing },
+  { id: "reminders", label: "Reminders", icon: MailWarning },
   { id: "migration", label: "Migration", icon: Database },
 ];
 
@@ -707,6 +709,59 @@ function NotificationsTab() {
   );
 }
 
+/* ── Reminders (Fase 13.4) ──────────────────────────────────────────────── */
+
+function RemindersTab() {
+  const [result, setResult] = useState<{ sent: number; skipped: number; daysAhead: number } | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const send = async (days: number) => {
+    setLoading(true);
+    try {
+      const res = await api.sendReminders(days);
+      setResult(res);
+      toast.success(`Sent ${res.sent} reminder email${res.sent !== 1 ? "s" : ""}`);
+    } catch {
+      toast.error("Failed to send reminders");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <Card className="border-neutral-800 bg-[#1a1a1a]">
+      <CardHeader>
+        <CardTitle className="text-neutral-50">Subscription Reminders</CardTitle>
+        <CardDescription className="text-neutral-400">
+          Send expiry reminder emails to users with active subscriptions ending soon.
+        </CardDescription>
+      </CardHeader>
+      <CardPanel className="flex flex-col gap-4">
+        <div className="flex gap-2">
+          <Button onClick={() => send(7)} loading={loading}>
+            Send 7-day reminders
+          </Button>
+          <Button onClick={() => send(14)} loading={loading} variant="outline">
+            Send 14-day reminders
+          </Button>
+          <Button onClick={() => send(30)} loading={loading} variant="outline">
+            Send 30-day reminders
+          </Button>
+        </div>
+        {result && (
+          <div className="text-[13px] text-neutral-400">
+            Sent: <span className="text-emerald-400">{result.sent}</span>
+            {" | "}
+            Skipped (no email or already reminded): <span className="text-neutral-500">{result.skipped}</span>
+            {" | "}
+            Window: {result.daysAhead} days
+          </div>
+        )}
+      </CardPanel>
+    </Card>
+  );
+}
+
 /* ── Migration (Fase 14.4) ────────────────────────────────────────────────── */
 
 function MigrationTab() {
@@ -908,6 +963,7 @@ export function AdminPage() {
           {tab === "subscribers" && <SubscribersTab />}
           {tab === "maintenance" && <MaintenanceTab />}
           {tab === "notifications" && <NotificationsTab />}
+          {tab === "reminders" && <RemindersTab />}
           {tab === "migration" && <MigrationTab />}
         </div>
       </main>

@@ -6,12 +6,13 @@ import * as api from "../../utils/api";
 interface UploadModalProps {
   open: boolean;
   onClose: () => void;
-  onUpload?: (file: { name: string; size: string; type: string; owner: string; modified: string; shared: boolean }) => void;
+  onUpload?: (file: api.FileItem) => void;
 }
 
 export function UploadModal({ open, onClose, onUpload }: UploadModalProps) {
   const [dragging, setDragging] = useState(false);
-  const [fileName, setFileName] = useState("");
+  const [file, setFile] = useState<File | null>(null);
+  const [uploading, setUploading] = useState(false);
   const [folder, setFolder] = useState("Recent");
   const [ownerInitials, setOwnerInitials] = useState("");
 
@@ -26,41 +27,45 @@ export function UploadModal({ open, onClose, onUpload }: UploadModalProps) {
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
     setDragging(false);
-    const file = e.dataTransfer.files[0];
-    if (file) setFileName(file.name);
+    const f = e.dataTransfer.files[0];
+    if (f) setFile(f);
   };
 
   const handleFileInput = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) setFileName(file.name);
+    const f = e.target.files?.[0];
+    if (f) setFile(f);
   };
 
   const reset = () => {
-    setFileName("");
+    setFile(null);
     setFolder("Recent");
+    setUploading(false);
   };
 
-  const handleUpload = () => {
-    if (!fileName) {
+  const handleUpload = async () => {
+    if (!file) {
       toast.error("Select a file to upload");
       return;
     }
-    const ext = fileName.split(".").pop()?.toLowerCase() || "doc";
-    const typeMap: Record<string, string> = {
-      pdf: "pdf", figma: "figma", docx: "doc", xlsx: "sheet",
-      png: "image", jpg: "image", json: "code", js: "code", ts: "code",
-    };
-    onUpload?.({
-      name: fileName,
-      size: "—",
-      type: typeMap[ext] || "doc",
-      owner: ownerInitials || "—",
-      modified: new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }),
-      shared: false,
-    });
-    toast.success(`"${fileName}" uploaded successfully`);
-    reset();
-    onClose();
+    setUploading(true);
+    try {
+      const uploaded = await api.uploadFile(file, {
+        owner: ownerInitials || undefined,
+        shared: false,
+      });
+      onUpload?.(uploaded);
+      toast.success(`"${file.name}" uploaded (${uploaded.sizeHuman})`);
+      reset();
+      onClose();
+    } catch (e: any) {
+      if (e.message?.includes("413")) {
+        toast.error("Storage quota exceeded — upgrade your plan to upload more files");
+      } else {
+        toast.error(`Upload failed: ${e.message}`);
+      }
+    } finally {
+      setUploading(false);
+    }
   };
 
   return (
@@ -75,17 +80,17 @@ export function UploadModal({ open, onClose, onUpload }: UploadModalProps) {
           onClick={() => document.getElementById("file-input")?.click()}
         >
           <input id="file-input" type="file" className="hidden" onChange={handleFileInput} />
-          {fileName ? (
+          {file ? (
             <div>
               <div className="text-2xl mb-2">📄</div>
-              <div className="text-neutral-200 text-[13px]">{fileName}</div>
-              <div className="text-neutral-500 text-[12px] mt-1">Click to change</div>
+              <div className="text-neutral-200 text-[13px]">{file.name}</div>
+              <div className="text-neutral-500 text-[12px] mt-1">{api.humanSize(file.size)}</div>
             </div>
           ) : (
             <div>
               <div className="text-2xl mb-2">☁</div>
               <div className="text-neutral-300 text-[13px]">Drop files here or click to browse</div>
-              <div className="text-neutral-600 text-[12px] mt-1">Any file type supported</div>
+              <div className="text-neutral-600 text-[12px] mt-1">Max size depends on your plan</div>
             </div>
           )}
         </div>
@@ -102,7 +107,12 @@ export function UploadModal({ open, onClose, onUpload }: UploadModalProps) {
           ]}
         />
       </div>
-      <ModalFooter onCancel={() => { reset(); onClose(); }} onConfirm={handleUpload} confirmLabel="Upload" confirmDisabled={!fileName} />
+      <ModalFooter
+        onCancel={() => { reset(); onClose(); }}
+        onConfirm={handleUpload}
+        confirmLabel={uploading ? "Uploading..." : "Upload"}
+        confirmDisabled={!file || uploading}
+      />
     </BaseModal>
   );
 }

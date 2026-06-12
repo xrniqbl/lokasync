@@ -4,6 +4,7 @@ import { logger } from "npm:hono/logger";
 import { createClient } from "jsr:@supabase/supabase-js@2.49.8";
 import * as kv from "./kv_store.tsx";
 import * as ws from "./workspaces.tsx";
+import * as emails from "./emails.tsx";
 
 // Supabase passes the full request path including the function name
 const app = new Hono().basePath("/server");
@@ -13,7 +14,7 @@ app.use(
   "/*",
   cors({
     origin: "*",
-    allowHeaders: ["Content-Type", "Authorization"],
+    allowHeaders: ["Content-Type", "Authorization", "X-Workspace-Id"],
     allowMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     exposeHeaders: ["Content-Length"],
     maxAge: 600,
@@ -206,19 +207,19 @@ const SEED_CALENDAR = {
 };
 
 const SEED_FILES = [
-  { name: "Project Proposal — Web App v2.pdf", type: "pdf", size: "2.4 MB", modified: "Jun 7, 2026", owner: "JD", shared: true, archived: false },
-  { name: "Design System Documentation.figma", type: "figma", size: "18.1 MB", modified: "Jun 6, 2026", owner: "SW", shared: true, archived: false },
-  { name: "Meeting Notes — Sprint 24.docx", type: "doc", size: "128 KB", modified: "Jun 5, 2026", owner: "EM", shared: false, archived: false },
-  { name: "API Reference v3.pdf", type: "pdf", size: "5.7 MB", modified: "Jun 4, 2026", owner: "MJ", shared: true, archived: false },
-  { name: "Onboarding Checklist.sheet", type: "sheet", size: "64 KB", modified: "Jun 3, 2026", owner: "JD", shared: true, archived: false },
-  { name: "App Screenshots — iOS.zip", type: "image", size: "34.2 MB", modified: "Jun 2, 2026", owner: "SW", shared: false, archived: false },
-  { name: "Infrastructure Diagram.diagram", type: "diagram", size: "1.1 MB", modified: "Jun 1, 2026", owner: "AL", shared: true, archived: false },
-  { name: "Q2 Budget Summary.sheet", type: "sheet", size: "512 KB", modified: "May 30, 2026", owner: "EM", shared: false, archived: false },
-  { name: "Old Brand Guidelines.pdf", type: "pdf", size: "4.1 MB", modified: "Jan 12, 2026", owner: "SW", shared: false, archived: true },
-  { name: "Legacy API Docs.doc", type: "doc", size: "890 KB", modified: "Feb 3, 2026", owner: "MJ", shared: false, archived: true },
-  { name: "2025 Roadmap.sheet", type: "sheet", size: "220 KB", modified: "Dec 15, 2025", owner: "EM", shared: true, archived: true },
-  { name: "Old Logo Pack.zip", type: "image", size: "12.4 MB", modified: "Nov 5, 2025", owner: "SW", shared: false, archived: true },
-  { name: "Deprecated Auth Module.code", type: "code", size: "78 KB", modified: "Oct 20, 2025", owner: "JD", shared: false, archived: true },
+  { name: "Project Proposal — Web App v2.pdf", type: "pdf", size: 2516582, sizeHuman: "2.4 MB", modified: "Jun 7, 2026", owner: "JD", shared: true, archived: false, storagePath: null, url: null, urlExpiresAt: null },
+  { name: "Design System Documentation.figma", type: "figma", size: 18981940, sizeHuman: "18.1 MB", modified: "Jun 6, 2026", owner: "SW", shared: true, archived: false, storagePath: null, url: null, urlExpiresAt: null },
+  { name: "Meeting Notes — Sprint 24.docx", type: "doc", size: 131072, sizeHuman: "128 KB", modified: "Jun 5, 2026", owner: "EM", shared: false, archived: false, storagePath: null, url: null, urlExpiresAt: null },
+  { name: "API Reference v3.pdf", type: "pdf", size: 5976883, sizeHuman: "5.7 MB", modified: "Jun 4, 2026", owner: "MJ", shared: true, archived: false, storagePath: null, url: null, urlExpiresAt: null },
+  { name: "Onboarding Checklist.sheet", type: "sheet", size: 65536, sizeHuman: "64 KB", modified: "Jun 3, 2026", owner: "JD", shared: true, archived: false, storagePath: null, url: null, urlExpiresAt: null },
+  { name: "App Screenshots — iOS.zip", type: "image", size: 35867443, sizeHuman: "34.2 MB", modified: "Jun 2, 2026", owner: "SW", shared: false, archived: false, storagePath: null, url: null, urlExpiresAt: null },
+  { name: "Infrastructure Diagram.diagram", type: "diagram", size: 1153434, sizeHuman: "1.1 MB", modified: "Jun 1, 2026", owner: "AL", shared: true, archived: false, storagePath: null, url: null, urlExpiresAt: null },
+  { name: "Q2 Budget Summary.sheet", type: "sheet", size: 524288, sizeHuman: "512 KB", modified: "May 30, 2026", owner: "EM", shared: false, archived: false, storagePath: null, url: null, urlExpiresAt: null },
+  { name: "Old Brand Guidelines.pdf", type: "pdf", size: 4299162, sizeHuman: "4.1 MB", modified: "Jan 12, 2026", owner: "SW", shared: false, archived: true, storagePath: null, url: null, urlExpiresAt: null },
+  { name: "Legacy API Docs.doc", type: "doc", size: 911360, sizeHuman: "890 KB", modified: "Feb 3, 2026", owner: "MJ", shared: false, archived: true, storagePath: null, url: null, urlExpiresAt: null },
+  { name: "2025 Roadmap.sheet", type: "sheet", size: 225280, sizeHuman: "220 KB", modified: "Dec 15, 2025", owner: "EM", shared: true, archived: true, storagePath: null, url: null, urlExpiresAt: null },
+  { name: "Old Logo Pack.zip", type: "image", size: 13004902, sizeHuman: "12.4 MB", modified: "Nov 5, 2025", owner: "SW", shared: false, archived: true, storagePath: null, url: null, urlExpiresAt: null },
+  { name: "Deprecated Auth Module.code", type: "code", size: 79872, sizeHuman: "78 KB", modified: "Oct 20, 2025", owner: "JD", shared: false, archived: true, storagePath: null, url: null, urlExpiresAt: null },
 ];
 
 const SEED_FOLDERS = [
@@ -428,6 +429,58 @@ const adminEmails = () =>
 
 const isAdminUser = (user: any) =>
   !!user?.email && adminEmails().includes(String(user.email).toLowerCase());
+
+// ── Storage helpers (Fase 12) ─────────────────────────────────────────────────
+
+function storageClient() {
+  const url = Deno.env.get("SUPABASE_URL");
+  const key = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+  if (!url || !key) return null;
+  return createClient(url, key, { auth: { autoRefreshToken: false, persistSession: false } });
+}
+
+function humanSize(bytes: number): string {
+  if (bytes === 0) return "0 B";
+  const k = 1024;
+  const sizes = ["B", "KB", "MB", "GB", "TB"];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + " " + sizes[i];
+}
+
+const PLAN_STORAGE_LIMITS: Record<string, number> = {
+  free: 1 * 1024 * 1024 * 1024,      // 1 GB
+  pro: 25 * 1024 * 1024 * 1024,      // 25 GB
+  business: 0,                         // 0 = unlimited
+};
+
+async function checkStorageQuota(c: any, additionalBytes: number): Promise<{ allowed: boolean; used: number; limit: number }> {
+  const user = c.get("user");
+  const sub = await kv.get(`subscription:${user.id}`);
+  const planId = sub?.plan_id ?? "free";
+  const limit = PLAN_STORAGE_LIMITS[planId] ?? PLAN_STORAGE_LIMITS.free;
+  const usageKey = wsKey(c, "storage:usage");
+  const used = (await kv.get(usageKey)) ?? 0;
+  if (limit > 0 && used + additionalBytes > limit) {
+    return { allowed: false, used, limit };
+  }
+  return { allowed: true, used, limit };
+}
+
+async function incrementStorageUsage(c: any, deltaBytes: number) {
+  const usageKey = wsKey(c, "storage:usage");
+  const current = (await kv.get(usageKey)) ?? 0;
+  await kv.set(usageKey, Math.max(0, current + deltaBytes));
+}
+
+async function getStorageUsage(c: any): Promise<{ used: number; limit: number }> {
+  const user = c.get("user");
+  const sub = await kv.get(`subscription:${user.id}`);
+  const planId = sub?.plan_id ?? "free";
+  const limit = PLAN_STORAGE_LIMITS[planId] ?? PLAN_STORAGE_LIMITS.free;
+  const usageKey = wsKey(c, "storage:usage");
+  const used = (await kv.get(usageKey)) ?? 0;
+  return { used, limit };
+}
 
 async function requireAdmin(c: any) {
   const user = await getAuthedUser(c);
@@ -737,6 +790,38 @@ async function applyTransactionStatus(tx: any, midtransData: any) {
         voucher.used_count = (voucher.used_count ?? 0) + 1;
         await kv.set(`voucher:${tx.voucher_code}`, voucher);
       }
+    }
+
+    // ── Track in active subscriptions list (Fase 13.3) ────────────────────
+    const activeList = (await kv.get("subscriptions:active")) ?? [];
+    if (!activeList.includes(tx.user_id)) {
+      activeList.push(tx.user_id);
+      await kv.set("subscriptions:active", activeList);
+    }
+
+    // ── Send payment receipt email (Fase 13.2) ─────────────────────────────
+    try {
+      const profile = await kv.get(`profile:${tx.user_id}`);
+      const userEmail = profile?.email;
+      const userName = profile?.full_name || userEmail?.split("@")[0] || "User";
+      const subscription = await kv.get(`subscription:${tx.user_id}`);
+      if (userEmail) {
+        const periodEndStr = subscription?.current_period_end ?? periodEnd(tx.interval, started);
+        const html = emails.receiptHtml({
+          userName,
+          planName: tx.plan_name || tx.plan_id,
+          interval: tx.interval,
+          amount: tx.gross_amount,
+          currency: tx.currency || "IDR",
+          orderId: tx.order_id,
+          periodEnd: periodEndStr,
+          paymentType: midtransData.payment_type ?? null,
+        });
+        await emails.sendEmail(userEmail, "Your LokaSync payment receipt", html);
+      }
+    } catch (emailErr) {
+      // Email failure must never break the transaction
+      console.log("Receipt email failed:", emailErr);
     }
   }
   return tx;
@@ -1457,6 +1542,55 @@ app.delete("/admin/notifications/:id", async (c) => {
   }
 });
 
+// ── Subscription reminders (Fase 13.3) ───────────────────────────────────────
+// POST /admin/send-reminders  { days?: number }  →  { sent, skipped, daysAhead }
+app.post("/admin/send-reminders", async (c) => {
+  try {
+    const gate = await requireAdmin(c);
+    if (!gate.user) return gate.response;
+    const body = await c.req.json().catch(() => ({}));
+    const daysAhead = Math.min(Math.max(Number(body.days ?? 7), 1), 30);
+    const now = Date.now();
+    const cutoff = now + daysAhead * 24 * 60 * 60 * 1000;
+
+    const activeList: string[] = (await kv.get("subscriptions:active")) ?? [];
+    let sent = 0;
+    let skipped = 0;
+
+    for (const userId of activeList) {
+      const sub = await kv.get(`subscription:${userId}`);
+      if (!sub || sub.status !== "active" || !sub.current_period_end) { skipped++; continue; }
+      const end = new Date(sub.current_period_end).getTime();
+      if (end > now && end <= cutoff) {
+        const profile = await kv.get(`profile:${userId}`);
+        const email = profile?.email;
+        const name = profile?.full_name || email?.split("@")[0] || "User";
+        const daysLeft = Math.ceil((end - now) / (24 * 60 * 60 * 1000));
+        if (email) {
+          const html = emails.reminderHtml({
+            userName: name,
+            planName: sub.plan_id,
+            expiryDate: sub.current_period_end,
+            daysLeft,
+          });
+          const ok = await emails.sendEmail(
+            email,
+            "Your LokaSync subscription expires soon",
+            html,
+          );
+          if (ok) sent++; else skipped++;
+        } else {
+          skipped++;
+        }
+      }
+    }
+    return c.json({ sent, skipped, daysAhead });
+  } catch (e) {
+    console.log("POST /admin/send-reminders error:", e);
+    return c.json({ error: String(e) }, 500);
+  }
+});
+
 // ── User notifications (authenticated) ────────────────────────────────────────
 // Read state lives in `notification_reads:{userId}` as an array of ids.
 
@@ -2090,13 +2224,148 @@ app.put("/files", async (c) => {
 
 app.delete("/files/:name", async (c) => {
   try {
+    const client = storageClient();
     const name = decodeURIComponent(c.req.param("name"));
     let files = await wsGetOrSeed(c, "files:list", SEED_FILES);
+    const file = files.find((f: any) => f.name === name);
+
+    if (!file) return c.json({ error: "File not found" }, 404);
+
+    // 1. Delete from Storage if there's a real file
+    if (client && file.storagePath) {
+      const { error } = await client.storage.from("workspace-files").remove([file.storagePath]);
+      if (error) console.log("Storage delete error:", error);
+    }
+
+    // 2. Decrement usage counter
+    if (file.size && typeof file.size === "number") {
+      await incrementStorageUsage(c, -file.size);
+    }
+
+    // 3. Remove from KV metadata
     files = files.filter((f: any) => f.name !== name);
     await kv.set(wsKey(c, "files:list"), files);
+
     return c.json({ ok: true });
   } catch (e) {
     console.log("DELETE /files/:name error:", e);
+    return c.json({ error: String(e) }, 500);
+  }
+});
+
+// POST /files/upload — real multipart upload to Supabase Storage
+app.post("/files/upload", async (c) => {
+  try {
+    const client = storageClient();
+    if (!client) return c.json({ error: "Storage not configured" }, 503);
+
+    const form = await c.req.formData();
+    const file = form.get("file");
+    if (!file || !(file instanceof File)) {
+      return c.json({ error: "Missing file field" }, 400);
+    }
+    if (file.size === 0) return c.json({ error: "Empty file" }, 400);
+
+    const rawMeta = form.get("metadata");
+    const parsedMeta = rawMeta && typeof rawMeta === "string" ? JSON.parse(rawMeta) : {};
+
+    // 1. Quota check
+    const quota = await checkStorageQuota(c, file.size);
+    if (!quota.allowed) {
+      return c.json(
+        { error: "Storage quota exceeded", used: quota.used, limit: quota.limit },
+        413,
+      );
+    }
+
+    // 2. Upload to Supabase Storage
+    const workspace = c.get("workspace");
+    const ext = (file.name.split(".").pop() ?? "").toLowerCase();
+    const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
+    const storagePath = `${workspace.id}/${Date.now()}-${safeName}`;
+    const bytes = new Uint8Array(await file.arrayBuffer());
+
+    const { error: uploadErr } = await client
+      .storage
+      .from("workspace-files")
+      .upload(storagePath, bytes, {
+        contentType: file.type || "application/octet-stream",
+        upsert: false,
+      });
+
+    if (uploadErr) {
+      console.log("Storage upload error:", uploadErr);
+      return c.json({ error: uploadErr.message }, 500);
+    }
+
+    // 3. Get signed URL (7 days)
+    const { data: urlData } = await client
+      .storage
+      .from("workspace-files")
+      .createSignedUrl(storagePath, 60 * 60 * 24 * 7);
+
+    const fileRecord = {
+      name: file.name,
+      type: ext || "doc",
+      size: file.size,
+      sizeHuman: humanSize(file.size),
+      modified: new Date().toISOString(),
+      owner: parsedMeta.owner || "—",
+      shared: parsedMeta.shared ?? false,
+      archived: false,
+      storagePath,
+      url: urlData?.signedUrl ?? null,
+      urlExpiresAt: urlData?.signedUrl
+        ? new Date(Date.now() + 60 * 60 * 24 * 7 * 1000).toISOString()
+        : null,
+    };
+
+    // 4. Save metadata to KV
+    const files = await wsGetOrSeed(c, "files:list", SEED_FILES);
+    files.unshift(fileRecord);
+    await kv.set(wsKey(c, "files:list"), files);
+
+    // 5. Update usage counter
+    await incrementStorageUsage(c, file.size);
+
+    return c.json(fileRecord, 201);
+  } catch (e) {
+    console.log("POST /files/upload error:", e);
+    return c.json({ error: String(e) }, 500);
+  }
+});
+
+// GET /files/download/:name — generate a fresh signed URL (1 hour expiry)
+app.get("/files/download/:name", async (c) => {
+  try {
+    const client = storageClient();
+    if (!client) return c.json({ error: "Storage not configured" }, 503);
+
+    const name = decodeURIComponent(c.req.param("name"));
+    const files = await wsGetOrSeed(c, "files:list", SEED_FILES);
+    const file = files.find((f: any) => f.name === name);
+    if (!file?.storagePath) return c.json({ error: "File not found" }, 404);
+
+    const { data, error } = await client
+      .storage
+      .from("workspace-files")
+      .createSignedUrl(file.storagePath, 60 * 60); // 1 hour
+
+    if (error) return c.json({ error: error.message }, 500);
+    return c.json({ url: data.signedUrl, expiresIn: 3600 });
+  } catch (e) {
+    console.log("GET /files/download error:", e);
+    return c.json({ error: String(e) }, 500);
+  }
+});
+
+// GET /files/quota — return current storage usage and limit
+app.get("/files/quota", async (c) => {
+  try {
+    const { used, limit } = await getStorageUsage(c);
+    return c.json({ used, limit, unlimited: limit === 0 });
+  } catch (e) {
+    console.log("GET /files/quota error:", e);
     return c.json({ error: String(e) }, 500);
   }
 });
