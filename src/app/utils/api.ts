@@ -304,6 +304,34 @@ export const adminDeleteVoucher = (code: string) =>
   });
 export const adminGetSubscribers = () =>
   request<SubscriberRow[]>("/admin/subscribers");
+
+// Fase 14.4 — batch migration of legacy global KV data into per-user default
+// workspaces. Defaults to dry-run; purge_legacy only applies to a real run.
+export interface MigrationReport {
+  dry_run: boolean;
+  users_processed: number;
+  workspaces_created: number;
+  keys_copied: number;
+  keys_skipped: number;
+  legacy_keys_found: string[];
+  legacy_purged: boolean;
+  details: {
+    email: string;
+    workspace_id: string | null;
+    workspace_created: boolean;
+    copied: number;
+    skipped: number;
+  }[];
+}
+
+export const adminMigrateWorkspaces = (input: {
+  dry_run?: boolean;
+  purge_legacy?: boolean;
+}) =>
+  request<MigrationReport>("/admin/migrate-workspaces", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
 export const adminSetMaintenance = (input: { enabled: boolean; message: string }) =>
   request<{ maintenance: MaintenanceStatus }>("/admin/maintenance", {
     method: "PUT",

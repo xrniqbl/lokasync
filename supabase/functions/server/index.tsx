@@ -1123,6 +1123,116 @@ app.get("/admin/overview", async (c) => {
   }
 });
 
+// ── Fase 14.4 — batch migration: legacy global KV → per-workspace ─────────────
+// The workspace gate already lazy-migrates on first read; this endpoint does a
+// controlled batch migration for production cutover. Defaults to DRY RUN.
+//
+//   POST /admin/migrate-workspaces { dry_run?: true, purge_legacy?: false }
+//
+// - dry_run (default true): report what would happen, write nothing
+// - purge_legacy: after a real run, delete the legacy global keys (cutover);
+//   ignored while dry_run is true
+
+app.post("/admin/migrate-workspaces", async (c) => {
+  try {
+    const gate = await requireAdmin(c);
+    if (!gate.user) return gate.response;
+    const body = await c.req.json().catch(() => ({}));
+    const dryRun = body.dry_run !== false;
+    const purgeLegacy = body.purge_legacy === true && !dryRun;
+
+    // Snapshot the legacy global values once
+    const legacy: Record<string, any> = {};
+    for (const key of ws.WORKSPACE_DATA_KEYS) {
+      const value = await kv.get(key);
+      if (value !== undefined && value !== null) legacy[key] = value;
+    }
+    const legacyKeys = Object.keys(legacy);
+
+    const report = {
+      dry_run: dryRun,
+      users_processed: 0,
+      workspaces_created: 0,
+      keys_copied: 0,
+      keys_skipped: 0,
+      legacy_keys_found: legacyKeys,
+      legacy_purged: false,
+      details: [] as any[],
+    };
+
+    let page = 1;
+    while (true) {
+      const { data, error } = await adminClient().auth.admin.listUsers({
+        page,
+        perPage: 200,
+      });
+      if (error) throw new Error(error.message);
+      const users = data?.users ?? [];
+      if (users.length === 0) break;
+
+      for (const user of users) {
+        report.users_processed++;
+        const detail: any = {
+          email: user.email,
+          workspace_id: null,
+          workspace_created: false,
+          copied: 0,
+          skipped: 0,
+        };
+
+        // Find the user's default workspace (first valid membership)
+        const ids = await ws.listUserWorkspaceIds(user.id);
+        let workspaceId: string | null = null;
+        for (const id of ids) {
+          if (await ws.getMembership(id, user.id)) {
+            workspaceId = id;
+            break;
+          }
+        }
+        if (!workspaceId) {
+          report.workspaces_created++;
+          detail.workspace_created = true;
+          if (!dryRun) {
+            const created = await ws.ensureDefaultWorkspace(user);
+            workspaceId = created.workspace.id;
+          }
+        }
+        detail.workspace_id = workspaceId;
+
+        for (const key of legacyKeys) {
+          // Without a real workspace (dry run + new user) every key is a copy
+          const scoped = workspaceId ? ws.wsDataKey(workspaceId, key) : null;
+          const existing = scoped ? await kv.get(scoped) : null;
+          if (existing !== undefined && existing !== null) {
+            report.keys_skipped++;
+            detail.skipped++;
+          } else {
+            report.keys_copied++;
+            detail.copied++;
+            if (!dryRun && scoped) await kv.set(scoped, legacy[key]);
+          }
+        }
+
+        if (report.details.length < 100) report.details.push(detail);
+      }
+      page++;
+    }
+
+    if (purgeLegacy && legacyKeys.length > 0) {
+      await kv.mdel(legacyKeys);
+      report.legacy_purged = true;
+    }
+
+    console.log(
+      `migrate-workspaces ${dryRun ? "(dry run) " : ""}— users: ${report.users_processed}, copied: ${report.keys_copied}, skipped: ${report.keys_skipped}, purged: ${report.legacy_purged}`,
+    );
+    return c.json(report);
+  } catch (e) {
+    console.log("POST /admin/migrate-workspaces error:", e);
+    return c.json({ error: String(e) }, 500);
+  }
+});
+
 // Vouchers CRUD — voucher:{CODE}. used_count is only ever advanced by the
 // payment webhook; the panel can edit everything else.
 
