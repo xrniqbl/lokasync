@@ -9,6 +9,15 @@ export const setApiAccessToken = (token: string | null) => {
   userAccessToken = token;
 };
 
+// Fase 14 — active workspace. When set, every request carries X-Workspace-Id
+// so the server scopes project data to that workspace (membership-validated
+// server-side). When null, the server falls back to the user's default
+// workspace, so existing flows keep working unchanged.
+let activeWorkspaceId: string | null = null;
+export const setApiWorkspaceId = (id: string | null) => {
+  activeWorkspaceId = id;
+};
+
 /** Error thrown for non-2xx responses; `code` carries the server error code. */
 export class ApiError extends Error {
   status: number;
@@ -26,6 +35,7 @@ async function request<T>(path: string, opts: RequestInit = {}): Promise<T> {
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${userAccessToken ?? publicAnonKey}`,
+      ...(activeWorkspaceId ? { "X-Workspace-Id": activeWorkspaceId } : {}),
       ...opts.headers,
     },
   });
@@ -430,6 +440,62 @@ export const createFolder = (folder: Folder) =>
 export const getSettings = (section: string) => request<any>(`/settings/${section}`);
 export const saveSettings = (section: string, data: any) =>
   request<any>(`/settings/${section}`, { method: "PUT", body: JSON.stringify(data) });
+
+// ── Workspaces (Fase 14 — multi-user collaboration) ──────────────────────────
+
+export type WorkspaceRole = "owner" | "member";
+
+export interface Workspace {
+  id: string;
+  name: string;
+  owner_id: string;
+  created_at: string;
+  updated_at: string;
+  /** The signed-in user's role in this workspace. */
+  role: WorkspaceRole;
+}
+
+export interface WorkspaceMember {
+  workspace_id: string;
+  user_id: string;
+  role: WorkspaceRole;
+  email: string;
+  name: string;
+  joined_at: string;
+}
+
+export const getWorkspaces = () =>
+  request<{ workspaces: Workspace[]; active: string }>("/workspaces");
+export const createWorkspace = (name: string) =>
+  request<Workspace>("/workspaces", {
+    method: "POST",
+    body: JSON.stringify({ name }),
+  });
+export const renameWorkspace = (id: string, name: string) =>
+  request<Workspace>(`/workspaces/${encodeURIComponent(id)}`, {
+    method: "PUT",
+    body: JSON.stringify({ name }),
+  });
+export const deleteWorkspace = (id: string) =>
+  request<{ ok: boolean }>(`/workspaces/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  });
+export const getWorkspaceMembers = (id: string) =>
+  request<WorkspaceMember[]>(`/workspaces/${encodeURIComponent(id)}/members`);
+export const updateWorkspaceMemberRole = (
+  id: string,
+  userId: string,
+  role: WorkspaceRole,
+) =>
+  request<WorkspaceMember>(
+    `/workspaces/${encodeURIComponent(id)}/members/${encodeURIComponent(userId)}`,
+    { method: "PUT", body: JSON.stringify({ role }) },
+  );
+export const removeWorkspaceMember = (id: string, userId: string) =>
+  request<{ ok: boolean }>(
+    `/workspaces/${encodeURIComponent(id)}/members/${encodeURIComponent(userId)}`,
+    { method: "DELETE" },
+  );
 
 // ── Workspace admin ───────────────────────────────────────────────────────────
 

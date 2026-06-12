@@ -3,6 +3,7 @@ import { cors } from "npm:hono/cors";
 import { logger } from "npm:hono/logger";
 import { createClient } from "jsr:@supabase/supabase-js@2.49.8";
 import * as kv from "./kv_store.tsx";
+import * as ws from "./workspaces.tsx";
 
 // Supabase passes the full request path including the function name
 const app = new Hono().basePath("/server");
@@ -56,6 +57,73 @@ app.use("*", async (c, next) => {
     503,
   );
 });
+
+// ── Workspace gate (Fase 14) ──────────────────────────────────────────────────
+// Every project-data route requires a signed-in user AND a valid membership in
+// the active workspace. The workspace comes from the X-Workspace-Id header;
+// without it the user's default workspace is used (legacy clients keep working).
+// All queries are scoped to the membership-validated workspace id — never to a
+// raw client-supplied value (anti-IDOR).
+
+const WORKSPACE_SCOPED_PREFIXES = [
+  "/tasks",
+  "/projects",
+  "/teams",
+  "/calendar",
+  "/files",
+  "/settings",
+  "/financial",
+  "/integrations",
+  "/sessions",
+  "/analytics",
+  "/dashboard",
+  "/milestones",
+  "/workspace-data",
+  "/workspaces",
+];
+
+app.use("*", async (c, next) => {
+  if (c.req.method === "OPTIONS") return next();
+  const path = c.req.path.replace(/^\/server/, "");
+  const scoped = WORKSPACE_SCOPED_PREFIXES.some(
+    (p) => path === p || path.startsWith(p + "/"),
+  );
+  if (!scoped) return next();
+  const user = await getAuthedUser(c);
+  if (!user) return c.json({ error: "Unauthorized" }, 401);
+  const resolved = await ws.resolveWorkspace(
+    c.req.header("X-Workspace-Id") ?? null,
+    user,
+  );
+  if (!resolved) {
+    return c.json(
+      { error: "You are not a member of this workspace", code: "workspace_forbidden" },
+      403,
+    );
+  }
+  c.set("user", user);
+  c.set("workspace", resolved.workspace);
+  c.set("membership", resolved.membership);
+  return next();
+});
+
+// Workspace-scoped KV helpers — only usable inside workspace-gated routes.
+const wsKey = (c: any, key: string) => ws.wsDataKey(c.get("workspace").id, key);
+
+const isOwner = (c: any) => c.get("membership")?.role === "owner";
+
+// Reads a workspace-scoped value; on first access it lazily migrates the
+// pre-Fase-14 global key (dual-read), falling back to the seed.
+async function wsGetOrSeed(c: any, key: string, seed: any): Promise<any> {
+  const scopedKey = wsKey(c, key);
+  let data = await kv.get(scopedKey);
+  if (data === undefined || data === null) {
+    const legacy = await kv.get(key);
+    data = legacy ?? seed;
+    await kv.set(scopedKey, data);
+  }
+  return data;
+}
 
 // ── Seed Data ─────────────────────────────────────────────────────────────────
 
@@ -1326,14 +1394,156 @@ app.put("/notifications/read", async (c) => {
   }
 });
 
-// ── Reset workspace ───────────────────────────────────────────────────────────
+// ── Workspaces (Fase 14) ──────────────────────────────────────────────────────
+// Roles: owner (manage workspace + members) | member (read/write project data).
+
+app.get("/workspaces", async (c) => {
+  try {
+    const user = c.get("user");
+    const ids = await ws.listUserWorkspaceIds(user.id);
+    const items = [];
+    for (const id of ids) {
+      const workspace = await ws.getWorkspace(id);
+      const membership = await ws.getMembership(id, user.id);
+      if (workspace && membership) {
+        items.push({ ...workspace, role: membership.role });
+      }
+    }
+    return c.json({ workspaces: items, active: c.get("workspace").id });
+  } catch (e) {
+    console.log("GET /workspaces error:", e);
+    return c.json({ error: String(e) }, 500);
+  }
+});
+
+app.post("/workspaces", async (c) => {
+  try {
+    const user = c.get("user");
+    const body = await c.req.json();
+    const name = String(body.name ?? "").trim().slice(0, 80);
+    if (!name) return c.json({ error: "Workspace name is required" }, 400);
+    const created = await ws.createWorkspace(user, name);
+    return c.json({ ...created.workspace, role: created.membership.role }, 201);
+  } catch (e) {
+    console.log("POST /workspaces error:", e);
+    return c.json({ error: String(e) }, 500);
+  }
+});
+
+app.put("/workspaces/:id", async (c) => {
+  try {
+    const user = c.get("user");
+    const id = c.req.param("id");
+    const membership = await ws.getMembership(id, user.id);
+    if (!membership) return c.json({ error: "Workspace not found" }, 404);
+    if (membership.role !== "owner") {
+      return c.json({ error: "Only the owner can manage this workspace", code: "owner_required" }, 403);
+    }
+    const body = await c.req.json();
+    const name = String(body.name ?? "").trim().slice(0, 80);
+    if (!name) return c.json({ error: "Workspace name is required" }, 400);
+    const workspace = await ws.getWorkspace(id);
+    if (!workspace) return c.json({ error: "Workspace not found" }, 404);
+    const updated = { ...workspace, name, updated_at: new Date().toISOString() };
+    await kv.set(`workspace:${id}`, updated);
+    return c.json({ ...updated, role: membership.role });
+  } catch (e) {
+    console.log("PUT /workspaces/:id error:", e);
+    return c.json({ error: String(e) }, 500);
+  }
+});
+
+app.delete("/workspaces/:id", async (c) => {
+  try {
+    const user = c.get("user");
+    const id = c.req.param("id");
+    const membership = await ws.getMembership(id, user.id);
+    if (!membership) return c.json({ error: "Workspace not found" }, 404);
+    if (membership.role !== "owner") {
+      return c.json({ error: "Only the owner can delete this workspace", code: "owner_required" }, 403);
+    }
+    const ids = await ws.listUserWorkspaceIds(user.id);
+    if (ids.length <= 1) {
+      return c.json({ error: "You cannot delete your only workspace" }, 400);
+    }
+    await ws.deleteWorkspace(id);
+    return c.json({ ok: true });
+  } catch (e) {
+    console.log("DELETE /workspaces/:id error:", e);
+    return c.json({ error: String(e) }, 500);
+  }
+});
+
+app.get("/workspaces/:id/members", async (c) => {
+  try {
+    const user = c.get("user");
+    const id = c.req.param("id");
+    const membership = await ws.getMembership(id, user.id);
+    if (!membership) return c.json({ error: "Workspace not found" }, 404);
+    return c.json(await ws.getMembers(id));
+  } catch (e) {
+    console.log("GET /workspaces/:id/members error:", e);
+    return c.json({ error: String(e) }, 500);
+  }
+});
+
+app.put("/workspaces/:id/members/:userId", async (c) => {
+  try {
+    const user = c.get("user");
+    const id = c.req.param("id");
+    const targetId = c.req.param("userId");
+    const membership = await ws.getMembership(id, user.id);
+    if (!membership) return c.json({ error: "Workspace not found" }, 404);
+    if (membership.role !== "owner") {
+      return c.json({ error: "Only the owner can change roles", code: "owner_required" }, 403);
+    }
+    const workspace = await ws.getWorkspace(id);
+    if (workspace?.owner_id === targetId) {
+      return c.json({ error: "The workspace owner's role cannot be changed" }, 400);
+    }
+    const body = await c.req.json();
+    const role = body.role === "owner" ? "owner" : "member";
+    const updated = await ws.updateMemberRole(id, targetId, role);
+    if (!updated) return c.json({ error: "Member not found" }, 404);
+    return c.json(updated);
+  } catch (e) {
+    console.log("PUT /workspaces/:id/members/:userId error:", e);
+    return c.json({ error: String(e) }, 500);
+  }
+});
+
+app.delete("/workspaces/:id/members/:userId", async (c) => {
+  try {
+    const user = c.get("user");
+    const id = c.req.param("id");
+    const targetId = c.req.param("userId");
+    const membership = await ws.getMembership(id, user.id);
+    if (!membership) return c.json({ error: "Workspace not found" }, 404);
+    // Owners can remove anyone (except themselves); members may only leave.
+    if (membership.role !== "owner" && targetId !== user.id) {
+      return c.json({ error: "Only the owner can remove members", code: "owner_required" }, 403);
+    }
+    const workspace = await ws.getWorkspace(id);
+    if (workspace?.owner_id === targetId) {
+      return c.json({ error: "The workspace owner cannot be removed" }, 400);
+    }
+    await ws.removeMember(id, targetId);
+    return c.json({ ok: true });
+  } catch (e) {
+    console.log("DELETE /workspaces/:id/members/:userId error:", e);
+    return c.json({ error: String(e) }, 500);
+  }
+});
+
+// ── Reset workspace data ──────────────────────────────────────────────────────
 
 app.delete("/workspace-data", async (c) => {
   try {
-    const user = await getAuthedUser(c);
-    if (!user) return c.json({ error: "Unauthorized" }, 401);
+    if (!isOwner(c)) {
+      return c.json({ error: "Only the owner can reset workspace data", code: "owner_required" }, 403);
+    }
     const keys = ["tasks:list", "projects:list", "teams:list", "calendar:events", "files:list", "files:folders"];
-    await kv.mdel(keys);
+    await kv.mdel(keys.map((k) => wsKey(c, k)));
     return c.json({ ok: true });
   } catch (e) {
     console.log("DELETE /workspace-data error:", e);
@@ -1345,7 +1555,7 @@ app.delete("/workspace-data", async (c) => {
 
 app.get("/tasks", async (c) => {
   try {
-    const tasks = await getOrSeed("tasks:list", SEED_TASKS);
+    const tasks = await wsGetOrSeed(c, "tasks:list", SEED_TASKS);
     return c.json(tasks);
   } catch (e) {
     console.log("GET /tasks error:", e);
@@ -1356,11 +1566,11 @@ app.get("/tasks", async (c) => {
 app.post("/tasks", async (c) => {
   try {
     const body = await c.req.json();
-    const tasks = await getOrSeed("tasks:list", SEED_TASKS);
+    const tasks = await wsGetOrSeed(c, "tasks:list", SEED_TASKS);
     const newId = tasks.length > 0 ? Math.max(...tasks.map((t: any) => t.id)) + 1 : 1;
     const newTask = { ...body, id: newId };
     tasks.push(newTask);
-    await kv.set("tasks:list", tasks);
+    await kv.set(wsKey(c, "tasks:list"), tasks);
     return c.json(newTask, 201);
   } catch (e) {
     console.log("POST /tasks error:", e);
@@ -1372,11 +1582,11 @@ app.put("/tasks/:id", async (c) => {
   try {
     const id = parseInt(c.req.param("id"));
     const body = await c.req.json();
-    const tasks = await getOrSeed("tasks:list", SEED_TASKS);
+    const tasks = await wsGetOrSeed(c, "tasks:list", SEED_TASKS);
     const idx = tasks.findIndex((t: any) => t.id === id);
     if (idx === -1) return c.json({ error: "Task not found" }, 404);
     tasks[idx] = { ...tasks[idx], ...body };
-    await kv.set("tasks:list", tasks);
+    await kv.set(wsKey(c, "tasks:list"), tasks);
     return c.json(tasks[idx]);
   } catch (e) {
     console.log("PUT /tasks/:id error:", e);
@@ -1387,9 +1597,9 @@ app.put("/tasks/:id", async (c) => {
 app.delete("/tasks/:id", async (c) => {
   try {
     const id = parseInt(c.req.param("id"));
-    let tasks = await getOrSeed("tasks:list", SEED_TASKS);
+    let tasks = await wsGetOrSeed(c, "tasks:list", SEED_TASKS);
     tasks = tasks.filter((t: any) => t.id !== id);
-    await kv.set("tasks:list", tasks);
+    await kv.set(wsKey(c, "tasks:list"), tasks);
     return c.json({ ok: true });
   } catch (e) {
     console.log("DELETE /tasks/:id error:", e);
@@ -1401,7 +1611,7 @@ app.delete("/tasks/:id", async (c) => {
 
 app.get("/projects", async (c) => {
   try {
-    const projects = await getOrSeed("projects:list", SEED_PROJECTS);
+    const projects = await wsGetOrSeed(c, "projects:list", SEED_PROJECTS);
     return c.json(projects);
   } catch (e) {
     console.log("GET /projects error:", e);
@@ -1411,10 +1621,9 @@ app.get("/projects", async (c) => {
 
 app.post("/projects", async (c) => {
   try {
-    const user = await getAuthedUser(c);
-    if (!user) return c.json({ error: "Unauthorized" }, 401);
+    const user = c.get("user");
     const body = await c.req.json();
-    const projects = await getOrSeed("projects:list", SEED_PROJECTS);
+    const projects = await wsGetOrSeed(c, "projects:list", SEED_PROJECTS);
     const planId = await getEffectivePlanId(user.id);
     if (planId === "free" && projects.length >= FREE_MAX_PROJECTS) {
       return c.json(
@@ -1429,7 +1638,7 @@ app.post("/projects", async (c) => {
     const newId = projects.length > 0 ? Math.max(...projects.map((p: any) => p.id)) + 1 : 1;
     const newProject = { ...body, id: newId };
     projects.push(newProject);
-    await kv.set("projects:list", projects);
+    await kv.set(wsKey(c, "projects:list"), projects);
     return c.json(newProject, 201);
   } catch (e) {
     console.log("POST /projects error:", e);
@@ -1441,11 +1650,11 @@ app.put("/projects/:id", async (c) => {
   try {
     const id = parseInt(c.req.param("id"));
     const body = await c.req.json();
-    const projects = await getOrSeed("projects:list", SEED_PROJECTS);
+    const projects = await wsGetOrSeed(c, "projects:list", SEED_PROJECTS);
     const idx = projects.findIndex((p: any) => p.id === id);
     if (idx === -1) return c.json({ error: "Project not found" }, 404);
     projects[idx] = { ...projects[idx], ...body };
-    await kv.set("projects:list", projects);
+    await kv.set(wsKey(c, "projects:list"), projects);
     return c.json(projects[idx]);
   } catch (e) {
     console.log("PUT /projects/:id error:", e);
@@ -1456,9 +1665,9 @@ app.put("/projects/:id", async (c) => {
 app.delete("/projects/:id", async (c) => {
   try {
     const id = parseInt(c.req.param("id"));
-    let projects = await getOrSeed("projects:list", SEED_PROJECTS);
+    let projects = await wsGetOrSeed(c, "projects:list", SEED_PROJECTS);
     projects = projects.filter((p: any) => p.id !== id);
-    await kv.set("projects:list", projects);
+    await kv.set(wsKey(c, "projects:list"), projects);
     return c.json({ ok: true });
   } catch (e) {
     console.log("DELETE /projects/:id error:", e);
@@ -1472,7 +1681,7 @@ app.get("/teams", async (c) => {
   try {
     const gate = await requirePlan(c, "pro");
     if (!gate.user) return gate.response;
-    const teams = await getOrSeed("teams:list", SEED_TEAMS);
+    const teams = await wsGetOrSeed(c, "teams:list", SEED_TEAMS);
     return c.json(teams);
   } catch (e) {
     console.log("GET /teams error:", e);
@@ -1485,11 +1694,11 @@ app.post("/teams/invite", async (c) => {
     const gate = await requirePlan(c, "pro");
     if (!gate.user) return gate.response;
     const { teamName, member } = await c.req.json();
-    const teams = await getOrSeed("teams:list", SEED_TEAMS);
+    const teams = await wsGetOrSeed(c, "teams:list", SEED_TEAMS);
     const team = teams.find((t: any) => t.name === teamName);
     if (!team) return c.json({ error: "Team not found" }, 404);
     team.members.push(member);
-    await kv.set("teams:list", teams);
+    await kv.set(wsKey(c, "teams:list"), teams);
     return c.json(team, 201);
   } catch (e) {
     console.log("POST /teams/invite error:", e);
@@ -1502,13 +1711,13 @@ app.put("/teams/member", async (c) => {
     const gate = await requirePlan(c, "pro");
     if (!gate.user) return gate.response;
     const { teamName, initials, patch } = await c.req.json();
-    const teams = await getOrSeed("teams:list", SEED_TEAMS);
+    const teams = await wsGetOrSeed(c, "teams:list", SEED_TEAMS);
     const team = teams.find((t: any) => t.name === teamName);
     if (!team) return c.json({ error: "Team not found" }, 404);
     const memberIdx = team.members.findIndex((m: any) => m.initials === initials);
     if (memberIdx === -1) return c.json({ error: "Member not found" }, 404);
     team.members[memberIdx] = { ...team.members[memberIdx], ...patch };
-    await kv.set("teams:list", teams);
+    await kv.set(wsKey(c, "teams:list"), teams);
     return c.json(team.members[memberIdx]);
   } catch (e) {
     console.log("PUT /teams/member error:", e);
@@ -1521,11 +1730,11 @@ app.delete("/teams/member", async (c) => {
     const gate = await requirePlan(c, "pro");
     if (!gate.user) return gate.response;
     const { teamName, initials } = await c.req.json();
-    const teams = await getOrSeed("teams:list", SEED_TEAMS);
+    const teams = await wsGetOrSeed(c, "teams:list", SEED_TEAMS);
     const team = teams.find((t: any) => t.name === teamName);
     if (!team) return c.json({ error: "Team not found" }, 404);
     team.members = team.members.filter((m: any) => m.initials !== initials);
-    await kv.set("teams:list", teams);
+    await kv.set(wsKey(c, "teams:list"), teams);
     return c.json({ ok: true });
   } catch (e) {
     console.log("DELETE /teams/member error:", e);
@@ -1537,7 +1746,7 @@ app.delete("/teams/member", async (c) => {
 
 app.get("/calendar", async (c) => {
   try {
-    const events = await getOrSeed("calendar:events", SEED_CALENDAR);
+    const events = await wsGetOrSeed(c, "calendar:events", SEED_CALENDAR);
     return c.json(events);
   } catch (e) {
     console.log("GET /calendar error:", e);
@@ -1548,10 +1757,10 @@ app.get("/calendar", async (c) => {
 app.post("/calendar/events", async (c) => {
   try {
     const { dateKey, event } = await c.req.json();
-    const events = await getOrSeed("calendar:events", SEED_CALENDAR);
+    const events = await wsGetOrSeed(c, "calendar:events", SEED_CALENDAR);
     if (!events[dateKey]) events[dateKey] = [];
     events[dateKey].push(event);
-    await kv.set("calendar:events", events);
+    await kv.set(wsKey(c, "calendar:events"), events);
     return c.json(events[dateKey], 201);
   } catch (e) {
     console.log("POST /calendar/events error:", e);
@@ -1562,12 +1771,12 @@ app.post("/calendar/events", async (c) => {
 app.delete("/calendar/events", async (c) => {
   try {
     const { dateKey, index } = await c.req.json();
-    const events = await getOrSeed("calendar:events", SEED_CALENDAR);
+    const events = await wsGetOrSeed(c, "calendar:events", SEED_CALENDAR);
     if (events[dateKey]) {
       events[dateKey].splice(index, 1);
       if (events[dateKey].length === 0) delete events[dateKey];
     }
-    await kv.set("calendar:events", events);
+    await kv.set(wsKey(c, "calendar:events"), events);
     return c.json({ ok: true });
   } catch (e) {
     console.log("DELETE /calendar/events error:", e);
@@ -1579,8 +1788,8 @@ app.delete("/calendar/events", async (c) => {
 
 app.get("/files", async (c) => {
   try {
-    const files = await getOrSeed("files:list", SEED_FILES);
-    const folders = await getOrSeed("files:folders", SEED_FOLDERS);
+    const files = await wsGetOrSeed(c, "files:list", SEED_FILES);
+    const folders = await wsGetOrSeed(c, "files:folders", SEED_FOLDERS);
     return c.json({ files, folders });
   } catch (e) {
     console.log("GET /files error:", e);
@@ -1591,9 +1800,9 @@ app.get("/files", async (c) => {
 app.post("/files", async (c) => {
   try {
     const file = await c.req.json();
-    const files = await getOrSeed("files:list", SEED_FILES);
+    const files = await wsGetOrSeed(c, "files:list", SEED_FILES);
     files.unshift(file);
-    await kv.set("files:list", files);
+    await kv.set(wsKey(c, "files:list"), files);
     return c.json(file, 201);
   } catch (e) {
     console.log("POST /files error:", e);
@@ -1604,11 +1813,11 @@ app.post("/files", async (c) => {
 app.put("/files", async (c) => {
   try {
     const { oldName, newName } = await c.req.json();
-    const files = await getOrSeed("files:list", SEED_FILES);
+    const files = await wsGetOrSeed(c, "files:list", SEED_FILES);
     const idx = files.findIndex((f: any) => f.name === oldName);
     if (idx === -1) return c.json({ error: "File not found" }, 404);
     files[idx] = { ...files[idx], name: newName };
-    await kv.set("files:list", files);
+    await kv.set(wsKey(c, "files:list"), files);
     return c.json(files[idx]);
   } catch (e) {
     console.log("PUT /files error:", e);
@@ -1619,9 +1828,9 @@ app.put("/files", async (c) => {
 app.delete("/files/:name", async (c) => {
   try {
     const name = decodeURIComponent(c.req.param("name"));
-    let files = await getOrSeed("files:list", SEED_FILES);
+    let files = await wsGetOrSeed(c, "files:list", SEED_FILES);
     files = files.filter((f: any) => f.name !== name);
-    await kv.set("files:list", files);
+    await kv.set(wsKey(c, "files:list"), files);
     return c.json({ ok: true });
   } catch (e) {
     console.log("DELETE /files/:name error:", e);
@@ -1632,9 +1841,9 @@ app.delete("/files/:name", async (c) => {
 app.post("/files/folders", async (c) => {
   try {
     const folder = await c.req.json();
-    const folders = await getOrSeed("files:folders", SEED_FOLDERS);
+    const folders = await wsGetOrSeed(c, "files:folders", SEED_FOLDERS);
     folders.push(folder);
-    await kv.set("files:folders", folders);
+    await kv.set(wsKey(c, "files:folders"), folders);
     return c.json(folder, 201);
   } catch (e) {
     console.log("POST /files/folders error:", e);
@@ -1662,7 +1871,7 @@ app.get("/settings/:section", async (c) => {
     const section = c.req.param("section");
     const seed = settingsSeedMap[section];
     if (!seed) return c.json({ error: "Unknown settings section: " + section }, 400);
-    const data = await getOrSeed("settings:" + section, seed);
+    const data = await wsGetOrSeed(c, "settings:" + section, seed);
     return c.json(data);
   } catch (e) {
     console.log("GET /settings/:section error:", e);
@@ -1674,8 +1883,13 @@ app.put("/settings/:section", async (c) => {
   try {
     const section = c.req.param("section");
     if (!settingsSeedMap[section]) return c.json({ error: "Unknown settings section: " + section }, 400);
+    // Workspace-level sections are restricted to the owner (Fase 14.3).
+    const OWNER_ONLY_SECTIONS = ["workspace", "members", "billing", "api-keys", "webhooks"];
+    if (OWNER_ONLY_SECTIONS.includes(section) && !isOwner(c)) {
+      return c.json({ error: "Only the workspace owner can change these settings", code: "owner_required" }, 403);
+    }
     const body = await c.req.json();
-    await kv.set("settings:" + section, body);
+    await kv.set(wsKey(c, "settings:" + section), body);
     return c.json(body);
   } catch (e) {
     console.log("PUT /settings/:section error:", e);
@@ -1744,7 +1958,7 @@ const SEED_FINANCIAL = {
 
 app.get("/financial", async (c) => {
   try {
-    const data = await getOrSeed("financial:data", SEED_FINANCIAL);
+    const data = await wsGetOrSeed(c, "financial:data", SEED_FINANCIAL);
     return c.json(data);
   } catch (e) {
     console.log("GET /financial error:", e);
@@ -1755,9 +1969,9 @@ app.get("/financial", async (c) => {
 app.put("/financial", async (c) => {
   try {
     const body = await c.req.json();
-    const existing = await getOrSeed("financial:data", SEED_FINANCIAL);
+    const existing = await wsGetOrSeed(c, "financial:data", SEED_FINANCIAL);
     const updated = { ...existing, ...body };
-    await kv.set("financial:data", updated);
+    await kv.set(wsKey(c, "financial:data"), updated);
     return c.json(updated);
   } catch (e) {
     console.log("PUT /financial error:", e);
@@ -1780,7 +1994,7 @@ const SEED_INTEGRATIONS = [
 
 app.get("/integrations", async (c) => {
   try {
-    const data = await getOrSeed("integrations:list", SEED_INTEGRATIONS);
+    const data = await wsGetOrSeed(c, "integrations:list", SEED_INTEGRATIONS);
     return c.json(data);
   } catch (e) {
     console.log("GET /integrations error:", e);
@@ -1792,11 +2006,11 @@ app.put("/integrations/:name", async (c) => {
   try {
     const name = decodeURIComponent(c.req.param("name"));
     const body = await c.req.json();
-    const integrations = await getOrSeed("integrations:list", SEED_INTEGRATIONS);
+    const integrations = await wsGetOrSeed(c, "integrations:list", SEED_INTEGRATIONS);
     const idx = integrations.findIndex((i: any) => i.name === name);
     if (idx === -1) return c.json({ error: "Integration not found" }, 404);
     integrations[idx] = { ...integrations[idx], ...body };
-    await kv.set("integrations:list", integrations);
+    await kv.set(wsKey(c, "integrations:list"), integrations);
     return c.json(integrations[idx]);
   } catch (e) {
     console.log("PUT /integrations/:name error:", e);
@@ -1823,7 +2037,7 @@ const SEED_SESSIONS = {
 
 app.get("/sessions", async (c) => {
   try {
-    const data = await getOrSeed("security:sessions", SEED_SESSIONS);
+    const data = await wsGetOrSeed(c, "security:sessions", SEED_SESSIONS);
     return c.json(data);
   } catch (e) {
     console.log("GET /sessions error:", e);
@@ -1834,9 +2048,9 @@ app.get("/sessions", async (c) => {
 app.delete("/sessions/:device", async (c) => {
   try {
     const device = decodeURIComponent(c.req.param("device"));
-    const data = await getOrSeed("security:sessions", SEED_SESSIONS);
+    const data = await wsGetOrSeed(c, "security:sessions", SEED_SESSIONS);
     data.active = data.active.filter((s: any) => s.device !== device);
-    await kv.set("security:sessions", data);
+    await kv.set(wsKey(c, "security:sessions"), data);
     return c.json({ ok: true });
   } catch (e) {
     console.log("DELETE /sessions/:device error:", e);
@@ -1954,11 +2168,10 @@ app.get("/analytics/metrics", async (c) => {
   try {
     const gate = await requirePlan(c, "pro");
     if (!gate.user) return gate.response;
-    const stored = await kv.get("analytics:metrics");
+    const stored = await wsGetOrSeed(c, "analytics:metrics", SEED_ANALYTICS);
     // Merge seed defaults so newly added fields appear for previously seeded workspaces
-    const data = stored ? { ...SEED_ANALYTICS, ...stored } : SEED_ANALYTICS;
-    if (!stored) await kv.set("analytics:metrics", SEED_ANALYTICS);
-    else if (!stored.completionSeries) await kv.set("analytics:metrics", data);
+    const data = { ...SEED_ANALYTICS, ...stored };
+    if (!stored.completionSeries) await kv.set(wsKey(c, "analytics:metrics"), data);
     return c.json(data);
   } catch (e) {
     console.log("GET /analytics/metrics error:", e);
@@ -1971,9 +2184,9 @@ app.put("/analytics/metrics", async (c) => {
     const gate = await requirePlan(c, "pro");
     if (!gate.user) return gate.response;
     const body = await c.req.json();
-    const existing = await getOrSeed("analytics:metrics", SEED_ANALYTICS);
+    const existing = await wsGetOrSeed(c, "analytics:metrics", SEED_ANALYTICS);
     const updated = { ...existing, ...body };
-    await kv.set("analytics:metrics", updated);
+    await kv.set(wsKey(c, "analytics:metrics"), updated);
     return c.json(updated);
   } catch (e) {
     console.log("PUT /analytics/metrics error:", e);
@@ -2053,7 +2266,7 @@ const SEED_DASHBOARD_OPS = {
 
 app.get("/dashboard/ops", async (c) => {
   try {
-    const data = await getOrSeed("dashboard:ops", SEED_DASHBOARD_OPS);
+    const data = await wsGetOrSeed(c, "dashboard:ops", SEED_DASHBOARD_OPS);
     return c.json(data);
   } catch (e) {
     console.log("GET /dashboard/ops error:", e);
@@ -2064,9 +2277,9 @@ app.get("/dashboard/ops", async (c) => {
 app.put("/dashboard/ops", async (c) => {
   try {
     const body = await c.req.json();
-    const existing = await getOrSeed("dashboard:ops", SEED_DASHBOARD_OPS);
+    const existing = await wsGetOrSeed(c, "dashboard:ops", SEED_DASHBOARD_OPS);
     const updated = { ...existing, ...body };
-    await kv.set("dashboard:ops", updated);
+    await kv.set(wsKey(c, "dashboard:ops"), updated);
     return c.json(updated);
   } catch (e) {
     console.log("PUT /dashboard/ops error:", e);
@@ -2694,9 +2907,8 @@ const SEED_DASHBOARD_DETAILS = {
 
 app.get("/dashboard/details", async (c) => {
   try {
-    const stored = await kv.get("dashboard:details");
-    const data = stored ? { ...SEED_DASHBOARD_DETAILS, ...stored } : SEED_DASHBOARD_DETAILS;
-    if (!stored) await kv.set("dashboard:details", SEED_DASHBOARD_DETAILS);
+    const stored = await wsGetOrSeed(c, "dashboard:details", SEED_DASHBOARD_DETAILS);
+    const data = { ...SEED_DASHBOARD_DETAILS, ...stored };
     return c.json(data);
   } catch (e) {
     console.log("GET /dashboard/details error:", e);
@@ -2707,9 +2919,9 @@ app.get("/dashboard/details", async (c) => {
 app.put("/dashboard/details", async (c) => {
   try {
     const body = await c.req.json();
-    const existing = (await kv.get("dashboard:details")) ?? SEED_DASHBOARD_DETAILS;
+    const existing = await wsGetOrSeed(c, "dashboard:details", SEED_DASHBOARD_DETAILS);
     const updated = { ...existing, ...body };
-    await kv.set("dashboard:details", updated);
+    await kv.set(wsKey(c, "dashboard:details"), updated);
     return c.json(updated);
   } catch (e) {
     console.log("PUT /dashboard/details error:", e);
@@ -2737,7 +2949,7 @@ const SEED_MILESTONES = {
 app.get("/milestones/:project", async (c) => {
   try {
     const project = c.req.param("project");
-    const all = await getOrSeed("milestones:all", SEED_MILESTONES);
+    const all = await wsGetOrSeed(c, "milestones:all", SEED_MILESTONES);
     return c.json(all[project] ?? []);
   } catch (e) {
     console.log("GET /milestones/:project error:", e);
@@ -2750,10 +2962,10 @@ app.put("/milestones/:project/:index", async (c) => {
     const project = c.req.param("project");
     const idx = parseInt(c.req.param("index"));
     const body = await c.req.json();
-    const all = await getOrSeed("milestones:all", SEED_MILESTONES);
+    const all = await wsGetOrSeed(c, "milestones:all", SEED_MILESTONES);
     if (!all[project] || !all[project][idx]) return c.json({ error: "Not found" }, 404);
     all[project][idx] = { ...all[project][idx], ...body };
-    await kv.set("milestones:all", all);
+    await kv.set(wsKey(c, "milestones:all"), all);
     return c.json(all[project][idx]);
   } catch (e) {
     console.log("PUT /milestones/:project/:index error:", e);
