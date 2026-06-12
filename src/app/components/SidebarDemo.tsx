@@ -3,6 +3,7 @@ import { useNavigate } from "react-router";
 import { toast } from "sonner";
 import { useNavigation } from "./NavigationContext";
 import { useSubscription } from "../subscription/SubscriptionContext";
+import { WorkspaceSwitcher } from "./WorkspaceSwitcher";
 import * as api from "../utils/api";
 import { signOut, getCurrentUser } from "../utils/supabase";
 import svgPaths from "../imports/svg-svkvdgwod6";
@@ -1330,6 +1331,7 @@ function DetailSidebar({
         onToggleCollapse={toggleCollapse}
         isCollapsed={isCollapsed}
       />
+      <WorkspaceSwitcher isCollapsed={isCollapsed} />
       <SearchContainer isCollapsed={isCollapsed} />
 
       <div

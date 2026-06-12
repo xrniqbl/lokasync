@@ -9,6 +9,7 @@ import { RenewalBanner } from "./components/RenewalBanner";
 import { Spinner } from "@/components/cossui/spinner";
 import { NotFoundPage } from "./pages/NotFoundPage";
 import { useSubscription } from "./subscription/SubscriptionContext";
+import { WorkspaceProvider, useWorkspace } from "./workspace/WorkspaceContext";
 import { getServiceStatus, type MaintenanceStatus } from "./utils/api";
 
 const VALID_SECTIONS = new Set([
@@ -88,14 +89,40 @@ export function AppLayout() {
         )}
         <RenewalBanner />
         <NotificationsHost />
-        <div className="flex min-h-0 flex-1 flex-row">
-          <Frame760
-            activeSection={section}
-            onSectionChange={(nextSection) => navigate(nextSection)}
-          />
-          <MainContent activeSection={section} />
-        </div>
+        <WorkspaceProvider>
+          <WorkspaceArea section={section} onSectionChange={navigate} />
+        </WorkspaceProvider>
       </div>
     </NavigationContext.Provider>
+  );
+}
+
+// Fase 14.5 — renders the sidebar + content keyed by the active workspace so
+// every page refetches its (workspace-scoped) data after a switch.
+function WorkspaceArea({
+  section,
+  onSectionChange,
+}: {
+  section: string;
+  onSectionChange: (section: string) => void;
+}) {
+  const { activeWorkspace, loading } = useWorkspace();
+
+  if (loading) {
+    return (
+      <div className="flex min-h-0 flex-1 items-center justify-center">
+        <Spinner className="size-6 text-neutral-400" />
+      </div>
+    );
+  }
+
+  return (
+    <div key={activeWorkspace?.id} className="flex min-h-0 flex-1 flex-row">
+      <Frame760
+        activeSection={section}
+        onSectionChange={(nextSection) => onSectionChange(nextSection)}
+      />
+      <MainContent activeSection={section} />
+    </div>
   );
 }

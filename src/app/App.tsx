@@ -6,6 +6,7 @@ import { RedirectIfAuthed, RequireAuth, RequireProfile } from "./auth/guards";
 import { SubscriptionProvider } from "./subscription/SubscriptionContext";
 import { AdminPage } from "./pages/AdminPage";
 import { CheckoutPage } from "./pages/CheckoutPage";
+import { InvitePage } from "./pages/InvitePage";
 import { LandingPage } from "./pages/LandingPage";
 import { OnboardingPage } from "./pages/OnboardingPage";
 import { PaymentStatusPage } from "./pages/PaymentStatusPage";
@@ -62,6 +63,9 @@ export default function App() {
         />
         {/* Reset password needs the recovery session, so no RedirectIfAuthed */}
         <Route path="/reset-password" element={<ResetPasswordPage />} />
+
+        {/* Workspace invitation links (public preview; accept requires auth) */}
+        <Route path="/invite/:token" element={<InvitePage />} />
 
         {/* App (protected) */}
         <Route
