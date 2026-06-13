@@ -5,6 +5,7 @@ import { createClient } from "jsr:@supabase/supabase-js@2.49.8";
 import * as kv from "./kv_store.tsx";
 import * as ws from "./workspaces.tsx";
 import * as emails from "./emails.tsx";
+import * as sql from "./sql_client.tsx";
 
 // Supabase passes the full request path including the function name
 const app = new Hono().basePath("/server");
@@ -157,6 +158,20 @@ async function addMention(c: any, mentionee: string, text: string) {
   });
   while (list.length > 50) list.pop();
   await kv.set(wsKey(c, "mentions:list"), list);
+}
+
+async function broadcastAfterWrite(workspaceId: string, table: string) {
+  try {
+    const client = adminClient();
+    const channel = client.channel(`workspace:${workspaceId}`);
+    await channel.send({
+      type: "broadcast",
+      event: "refresh",
+      payload: { table },
+    });
+  } catch (e) {
+    console.log("broadcast error:", e);
+  }
 }
 
 // ── Seed Data ─────────────────────────────────────────────────────────────────
@@ -1691,15 +1706,15 @@ app.put("/notifications/read", async (c) => {
 app.get("/workspaces", async (c) => {
   try {
     const user = c.get("user");
-    const ids = await ws.listUserWorkspaceIds(user.id);
-    const items = [];
-    for (const id of ids) {
-      const workspace = await ws.getWorkspace(id);
-      const membership = await ws.getMembership(id, user.id);
-      if (workspace && membership) {
-        items.push({ ...workspace, role: membership.role });
-      }
-    }
+    const userId = user.id;
+    const memberships = await sql.sqlQuery("workspace_members", "*, workspaces(*)", { user_id: userId });
+    const items = memberships.map((m: any) => ({
+      id: m.workspaces.id,
+      name: m.workspaces.name,
+      role: m.role,
+      plan_id: m.workspaces.plan_id,
+      owner_id: m.workspaces.owner_id,
+    }));
     return c.json({ workspaces: items, active: c.get("workspace").id });
   } catch (e) {
     console.log("GET /workspaces error:", e);
@@ -1714,6 +1729,7 @@ app.post("/workspaces", async (c) => {
     const name = String(body.name ?? "").trim().slice(0, 80);
     if (!name) return c.json({ error: "Workspace name is required" }, 400);
     const created = await ws.createWorkspace(user, name);
+    await broadcastAfterWrite(created.workspace.id, "workspaces");
     return c.json({ ...created.workspace, role: created.membership.role }, 201);
   } catch (e) {
     console.log("POST /workspaces error:", e);
@@ -1737,6 +1753,7 @@ app.put("/workspaces/:id", async (c) => {
     if (!workspace) return c.json({ error: "Workspace not found" }, 404);
     const updated = { ...workspace, name, updated_at: new Date().toISOString() };
     await kv.set(`workspace:${id}`, updated);
+    await broadcastAfterWrite(id, "workspaces");
     return c.json({ ...updated, role: membership.role });
   } catch (e) {
     console.log("PUT /workspaces/:id error:", e);
@@ -1758,6 +1775,7 @@ app.delete("/workspaces/:id", async (c) => {
       return c.json({ error: "You cannot delete your only workspace" }, 400);
     }
     await ws.deleteWorkspace(id);
+    await broadcastAfterWrite(id, "workspaces");
     return c.json({ ok: true });
   } catch (e) {
     console.log("DELETE /workspaces/:id error:", e);
@@ -2033,6 +2051,87 @@ app.get("/member-home", async (c) => {
       return c.json({ error: "Unauthorized" }, 401);
     }
 
+    const workspaceId = workspace.id;
+    const userEmail = user.email;
+    const userName = user.user_metadata?.full_name || userEmail;
+
+    // Try SQL first
+    try {
+      // Tasks filtered by assignee
+      const allTasks = await sql.sqlQueryByWorkspace("tasks", workspaceId, "*, projects(name)");
+      const memberTasks = allTasks.filter((t: any) =>
+        t.assignee === userEmail || t.assignee === userName
+      );
+      const myTasks = {
+        in_progress: memberTasks.filter((t: any) => t.status === "in-progress"),
+        in_review: memberTasks.filter((t: any) => t.status === "review"),
+        due_today: memberTasks.filter((t: any) => {
+          const due = t.due_date ? new Date(t.due_date) : null;
+          return due && due.toDateString() === new Date().toDateString();
+        }),
+        completed: memberTasks.filter((t: any) => t.status === "completed"),
+      };
+
+      // Projects (active only, mapped to KV shape)
+      const sqlProjects = await sql.sqlQueryByWorkspace("projects", workspaceId, "*", { status: "active" });
+      const activeProjects = sqlProjects.map((p: any) => ({
+        id: p.legacy_id ?? p.id,
+        name: p.name,
+        total_tasks: 0,
+        completed_tasks: 0,
+        progress_percent: p.progress,
+        next_milestone: p.due_date,
+      }));
+
+      // Calendar events today
+      const today = new Date();
+      const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+      const todayEnd = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1);
+      const sqlEvents = await sql.sqlQueryByWorkspace("calendar_events", workspaceId, "*");
+      const todayEvents = sqlEvents.filter((e: any) => {
+        const start = new Date(e.start_time);
+        return start >= todayStart && start < todayEnd;
+      }).map((e: any) => ({
+        id: e.id,
+        title: e.title,
+        time: new Date(e.start_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        color: e.color,
+      }));
+
+      // Mentions
+      const mentions = await sql.sqlQueryByWorkspace("mentions", workspaceId, "*");
+      const memberMentions = mentions.filter((m: any) =>
+        m.mentionee === userEmail || m.mentionee === userName || !m.mentionee
+      );
+
+      // Activity
+      const teamActivity = await sql.sqlQueryByWorkspace("team_activity", workspaceId, "*");
+
+      // Owner info
+      const ownerProfile = await kv.get(`profile:${workspace.owner_id}`);
+      const members = await ws.getMembers(workspace.id);
+      const owner = members.find((m: any) => m.user_id === workspace.owner_id);
+
+      return c.json({
+        workspace: {
+          name: workspace.name,
+          owner_id: workspace.owner_id,
+          owner_name: ownerProfile?.full_name ?? owner?.name ?? "Owner",
+          owner_email: ownerProfile?.email ?? owner?.email ?? "",
+          total_members: members.length,
+          plan_id: workspace.plan_id ?? "free",
+        },
+        today_events: todayEvents,
+        my_tasks: myTasks,
+        projects: activeProjects,
+        mentions: memberMentions.slice(0, 5),
+        team_activity: teamActivity.slice(0, 10),
+      });
+    } catch (sqlErr) {
+      console.log("GET /member-home SQL fallback:", sqlErr);
+    }
+
+    // KV fallback
     // Owner info
     const members = await ws.getMembers(workspace.id);
     const owner = members.find((m: any) => m.user_id === workspace.owner_id);
@@ -2047,8 +2146,6 @@ app.get("/member-home", async (c) => {
     const todayEvents = calendarEvents[todayKey] ?? [];
 
     // Tasks partitioned by status (scoped to current user)
-    const userEmail = user.email;
-    const userName = user.user_metadata?.full_name || userEmail;
     const allTasks = await wsGetOrSeed(c, "tasks:list", SEED_TASKS);
     const memberTasks = allTasks.filter((t: any) =>
       t.assignee === userEmail ||
@@ -2156,6 +2253,28 @@ app.post("/leave-workspace", async (c) => {
 
 app.get("/tasks", async (c) => {
   try {
+    const workspace = c.get("workspace");
+    // Phase 2 — try SQL first, fall back to KV during dual-write transition
+    try {
+      const sqlTasks = await sql.sqlQueryByWorkspace("tasks", workspace.id, "*, projects(name)");
+      if (sqlTasks.length > 0) {
+        const mapped = sqlTasks.map((t: any) => ({
+          id: t.legacy_id ?? t.id,
+          title: t.title,
+          description: t.description,
+          status: t.status,
+          priority: t.priority,
+          assignee: t.assignee,
+          project: t.projects?.name ?? "",
+          due: t.due_date,
+          completed: t.status === "completed",
+        }));
+        return c.json(mapped);
+      }
+    } catch (sqlErr) {
+      console.log("GET /tasks SQL fallback:", sqlErr);
+    }
+    // Fallback to KV
     const tasks = await wsGetOrSeed(c, "tasks:list", SEED_TASKS);
     return c.json(tasks);
   } catch (e) {
@@ -2166,14 +2285,40 @@ app.get("/tasks", async (c) => {
 
 app.post("/tasks", async (c) => {
   try {
+    const workspace = c.get("workspace");
     const body = await c.req.json();
     const tasks = await wsGetOrSeed(c, "tasks:list", SEED_TASKS);
-    const newId = tasks.length > 0 ? Math.max(...tasks.map((t: any) => t.id)) + 1 : 1;
-    const newTask = { ...body, id: newId };
+    const newLegacyId = tasks.length > 0 ? Math.max(...tasks.map((t: any) => t.id)) + 1 : 1;
+
+    // 1. SQL insert (try first; if table missing, gracefully fall through)
+    let sqlTask = null;
+    try {
+      sqlTask = await sql.sqlInsert("tasks", {
+        workspace_id: workspace.id,
+        legacy_id: newLegacyId,
+        title: body.title,
+        description: body.description ?? null,
+        status: body.status || "todo",
+        priority: body.priority || "medium",
+        assignee: body.assignee ?? null,
+        due_date: body.due ? body.due : null,
+        project_id: null, // TODO: resolve from project name in Phase 3
+      });
+    } catch (sqlErr) {
+      console.log("POST /tasks SQL insert skipped:", sqlErr);
+    }
+
+    // 2. KV insert (always)
+    const newTask = { ...body, id: newLegacyId };
     tasks.push(newTask);
     await kv.set(wsKey(c, "tasks:list"), tasks);
+
     await logActivity(c, "created", newTask.title);
-    return c.json(newTask, 201);
+    await broadcastAfterWrite(workspace.id, "tasks");
+
+    // Return KV shape for frontend compatibility
+    const response = sqlTask ? { ...newTask, _sql_id: sqlTask.id } : newTask;
+    return c.json(response, 201);
   } catch (e) {
     console.log("POST /tasks error:", e);
     return c.json({ error: String(e) }, 500);
@@ -2183,12 +2328,33 @@ app.post("/tasks", async (c) => {
 app.put("/tasks/:id", async (c) => {
   try {
     const id = parseInt(c.req.param("id"));
+    const workspace = c.get("workspace");
     const body = await c.req.json();
     const tasks = await wsGetOrSeed(c, "tasks:list", SEED_TASKS);
     const idx = tasks.findIndex((t: any) => t.id === id);
     if (idx === -1) return c.json({ error: "Task not found" }, 404);
     const oldStatus = tasks[idx].status;
     const oldAssignee = tasks[idx].assignee;
+
+    // 1. SQL update (try first; fall through if table missing)
+    let sqlTask = null;
+    try {
+      const sqlTasks = await sql.sqlQueryByWorkspace("tasks", workspace.id, "*", { legacy_id: id });
+      if (sqlTasks.length > 0) {
+        sqlTask = await sql.sqlUpdate("tasks", sqlTasks[0].id, {
+          title: body.title !== undefined ? body.title : sqlTasks[0].title,
+          description: body.description !== undefined ? body.description : sqlTasks[0].description,
+          status: body.status !== undefined ? body.status : sqlTasks[0].status,
+          priority: body.priority !== undefined ? body.priority : sqlTasks[0].priority,
+          assignee: body.assignee !== undefined ? body.assignee : sqlTasks[0].assignee,
+          due_date: body.due !== undefined ? body.due : sqlTasks[0].due_date,
+        });
+      }
+    } catch (sqlErr) {
+      console.log("PUT /tasks SQL skipped:", sqlErr);
+    }
+
+    // 2. KV update (always)
     tasks[idx] = { ...tasks[idx], ...body };
     await kv.set(wsKey(c, "tasks:list"), tasks);
     if (body.status && body.status !== oldStatus) {
@@ -2198,6 +2364,7 @@ app.put("/tasks/:id", async (c) => {
       const actor = c.get("user").email || c.get("user").user_metadata?.full_name || "Anonymous";
       await addMention(c, body.assignee, `${actor} assigned you to "${tasks[idx].title}"`);
     }
+    await broadcastAfterWrite(workspace.id, "tasks");
     return c.json(tasks[idx]);
   } catch (e) {
     console.log("PUT /tasks/:id error:", e);
@@ -2208,12 +2375,26 @@ app.put("/tasks/:id", async (c) => {
 app.delete("/tasks/:id", async (c) => {
   try {
     const id = parseInt(c.req.param("id"));
+    const workspace = c.get("workspace");
+
+    // 1. SQL delete (try first; fall through if table missing)
+    try {
+      const sqlTasks = await sql.sqlQueryByWorkspace("tasks", workspace.id, "*", { legacy_id: id });
+      if (sqlTasks.length > 0) {
+        await sql.sqlDelete("tasks", sqlTasks[0].id);
+      }
+    } catch (sqlErr) {
+      console.log("DELETE /tasks SQL skipped:", sqlErr);
+    }
+
+    // 2. KV delete (always)
     let tasks = await wsGetOrSeed(c, "tasks:list", SEED_TASKS);
     const target = tasks.find((t: any) => t.id === id);
     const title = target?.title || "Task";
     tasks = tasks.filter((t: any) => t.id !== id);
     await kv.set(wsKey(c, "tasks:list"), tasks);
     await logActivity(c, "deleted", title);
+    await broadcastAfterWrite(workspace.id, "tasks");
     return c.json({ ok: true });
   } catch (e) {
     console.log("DELETE /tasks/:id error:", e);
@@ -2225,6 +2406,29 @@ app.delete("/tasks/:id", async (c) => {
 
 app.get("/projects", async (c) => {
   try {
+    const workspace = c.get("workspace");
+    // Phase 2 — try SQL first, fall back to KV during dual-write transition
+    try {
+      const sqlProjects = await sql.sqlQueryByWorkspace("projects", workspace.id, "*");
+      if (sqlProjects.length > 0) {
+        // TODO: derive tasks.total/done from SQL in Phase 3
+        const mapped = sqlProjects.map((p: any) => ({
+          id: p.legacy_id ?? p.id,
+          name: p.name,
+          description: p.description,
+          status: p.status,
+          progress: p.progress,
+          tasks: { total: 0, done: 0 },
+          team: [],
+          due: p.due_date,
+          tags: p.tags ?? [],
+        }));
+        return c.json(mapped);
+      }
+    } catch (sqlErr) {
+      console.log("GET /projects SQL fallback:", sqlErr);
+    }
+    // Fallback to KV
     const projects = await wsGetOrSeed(c, "projects:list", SEED_PROJECTS);
     return c.json(projects);
   } catch (e) {
@@ -2236,6 +2440,7 @@ app.get("/projects", async (c) => {
 app.post("/projects", async (c) => {
   try {
     const user = c.get("user");
+    const workspace = c.get("workspace");
     const body = await c.req.json();
     const projects = await wsGetOrSeed(c, "projects:list", SEED_PROJECTS);
     const planId = await getEffectivePlanId(user.id);
@@ -2249,12 +2454,32 @@ app.post("/projects", async (c) => {
         403,
       );
     }
-    const newId = projects.length > 0 ? Math.max(...projects.map((p: any) => p.id)) + 1 : 1;
-    const newProject = { ...body, id: newId };
+    const newLegacyId = projects.length > 0 ? Math.max(...projects.map((p: any) => p.id)) + 1 : 1;
+    const newProject = { ...body, id: newLegacyId };
     projects.push(newProject);
     await kv.set(wsKey(c, "projects:list"), projects);
+
+    // 1. SQL insert (try; if table missing, gracefully fall through)
+    let sqlProject = null;
+    try {
+      sqlProject = await sql.sqlInsert("projects", {
+        workspace_id: workspace.id,
+        legacy_id: newLegacyId,
+        name: body.name,
+        description: body.description ?? null,
+        status: body.status || "active",
+        progress: body.progress ?? 0,
+        due_date: body.due ? body.due : null,
+        tags: body.tags ?? [],
+      });
+    } catch (sqlErr) {
+      console.log("POST /projects SQL insert skipped:", sqlErr);
+    }
+
     await logActivity(c, "created", newProject.name);
-    return c.json(newProject, 201);
+    await broadcastAfterWrite(workspace.id, "projects");
+    const response = sqlProject ? { ...newProject, _sql_id: sqlProject.id } : newProject;
+    return c.json(response, 201);
   } catch (e) {
     console.log("POST /projects error:", e);
     return c.json({ error: String(e) }, 500);
@@ -2265,11 +2490,32 @@ app.put("/projects/:id", async (c) => {
   try {
     const id = parseInt(c.req.param("id"));
     const body = await c.req.json();
+    const workspace = c.get("workspace");
     const projects = await wsGetOrSeed(c, "projects:list", SEED_PROJECTS);
     const idx = projects.findIndex((p: any) => p.id === id);
     if (idx === -1) return c.json({ error: "Project not found" }, 404);
+
+    // 1. SQL update (try; if table missing, gracefully fall through)
+    let sqlProject = null;
+    try {
+      const sqlProjects = await sql.sqlQueryByWorkspace("projects", workspace.id, "*", { legacy_id: id });
+      if (sqlProjects.length > 0) {
+        sqlProject = await sql.sqlUpdate("projects", sqlProjects[0].id, {
+          name: body.name !== undefined ? body.name : sqlProjects[0].name,
+          description: body.description !== undefined ? body.description : sqlProjects[0].description,
+          status: body.status !== undefined ? body.status : sqlProjects[0].status,
+          progress: body.progress !== undefined ? body.progress : sqlProjects[0].progress,
+          due_date: body.due !== undefined ? body.due : sqlProjects[0].due_date,
+          tags: body.tags !== undefined ? body.tags : sqlProjects[0].tags,
+        });
+      }
+    } catch (sqlErr) {
+      console.log("PUT /projects SQL skipped:", sqlErr);
+    }
+
     projects[idx] = { ...projects[idx], ...body };
     await kv.set(wsKey(c, "projects:list"), projects);
+    await broadcastAfterWrite(workspace.id, "projects");
     return c.json(projects[idx]);
   } catch (e) {
     console.log("PUT /projects/:id error:", e);
@@ -2280,9 +2526,22 @@ app.put("/projects/:id", async (c) => {
 app.delete("/projects/:id", async (c) => {
   try {
     const id = parseInt(c.req.param("id"));
+    const workspace = c.get("workspace");
     let projects = await wsGetOrSeed(c, "projects:list", SEED_PROJECTS);
     projects = projects.filter((p: any) => p.id !== id);
     await kv.set(wsKey(c, "projects:list"), projects);
+
+    // 1. SQL delete (try; if table missing, gracefully fall through)
+    try {
+      const sqlProjects = await sql.sqlQueryByWorkspace("projects", workspace.id, "*", { legacy_id: id });
+      if (sqlProjects.length > 0) {
+        await sql.sqlDelete("projects", sqlProjects[0].id);
+      }
+    } catch (sqlErr) {
+      console.log("DELETE /projects SQL skipped:", sqlErr);
+    }
+
+    await broadcastAfterWrite(workspace.id, "projects");
     return c.json({ ok: true });
   } catch (e) {
     console.log("DELETE /projects/:id error:", e);
@@ -2314,6 +2573,7 @@ app.post("/teams/invite", async (c) => {
     if (!team) return c.json({ error: "Team not found" }, 404);
     team.members.push(member);
     await kv.set(wsKey(c, "teams:list"), teams);
+    await broadcastAfterWrite(c.get("workspace").id, "teams");
     return c.json(team, 201);
   } catch (e) {
     console.log("POST /teams/invite error:", e);
@@ -2333,6 +2593,7 @@ app.put("/teams/member", async (c) => {
     if (memberIdx === -1) return c.json({ error: "Member not found" }, 404);
     team.members[memberIdx] = { ...team.members[memberIdx], ...patch };
     await kv.set(wsKey(c, "teams:list"), teams);
+    await broadcastAfterWrite(c.get("workspace").id, "teams");
     return c.json(team.members[memberIdx]);
   } catch (e) {
     console.log("PUT /teams/member error:", e);
@@ -2350,6 +2611,7 @@ app.delete("/teams/member", async (c) => {
     if (!team) return c.json({ error: "Team not found" }, 404);
     team.members = team.members.filter((m: any) => m.initials !== initials);
     await kv.set(wsKey(c, "teams:list"), teams);
+    await broadcastAfterWrite(c.get("workspace").id, "teams");
     return c.json({ ok: true });
   } catch (e) {
     console.log("DELETE /teams/member error:", e);
@@ -2371,11 +2633,39 @@ app.get("/calendar", async (c) => {
 
 app.post("/calendar/events", async (c) => {
   try {
+    const workspace = c.get("workspace");
     const { dateKey, event } = await c.req.json();
     const events = await wsGetOrSeed(c, "calendar:events", SEED_CALENDAR);
     if (!events[dateKey]) events[dateKey] = [];
     events[dateKey].push(event);
     await kv.set(wsKey(c, "calendar:events"), events);
+
+    // 1. SQL insert (try; if table missing, gracefully fall through)
+    let sqlEvent = null;
+    try {
+      // Parse dateKey (YYYY-M-D) + time ("09:30") into ISO start_time
+      const [year, month, day] = dateKey.split("-").map(Number);
+      const startTime = new Date(year, month - 1, day);
+      const [h, m] = (event.time || "00:00").split(":").map(Number);
+      startTime.setHours(h || 0, m || 0, 0, 0);
+      sqlEvent = await sql.sqlInsert("calendar_events", {
+        workspace_id: workspace.id,
+        title: event.title,
+        start_time: startTime.toISOString(),
+        color: event.color || "#6366f1",
+      });
+    } catch (sqlErr) {
+      console.log("POST /calendar/events SQL insert skipped:", sqlErr);
+    }
+
+    // Embed _sql_id into KV event for future DELETE matching
+    if (sqlEvent && events[dateKey]) {
+      const lastIdx = events[dateKey].length - 1;
+      events[dateKey][lastIdx] = { ...events[dateKey][lastIdx], _sql_id: sqlEvent.id };
+      await kv.set(wsKey(c, "calendar:events"), events);
+    }
+
+    await broadcastAfterWrite(workspace.id, "calendar_events");
     return c.json(events[dateKey], 201);
   } catch (e) {
     console.log("POST /calendar/events error:", e);
@@ -2385,13 +2675,27 @@ app.post("/calendar/events", async (c) => {
 
 app.delete("/calendar/events", async (c) => {
   try {
+    const workspace = c.get("workspace");
     const { dateKey, index } = await c.req.json();
     const events = await wsGetOrSeed(c, "calendar:events", SEED_CALENDAR);
+    let removedEvent: any = null;
     if (events[dateKey]) {
+      removedEvent = events[dateKey][index];
       events[dateKey].splice(index, 1);
       if (events[dateKey].length === 0) delete events[dateKey];
     }
     await kv.set(wsKey(c, "calendar:events"), events);
+
+    // SQL delete via _sql_id embedded during POST (best-effort)
+    if (removedEvent?._sql_id) {
+      try {
+        await sql.sqlDelete("calendar_events", removedEvent._sql_id);
+      } catch (sqlErr) {
+        console.log("DELETE /calendar/events SQL skipped:", sqlErr);
+      }
+    }
+
+    await broadcastAfterWrite(workspace.id, "calendar_events");
     return c.json({ ok: true });
   } catch (e) {
     console.log("DELETE /calendar/events error:", e);
@@ -2414,11 +2718,36 @@ app.get("/files", async (c) => {
 
 app.post("/files", async (c) => {
   try {
+    const workspace = c.get("workspace");
     const file = await c.req.json();
     const files = await wsGetOrSeed(c, "files:list", SEED_FILES);
     files.unshift(file);
     await kv.set(wsKey(c, "files:list"), files);
+
+    // 1. SQL insert (try; if table missing, gracefully fall through)
+    let sqlFile = null;
+    try {
+      sqlFile = await sql.sqlInsert("files", {
+        workspace_id: workspace.id,
+        name: file.name,
+        size_bytes: typeof file.size === "number" ? file.size : 0,
+        mime_type: file.type ? `application/${file.type}` : null,
+        storage_path: file.storagePath || "",
+        url: file.url || "",
+        uploader: file.uploader || "unknown",
+      });
+    } catch (sqlErr) {
+      console.log("POST /files SQL insert skipped:", sqlErr);
+    }
+
+    // Embed _sql_id into KV for future PUT/DELETE matching
+    if (sqlFile && files.length > 0) {
+      files[0] = { ...files[0], _sql_id: sqlFile.id };
+      await kv.set(wsKey(c, "files:list"), files);
+    }
+
     await logActivity(c, "uploaded", file.name);
+    await broadcastAfterWrite(workspace.id, "files");
     return c.json(file, 201);
   } catch (e) {
     console.log("POST /files error:", e);
@@ -2428,12 +2757,25 @@ app.post("/files", async (c) => {
 
 app.put("/files", async (c) => {
   try {
+    const workspace = c.get("workspace");
     const { oldName, newName } = await c.req.json();
     const files = await wsGetOrSeed(c, "files:list", SEED_FILES);
     const idx = files.findIndex((f: any) => f.name === oldName);
     if (idx === -1) return c.json({ error: "File not found" }, 404);
+
+    // SQL update (best-effort via _sql_id or name match)
+    try {
+      const sqlFiles = await sql.sqlQueryByWorkspace("files", workspace.id, "*", { name: oldName });
+      if (sqlFiles.length > 0) {
+        await sql.sqlUpdate("files", sqlFiles[0].id, { name: newName });
+      }
+    } catch (sqlErr) {
+      console.log("PUT /files SQL skipped:", sqlErr);
+    }
+
     files[idx] = { ...files[idx], name: newName };
     await kv.set(wsKey(c, "files:list"), files);
+    await broadcastAfterWrite(workspace.id, "files");
     return c.json(files[idx]);
   } catch (e) {
     console.log("PUT /files error:", e);
@@ -2443,6 +2785,7 @@ app.put("/files", async (c) => {
 
 app.delete("/files/:name", async (c) => {
   try {
+    const workspace = c.get("workspace");
     const client = storageClient();
     const name = decodeURIComponent(c.req.param("name"));
     let files = await wsGetOrSeed(c, "files:list", SEED_FILES);
@@ -2461,9 +2804,24 @@ app.delete("/files/:name", async (c) => {
       await incrementStorageUsage(c, -file.size);
     }
 
-    // 3. Remove from KV metadata
+    // 3. SQL delete (best-effort via _sql_id or name match)
+    try {
+      if (file._sql_id) {
+        await sql.sqlDelete("files", file._sql_id);
+      } else {
+        const sqlFiles = await sql.sqlQueryByWorkspace("files", workspace.id, "*", { name });
+        if (sqlFiles.length > 0) {
+          await sql.sqlDelete("files", sqlFiles[0].id);
+        }
+      }
+    } catch (sqlErr) {
+      console.log("DELETE /files/:name SQL skipped:", sqlErr);
+    }
+
+    // 4. Remove from KV metadata
     files = files.filter((f: any) => f.name !== name);
     await kv.set(wsKey(c, "files:list"), files);
+    await broadcastAfterWrite(workspace.id, "files");
 
     return c.json({ ok: true });
   } catch (e) {
@@ -2919,8 +3277,53 @@ app.get("/analytics/metrics", async (c) => {
   try {
     const gate = await requirePlan(c, "pro");
     if (!gate.user) return gate.response;
+    const workspace = c.get("workspace");
+
+    // SQL aggregation for real task/project metrics
+    try {
+      const tasks = await sql.sqlQueryByWorkspace("tasks", workspace.id, "*");
+      const projects = await sql.sqlQueryByWorkspace("projects", workspace.id, "*");
+
+      const totalTasks = tasks.length;
+      const completedTasks = tasks.filter((t: any) => t.status === "completed").length;
+      const inProgressTasks = tasks.filter((t: any) => t.status === "in-progress").length;
+      const reviewTasks = tasks.filter((t: any) => t.status === "review").length;
+      const todoTasks = tasks.filter((t: any) => t.status === "todo").length;
+      const overdueTasks = tasks.filter((t: any) => {
+        if (!t.due_date) return false;
+        return new Date(t.due_date) < new Date() && t.status !== "completed";
+      }).length;
+      const totalProjects = projects.length;
+      const activeProjects = projects.filter((p: any) => p.status === "active").length;
+      const avgProgress = totalProjects > 0
+        ? Math.round(projects.reduce((sum: number, p: any) => sum + (p.progress ?? 0), 0) / totalProjects)
+        : 0;
+
+      const stored = await wsGetOrSeed(c, "analytics:metrics", SEED_ANALYTICS);
+      const data = {
+        ...SEED_ANALYTICS,
+        ...stored,
+        taskMetrics: {
+          ...(stored.taskMetrics ?? SEED_ANALYTICS.taskMetrics),
+          totalTasks,
+          completedTasks,
+          inProgressTasks,
+          reviewTasks,
+          todoTasks,
+          overdueTasks,
+          totalProjects,
+          activeProjects,
+          avgProgress,
+        },
+      };
+      if (!stored.completionSeries) await kv.set(wsKey(c, "analytics:metrics"), data);
+      return c.json(data);
+    } catch (sqlErr) {
+      console.log("GET /analytics SQL fallback:", sqlErr);
+    }
+
+    // KV fallback
     const stored = await wsGetOrSeed(c, "analytics:metrics", SEED_ANALYTICS);
-    // Merge seed defaults so newly added fields appear for previously seeded workspaces
     const data = { ...SEED_ANALYTICS, ...stored };
     if (!stored.completionSeries) await kv.set(wsKey(c, "analytics:metrics"), data);
     return c.json(data);
@@ -3717,6 +4120,7 @@ app.put("/milestones/:project/:index", async (c) => {
     if (!all[project] || !all[project][idx]) return c.json({ error: "Not found" }, 404);
     all[project][idx] = { ...all[project][idx], ...body };
     await kv.set(wsKey(c, "milestones:all"), all);
+    await broadcastAfterWrite(c.get("workspace").id, "milestones");
     return c.json(all[project][idx]);
   } catch (e) {
     console.log("PUT /milestones/:project/:index error:", e);

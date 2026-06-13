@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 import { getMemberHome } from "../../utils/api";
+import { useWorkspace } from "../../workspace/WorkspaceContext";
+import { useRealtimeWorkspace } from "../../realtime";
 
 export interface MemberHomeData {
   workspace: {
@@ -57,6 +59,7 @@ export function useMemberHome(): UseMemberHomeResult {
   const [data, setData] = useState<MemberHomeData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
+  const { activeWorkspace } = useWorkspace();
 
   useEffect(() => {
     let cancelled = false;
@@ -73,21 +76,25 @@ export function useMemberHome(): UseMemberHomeResult {
       }
     }
     fetch();
-    const interval = setInterval(fetch, 30000);
     return () => {
       cancelled = true;
-      clearInterval(interval);
     };
   }, []);
 
-  const refresh = () => {
+  useRealtimeWorkspace(activeWorkspace?.id ?? null, (table) => {
+    if (["tasks", "projects", "calendar_events", "mentions", "team_activity"].includes(table)) {
+      refresh();
+    }
+  });
+
+  function refresh() {
     setLoading(true);
     setError(null);
     getMemberHome()
       .then((res) => setData(res as MemberHomeData))
       .catch((e) => setError(e instanceof Error ? e : new Error(String(e))))
       .finally(() => setLoading(false));
-  };
+  }
 
   return { data, loading, error, refresh };
 }

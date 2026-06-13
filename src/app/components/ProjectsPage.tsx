@@ -8,6 +8,8 @@ import { useNavigation } from "./NavigationContext";
 import { PLAN_LIMITS, useSubscription, type PlanId } from "../subscription/SubscriptionContext";
 import * as api from "../utils/api";
 import { useLang } from "../i18n";
+import { useWorkspace } from "../workspace/WorkspaceContext";
+import { useRealtimeWorkspace } from "../realtime";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -670,6 +672,23 @@ export function ProjectsPage() {
   const [mobileMilestones, setMobileMilestones] = useState<{ milestone: string; date: string; done: boolean }[]>([]);
   const [showNew, setShowNew] = useState(false);
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
+  const { activeWorkspace } = useWorkspace();
+
+  function fetchData() {
+    api.getProjects().then((data) => setProjects(data)).catch((e) => {
+      console.log("Failed to load projects:", e);
+      toast.error(t("projects.failedToLoadProjectsToast"));
+    });
+    api.getTasks().then((data) => setAllTasks(data)).catch((e) => {
+      console.log("Failed to load tasks:", e);
+    });
+    api.getMilestones("web").then(setWebMilestones).catch(() => {});
+    api.getMilestones("mobile").then(setMobileMilestones).catch(() => {});
+  }
+
+  useRealtimeWorkspace(activeWorkspace?.id ?? null, (table) => {
+    if (table === "projects" || table === "tasks") fetchData();
+  });
 
   // Plan-based gating: the Free plan caps how many projects can be created
   const maxProjects = PLAN_LIMITS[plan.id as PlanId]?.maxProjects ?? null;
@@ -685,16 +704,7 @@ export function ProjectsPage() {
   };
 
   useEffect(() => {
-    api.getProjects().then((data) => setProjects(data)).catch((e) => {
-      console.log("Failed to load projects:", e);
-      toast.error(t("projects.failedToLoadProjectsToast"));
-    });
-    api.getTasks().then((data) => setAllTasks(data)).catch((e) => {
-      console.log("Failed to load tasks:", e);
-    });
-    // Fetch milestones from Supabase
-    api.getMilestones("web").then(setWebMilestones).catch(() => {});
-    api.getMilestones("mobile").then(setMobileMilestones).catch(() => {});
+    fetchData();
   }, []);
 
   useEffect(() => {

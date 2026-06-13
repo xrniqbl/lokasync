@@ -5,6 +5,8 @@ import { TaskDetailModal } from "./modals/TaskDetailModal";
 import { useNavigation } from "./NavigationContext";
 import { useLang } from "../i18n";
 import * as api from "../utils/api";
+import { useWorkspace } from "../workspace/WorkspaceContext";
+import { useRealtimeWorkspace } from "../realtime";
 
 type Task = api.Task;
 
@@ -41,6 +43,7 @@ function Checkbox({ checked, onChange }: { checked: boolean; onChange: () => voi
 export function TasksPage() {
   const { t } = useLang();
   const { subSection } = useNavigation();
+  const { activeWorkspace } = useWorkspace();
   const [activeTab, setActiveTab] = useState("All");
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(true);
@@ -51,7 +54,8 @@ export function TasksPage() {
   const [filterProject, setFilterProject] = useState("all");
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
 
-  useEffect(() => {
+  function fetchTasks() {
+    setLoading(true);
     api.getTasks().then((data) => {
       setTasks(data);
       setCheckedTasks(new Set(data.filter((t) => t.completed).map((t) => t.id)));
@@ -59,7 +63,15 @@ export function TasksPage() {
       console.log("Failed to load tasks:", e);
       toast.error(t("tasks.failedToLoadTasks"));
     }).finally(() => setLoading(false));
+  }
+
+  useEffect(() => {
+    fetchTasks();
   }, []);
+
+  useRealtimeWorkspace(activeWorkspace?.id ?? null, (table) => {
+    if (table === "tasks") fetchTasks();
+  });
 
   useEffect(() => {
     if (subSection === "new-task") { setShowNewTask(true); }
