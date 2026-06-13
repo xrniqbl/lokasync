@@ -2183,8 +2183,15 @@ app.delete("/workspace-data", async (c) => {
     if (!isOwner(c)) {
       return c.json({ error: "Only the owner can reset workspace data", code: "owner_required" }, 403);
     }
-    const keys = ["tasks:list", "projects:list", "teams:list", "calendar:events", "files:list", "files:folders"];
-    await kv.mdel(keys.map((k) => wsKey(c, k)));
+    const workspace = c.get("workspace");
+    const tables = [
+      "tasks", "projects", "team_members", "teams", "calendar_events", "files", "file_folders",
+      "workspace_financial", "workspace_integrations", "workspace_sessions", "workspace_dashboard",
+      "workspace_analytics", "workspace_settings", "workspace_milestones", "mentions", "team_activity",
+    ];
+    for (const table of tables) {
+      await sql.getDbClient().from(table).delete().eq("workspace_id", workspace.id);
+    }
     return c.json({ ok: true });
   } catch (e) {
     console.log("DELETE /workspace-data error:", e);
