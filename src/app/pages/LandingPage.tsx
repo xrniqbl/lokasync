@@ -645,10 +645,51 @@ function IntegrationStrip({
   );
 }
 
+/** Sticky top bar that appears after scrolling past the hero. */
+function StickyTopBar({
+  user,
+  lang,
+  onLangChange,
+  visible,
+}: {
+  user: ReturnType<typeof useAuth>["user"];
+  lang: Lang;
+  onLangChange: (lang: Lang) => void;
+  visible: boolean;
+}) {
+  const t = STRINGS[lang].nav;
+  return (
+    <div
+      className={`fixed inset-x-0 top-0 z-50 border-b border-white/[0.08] bg-[#0f0f0f]/95 backdrop-blur-xl transition-transform duration-300 ${
+        visible ? "translate-y-0" : "-translate-y-full"
+      }`}
+    >
+      <div className="mx-auto flex h-12 max-w-5xl items-center justify-between px-4 sm:px-6">
+        <Link to="/" aria-label="LokaSync home" className="flex items-center">
+          <img src="/lokasynclogo.png" alt="LokaSync" className="h-5 w-auto" style={{ objectFit: "contain" }} />
+        </Link>
+        <div className="flex items-center gap-2">
+          <LangToggle lang={lang} onChange={onLangChange} />
+          {user ? (
+            <Button size="sm" render={<Link to="/app/dashboard" />}>
+              {t.openDashboard}
+            </Button>
+          ) : (
+            <Button size="sm" render={<Link to="/register" />}>
+              {t.getStarted}
+            </Button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function LandingPage() {
   const { user } = useAuth();
   const [plans, setPlans] = useState<Plan[] | null>(null);
   const [lang, setLang] = useState<Lang>(detectLang);
+  const [showSticky, setShowSticky] = useState(false);
   const t = STRINGS[lang];
 
   const changeLang = (next: Lang) => {
@@ -659,6 +700,15 @@ export function LandingPage() {
   useEffect(() => {
     document.documentElement.lang = lang;
   }, [lang]);
+
+  /* Show sticky top bar after scrolling past hero */
+  useEffect(() => {
+    const onScroll = () => {
+      setShowSticky(window.scrollY > 400);
+    };
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, []);
 
   // Prices live server-side in KV `plans`; never hardcode amounts here.
   useEffect(() => {
@@ -771,6 +821,7 @@ export function LandingPage() {
       </div>
 
       <Navbar user={user} lang={lang} onLangChange={changeLang} />
+      <StickyTopBar user={user} lang={lang} onLangChange={changeLang} visible={showSticky} />
 
       <main className="relative">
         {/* Hero — pt offsets the floating navbar */}
