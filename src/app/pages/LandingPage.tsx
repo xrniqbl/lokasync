@@ -630,12 +630,11 @@ function IntegrationStrip({
   return (
     <div className="mx-auto w-full max-w-5xl px-6 py-10 text-center">
       <p className="text-[12px] uppercase tracking-wider text-neutral-600">{title}</p>
-      <div className="mt-5 flex flex-wrap items-center justify-center gap-6 opacity-60 grayscale transition-all duration-300 hover:opacity-100 hover:grayscale-0 sm:gap-10">
+      <div className="mt-5 flex flex-wrap items-center justify-center gap-6 sm:gap-10">
         {tools.map((tool) => (
           <span
             key={tool.name}
-            className="text-[13px] font-medium text-neutral-400"
-            style={{ color: tool.color }}
+            className="text-[13px] text-neutral-500"
           >
             {tool.name}
           </span>
@@ -891,7 +890,7 @@ export function LandingPage() {
                   <figure className="flex h-full flex-col rounded-2xl border border-white/[0.06] bg-[#1a1a1a]/80 p-5 transition-all duration-200 hover:-translate-y-0.5 hover:border-indigo-500/30">
                     <span
                       aria-hidden="true"
-                      className="text-[28px] leading-none text-indigo-400/70"
+                      className="text-[28px] leading-none text-neutral-500/70"
                     >
                       “
                     </span>
@@ -939,7 +938,7 @@ export function LandingPage() {
                   const IconComp = badge.icon;
                   return (
                     <div key={badge.label} className="flex items-center gap-2 rounded-full border border-white/[0.08] bg-white/[0.03] px-4 py-2 text-[13px] text-neutral-400">
-                      <IconComp className="size-4 text-indigo-400" aria-hidden="true" />
+                      <IconComp className="size-4 text-neutral-400" aria-hidden="true" />
                       <span>{badge.label}</span>
                     </div>
                   );
@@ -1010,7 +1009,7 @@ export function LandingPage() {
                 <div className="mt-8 flex flex-col items-center justify-center gap-3 rounded-2xl border border-white/[0.06] bg-white/[0.02] px-5 py-4 sm:flex-row sm:gap-4">
                   <span className="flex items-center gap-2 text-[12.5px] text-neutral-400">
                     <ShieldCheck
-                      className="size-4 text-indigo-400"
+                      className="size-4 text-neutral-400"
                       aria-hidden="true"
                     />
                     {t.payments.secure}
