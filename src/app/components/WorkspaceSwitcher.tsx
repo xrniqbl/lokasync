@@ -1,20 +1,26 @@
 import { useEffect, useRef, useState } from "react";
+import { useNavigate } from "react-router";
 import { toast } from "sonner";
-import { Briefcase } from "lucide-react";
+import { Briefcase, LogOut } from "lucide-react";
 import { ChevronDown, AddLarge, UserMultiple, Checkmark } from "@carbon/icons-react";
 import { useWorkspace } from "../workspace/WorkspaceContext";
 import { WorkspaceMembersModal } from "./modals/WorkspaceMembersModal";
 import * as api from "../utils/api";
+import { useLang } from "../i18n";
 
 // Fase 14.5 — workspace switcher shown at the top of the detail sidebar.
 
 export function WorkspaceSwitcher({ isCollapsed = false }: { isCollapsed?: boolean }) {
-  const { workspaces, activeWorkspace, switchWorkspace, refreshWorkspaces } =
+  const { workspaces, activeWorkspace, isOwner, switchWorkspace, refreshWorkspaces } =
     useWorkspace();
+  const navigate = useNavigate();
+  const { t } = useLang();
   const [open, setOpen] = useState(false);
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState("");
   const [showMembers, setShowMembers] = useState(false);
+  const [showLeaveConfirm, setShowLeaveConfirm] = useState(false);
+  const [leaving, setLeaving] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -43,6 +49,27 @@ export function WorkspaceSwitcher({ isCollapsed = false }: { isCollapsed?: boole
       switchWorkspace(created.id);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Failed to create workspace");
+    }
+  };
+
+  const handleLeave = async () => {
+    if (!activeWorkspace) return;
+    setLeaving(true);
+    try {
+      await api.leaveWorkspace();
+      toast.success(`Left workspace "${activeWorkspace.name}"`);
+      setShowLeaveConfirm(false);
+      await refreshWorkspaces();
+      const remaining = workspaces.filter((w) => w.id !== activeWorkspace.id);
+      if (remaining.length > 0) {
+        switchWorkspace(remaining[0].id);
+      } else {
+        navigate("/app/dashboard", { replace: true });
+      }
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to leave workspace");
+    } finally {
+      setLeaving(false);
     }
   };
 
@@ -115,6 +142,18 @@ export function WorkspaceSwitcher({ isCollapsed = false }: { isCollapsed?: boole
               <UserMultiple size={14} />
               Members &amp; invites
             </button>
+            {activeWorkspace && !isOwner && (
+              <button
+                onClick={() => {
+                  setShowLeaveConfirm(true);
+                  setOpen(false);
+                }}
+                className="flex items-center gap-2 px-3 py-2 text-sm text-red-400 hover:text-red-300 hover:bg-red-500/10 w-full rounded-md transition-colors"
+              >
+                <LogOut className="size-4" />
+                <span>{t("memberHome.leaveWorkspace")}</span>
+              </button>
+            )}
             {creating ? (
               <div className="flex items-center gap-1.5 px-2 py-1">
                 <input
@@ -150,6 +189,36 @@ export function WorkspaceSwitcher({ isCollapsed = false }: { isCollapsed?: boole
       )}
 
       <WorkspaceMembersModal open={showMembers} onClose={() => setShowMembers(false)} />
+
+      {/* Leave workspace confirmation */}
+      {showLeaveConfirm && activeWorkspace && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
+          <div className="bg-[#1a1a1a] border border-neutral-800 rounded-xl p-5 max-w-sm w-full mx-4">
+            <h3 className="text-neutral-100 text-sm font-['Lexend:SemiBold',_sans-serif] mb-2">
+              {t("memberHome.leaveWorkspaceTitle").replace("{name}", activeWorkspace.name)}
+            </h3>
+            <p className="text-neutral-400 text-xs mb-5">
+              {t("memberHome.leaveWorkspaceConfirm")}
+            </p>
+            <div className="flex items-center justify-end gap-2">
+              <button
+                onClick={() => setShowLeaveConfirm(false)}
+                disabled={leaving}
+                className="px-3 py-1.5 rounded-lg text-xs text-neutral-300 hover:text-neutral-100 hover:bg-neutral-800 transition-colors disabled:opacity-40"
+              >
+                {t("memberHome.cancel")}
+              </button>
+              <button
+                onClick={handleLeave}
+                disabled={leaving}
+                className="px-3 py-1.5 rounded-lg bg-red-600 hover:bg-red-500 text-white text-xs transition-colors disabled:opacity-40"
+              >
+                {t("memberHome.leaveWorkspace")}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

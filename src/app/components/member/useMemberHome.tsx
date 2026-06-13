@@ -50,6 +50,7 @@ interface UseMemberHomeResult {
   data: MemberHomeData | null;
   loading: boolean;
   error: Error | null;
+  refresh: () => void;
 }
 
 export function useMemberHome(): UseMemberHomeResult {
@@ -59,24 +60,34 @@ export function useMemberHome(): UseMemberHomeResult {
 
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
-    setError(null);
-
-    getMemberHome()
-      .then((res) => {
+    async function fetch() {
+      try {
+        setLoading(true);
+        setError(null);
+        const res = await getMemberHome();
         if (!cancelled) setData(res as MemberHomeData);
-      })
-      .catch((e: Error) => {
-        if (!cancelled) setError(e);
-      })
-      .finally(() => {
+      } catch (e) {
+        if (!cancelled) setError(e instanceof Error ? e : new Error(String(e)));
+      } finally {
         if (!cancelled) setLoading(false);
-      });
-
+      }
+    }
+    fetch();
+    const interval = setInterval(fetch, 30000);
     return () => {
       cancelled = true;
+      clearInterval(interval);
     };
   }, []);
 
-  return { data, loading, error };
+  const refresh = () => {
+    setLoading(true);
+    setError(null);
+    getMemberHome()
+      .then((res) => setData(res as MemberHomeData))
+      .catch((e) => setError(e instanceof Error ? e : new Error(String(e))))
+      .finally(() => setLoading(false));
+  };
+
+  return { data, loading, error, refresh };
 }

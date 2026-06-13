@@ -1515,6 +1515,12 @@ export const DICT = {
     noActivity: { en: "No recent activity", id: "Tidak ada aktivitas terbaru" },
     ledBy: { en: "Led by", id: "Dipimpin oleh" },
     members: { en: "members", id: "anggota" },
+    ownerOnlyAccess: { en: "This section is only accessible to workspace owners.", id: "Bagian ini hanya dapat diakses oleh pemilik workspace." },
+    leaveWorkspace: { en: "Leave Workspace", id: "Keluar dari Workspace" },
+    leaveWorkspaceConfirm: { en: "You will lose access to all tasks, projects, and files in this workspace.", id: "Anda akan kehilangan akses ke semua tugas, proyek, dan berkas di workspace ini." },
+    leaveWorkspaceTitle: { en: 'Leave "{name}"?', id: 'Keluar dari "{name}"?' },
+    cancel: { en: "Cancel", id: "Batal" },
+    loadMore: { en: "Load more", id: "Muat lebih banyak" },
   },
 } as const;
 

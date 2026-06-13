@@ -9,6 +9,7 @@ import { SettingsPage } from "./SettingsPage";
 import { ProfilePage } from "./ProfilePage";
 import { BillingPage } from "./BillingPage";
 import { PlanGate } from "./PlanGate";
+import { OwnerOnly } from "./OwnerOnly";
 
 const GatedAnalyticsPage = () => (
   <PlanGate min="pro" feature="Analytics & reporting">
@@ -22,17 +23,29 @@ const GatedTeamsPage = () => (
   </PlanGate>
 );
 
+const OwnerBillingPage = () => (
+  <OwnerOnly>
+    <BillingPage />
+  </OwnerOnly>
+);
+
+const OwnerAnalyticsPage = () => (
+  <OwnerOnly>
+    <GatedAnalyticsPage />
+  </OwnerOnly>
+);
+
 const pageMap: Record<string, React.ComponentType> = {
   dashboard: DashboardPage,
   tasks: TasksPage,
   projects: ProjectsPage,
   calendar: CalendarPage,
   teams: GatedTeamsPage,
-  analytics: GatedAnalyticsPage,
+  analytics: OwnerAnalyticsPage,
   files: FilesPage,
   settings: SettingsPage,
   profile: ProfilePage,
-  billing: BillingPage,
+  billing: OwnerBillingPage,
 };
 
 export function MainContent({ activeSection }: { activeSection: string }) {

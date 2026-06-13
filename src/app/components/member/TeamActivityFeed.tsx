@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useLang } from "../../i18n";
 import { Activity } from "lucide-react";
 
@@ -46,7 +47,8 @@ function AvatarCircle({ name }: { name: string }) {
 
 export function TeamActivityFeed({ items }: TeamActivityFeedProps) {
   const { t } = useLang();
-  const visible = items.slice(0, 10);
+  const [visibleCount, setVisibleCount] = useState(10);
+  const visible = items.slice(0, visibleCount);
 
   return (
     <div className="rounded-xl border border-neutral-800 bg-[#1a1a1a]/80 overflow-hidden h-full">
@@ -90,6 +92,14 @@ export function TeamActivityFeed({ items }: TeamActivityFeedProps) {
               </div>
             ))}
           </div>
+        )}
+        {items.length > visibleCount && (
+          <button
+            onClick={() => setVisibleCount((c) => c + 10)}
+            className="w-full py-2 text-sm text-neutral-500 hover:text-neutral-300 transition-colors"
+          >
+            {t("memberHome.loadMore")}
+          </button>
         )}
       </div>
     </div>

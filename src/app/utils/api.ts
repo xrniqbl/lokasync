@@ -665,6 +665,10 @@ export async function getMemberHome() {
   return request<any>("/member-home");
 }
 
+export async function leaveWorkspace() {
+  return request<{ ok: boolean }>("/leave-workspace", { method: "POST", body: JSON.stringify({}) });
+}
+
 // ── Financial data ────────────────────────────────────────────────────────────
 
 export interface FinancialData {

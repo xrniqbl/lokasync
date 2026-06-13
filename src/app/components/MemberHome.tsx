@@ -64,7 +64,7 @@ function EmptyState({ message }: { message: string }) {
 
 export function MemberHome() {
   const { t } = useLang();
-  const { data, loading, error } = useMemberHome();
+  const { data, loading, error, refresh } = useMemberHome();
 
   if (loading) return <SkeletonLoader />;
 
@@ -95,7 +95,7 @@ export function MemberHome() {
             {t("memberHome.quickActions")}
           </span>
         </div>
-        <QuickActionsGrid />
+        <QuickActionsGrid onRefresh={refresh} />
       </section>
 
       {/* Today panel — 2 column: left=TodayPanel, right=mentions+activity stacked */}

@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useLang } from "../../i18n";
 import { AtSign } from "lucide-react";
 
@@ -47,7 +48,8 @@ function AvatarInitial({ name }: { name: string }) {
 
 export function MentionsFeed({ mentions }: MentionsFeedProps) {
   const { t } = useLang();
-  const visible = mentions.slice(0, 5);
+  const [visibleCount, setVisibleCount] = useState(5);
+  const visible = mentions.slice(0, visibleCount);
 
   return (
     <div className="rounded-xl border border-neutral-800 bg-[#1a1a1a]/80 overflow-hidden h-full">
@@ -87,6 +89,14 @@ export function MentionsFeed({ mentions }: MentionsFeedProps) {
               </div>
             </div>
           ))
+        )}
+        {mentions.length > visibleCount && (
+          <button
+            onClick={() => setVisibleCount((c) => c + 5)}
+            className="w-full py-2 text-sm text-neutral-500 hover:text-neutral-300 transition-colors"
+          >
+            {t("memberHome.loadMore")}
+          </button>
         )}
       </div>
     </div>

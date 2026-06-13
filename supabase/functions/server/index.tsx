@@ -126,6 +126,39 @@ async function wsGetOrSeed(c: any, key: string, seed: any): Promise<any> {
   return data;
 }
 
+async function logActivity(c: any, action: string, target: string) {
+  const user = c.get("user");
+  if (!user) return;
+  const actor = user.email || user.user_metadata?.full_name || "Anonymous";
+  const list = await wsGetOrSeed(c, "team_activity:list", []);
+  list.unshift({
+    id: Date.now().toString(),
+    actor,
+    action,
+    target,
+    time: new Date().toISOString(),
+  });
+  while (list.length > 100) list.pop();
+  await kv.set(wsKey(c, "team_activity:list"), list);
+}
+
+async function addMention(c: any, mentionee: string, text: string) {
+  const user = c.get("user");
+  if (!user) return;
+  const actor = user.email || user.user_metadata?.full_name || "Anonymous";
+  const list = await wsGetOrSeed(c, "mentions:list", []);
+  list.unshift({
+    id: Date.now().toString(),
+    type: "mention",
+    actor,
+    text,
+    mentionee,
+    time: new Date().toISOString(),
+  });
+  while (list.length > 50) list.pop();
+  await kv.set(wsKey(c, "mentions:list"), list);
+}
+
 // ── Seed Data ─────────────────────────────────────────────────────────────────
 
 const SEED_TASKS = [
@@ -2013,13 +2046,20 @@ app.get("/member-home", async (c) => {
     const calendarEvents = await wsGetOrSeed(c, "calendar:events", SEED_CALENDAR);
     const todayEvents = calendarEvents[todayKey] ?? [];
 
-    // Tasks partitioned by status
+    // Tasks partitioned by status (scoped to current user)
+    const userEmail = user.email;
+    const userName = user.user_metadata?.full_name || userEmail;
     const allTasks = await wsGetOrSeed(c, "tasks:list", SEED_TASKS);
+    const memberTasks = allTasks.filter((t: any) =>
+      t.assignee === userEmail ||
+      t.assignee === userName ||
+      (t.assignee && userName && t.assignee.toLowerCase() === userName.toLowerCase())
+    );
     const myTasks = {
-      in_progress: allTasks.filter((t: any) => t.status === "in-progress"),
-      in_review: allTasks.filter((t: any) => t.status === "review"),
-      due_today: allTasks.filter((t: any) => t.due === `${now.toLocaleString("en-US", { month: "short" })} ${now.getDate()}`),
-      completed: allTasks.filter((t: any) => t.status === "completed" || t.completed === true),
+      in_progress: memberTasks.filter((t: any) => t.status === "in-progress"),
+      in_review: memberTasks.filter((t: any) => t.status === "review"),
+      due_today: memberTasks.filter((t: any) => t.due === `${now.toLocaleString("en-US", { month: "short" })} ${now.getDate()}`),
+      completed: memberTasks.filter((t: any) => t.status === "completed" || t.completed === true),
     };
 
     // Active projects with progress
@@ -2037,6 +2077,10 @@ app.get("/member-home", async (c) => {
 
     // Mentions & team activity (seed if empty)
     const mentions = await wsGetOrSeed(c, "mentions:list", SEED_MENTIONS);
+    const memberMentions = mentions.filter((m: any) =>
+      (m.mentionee && (m.mentionee === userEmail || m.mentionee === userName)) ||
+      !m.mentionee
+    );
     const teamActivity = await wsGetOrSeed(c, "team_activity:list", SEED_TEAM_ACTIVITY);
 
     return c.json({
@@ -2051,7 +2095,7 @@ app.get("/member-home", async (c) => {
       today_events: todayEvents,
       my_tasks: myTasks,
       projects: activeProjects,
-      mentions: mentions.slice(0, 5),
+      mentions: memberMentions.slice(0, 5),
       team_activity: teamActivity.slice(0, 10),
     });
   } catch (e) {
@@ -2076,6 +2120,38 @@ app.delete("/workspace-data", async (c) => {
   }
 });
 
+app.post("/leave-workspace", async (c) => {
+  try {
+    const user = c.get("user");
+    const workspace = c.get("workspace");
+    const membership = c.get("membership");
+    if (!user || !workspace || !membership) {
+      return c.json({ error: "Unauthorized" }, 401);
+    }
+    if (membership.role === "owner") {
+      return c.json({ error: "Owner cannot leave. Transfer ownership first.", code: "owner_cannot_leave" }, 403);
+    }
+
+    // Read current members
+    const members = await ws.getMembers(workspace.id);
+    const filtered = members.filter((m: any) => m.user_id !== user.id);
+    await kv.set(`ws_members:${workspace.id}`, filtered);
+
+    // Update user's workspace index
+    const ids = await ws.listUserWorkspaceIds(user.id);
+    const updatedIds = ids.filter((id: string) => id !== workspace.id);
+    await kv.set(`user_ws:${user.id}`, updatedIds);
+
+    // Log the activity
+    await logActivity(c, "left", workspace.name);
+
+    return c.json({ ok: true });
+  } catch (e) {
+    console.log("POST /leave-workspace error:", e);
+    return c.json({ error: String(e) }, 500);
+  }
+});
+
 // ── Tasks ─────────────────────────────────────────────────────────────────────
 
 app.get("/tasks", async (c) => {
@@ -2096,6 +2172,7 @@ app.post("/tasks", async (c) => {
     const newTask = { ...body, id: newId };
     tasks.push(newTask);
     await kv.set(wsKey(c, "tasks:list"), tasks);
+    await logActivity(c, "created", newTask.title);
     return c.json(newTask, 201);
   } catch (e) {
     console.log("POST /tasks error:", e);
@@ -2110,8 +2187,17 @@ app.put("/tasks/:id", async (c) => {
     const tasks = await wsGetOrSeed(c, "tasks:list", SEED_TASKS);
     const idx = tasks.findIndex((t: any) => t.id === id);
     if (idx === -1) return c.json({ error: "Task not found" }, 404);
+    const oldStatus = tasks[idx].status;
+    const oldAssignee = tasks[idx].assignee;
     tasks[idx] = { ...tasks[idx], ...body };
     await kv.set(wsKey(c, "tasks:list"), tasks);
+    if (body.status && body.status !== oldStatus) {
+      await logActivity(c, "updated", tasks[idx].title);
+    }
+    if (body.assignee && body.assignee !== oldAssignee) {
+      const actor = c.get("user").email || c.get("user").user_metadata?.full_name || "Anonymous";
+      await addMention(c, body.assignee, `${actor} assigned you to "${tasks[idx].title}"`);
+    }
     return c.json(tasks[idx]);
   } catch (e) {
     console.log("PUT /tasks/:id error:", e);
@@ -2123,8 +2209,11 @@ app.delete("/tasks/:id", async (c) => {
   try {
     const id = parseInt(c.req.param("id"));
     let tasks = await wsGetOrSeed(c, "tasks:list", SEED_TASKS);
+    const target = tasks.find((t: any) => t.id === id);
+    const title = target?.title || "Task";
     tasks = tasks.filter((t: any) => t.id !== id);
     await kv.set(wsKey(c, "tasks:list"), tasks);
+    await logActivity(c, "deleted", title);
     return c.json({ ok: true });
   } catch (e) {
     console.log("DELETE /tasks/:id error:", e);
@@ -2164,6 +2253,7 @@ app.post("/projects", async (c) => {
     const newProject = { ...body, id: newId };
     projects.push(newProject);
     await kv.set(wsKey(c, "projects:list"), projects);
+    await logActivity(c, "created", newProject.name);
     return c.json(newProject, 201);
   } catch (e) {
     console.log("POST /projects error:", e);
@@ -2328,6 +2418,7 @@ app.post("/files", async (c) => {
     const files = await wsGetOrSeed(c, "files:list", SEED_FILES);
     files.unshift(file);
     await kv.set(wsKey(c, "files:list"), files);
+    await logActivity(c, "uploaded", file.name);
     return c.json(file, 201);
   } catch (e) {
     console.log("POST /files error:", e);
