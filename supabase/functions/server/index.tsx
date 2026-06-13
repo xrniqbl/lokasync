@@ -1613,15 +1613,13 @@ app.post("/admin/notifications", async (c) => {
     const audience = ["all", "free", "pro", "business"].includes(body.audience)
       ? body.audience
       : "all";
-    const notification = {
-      id: crypto.randomUUID(),
+    const { data: notification } = await sql.getDbClient().from("notifications").insert({
       title,
-      message,
+      body: message,
       audience,
-      created_at: new Date().toISOString(),
       created_by: gate.user.email,
-    };
-    await kv.set(`notification:${notification.id}`, notification);
+    }).select().single();
+    if (!notification) return c.json({ error: "Failed to create notification" }, 500);
     return c.json(notification, 201);
   } catch (e) {
     console.log("POST /admin/notifications error:", e);
@@ -1634,9 +1632,9 @@ app.delete("/admin/notifications/:id", async (c) => {
     const gate = await requireAdmin(c);
     if (!gate.user) return gate.response;
     const id = c.req.param("id");
-    const existing = await kv.get(`notification:${id}`);
+    const { data: existing } = await sql.getDbClient().from("notifications").select("*").eq("id", id).maybeSingle();
     if (!existing) return c.json({ error: "Notification not found" }, 404);
-    await kv.del(`notification:${id}`);
+    await sql.getDbClient().from("notifications").delete().eq("id", id);
     return c.json({ ok: true });
   } catch (e) {
     console.log("DELETE /admin/notifications error:", e);
@@ -1706,20 +1704,18 @@ app.get("/notifications", async (c) => {
     const user = await getAuthedUser(c);
     if (!user) return c.json({ error: "Unauthorized" }, 401);
     const planId = await getEffectivePlanId(user.id);
-    const all = (await kv.getByPrefix("notification:")).filter(Boolean);
-    const reads: string[] = (await kv.get(`notification_reads:${user.id}`)) ?? [];
+    const { data: all } = await sql.getDbClient().from("notifications").select("*").order("created_at", { ascending: false }).limit(20);
+    if (!all?.length) return c.json([]);
+    const { data: reads } = await sql.getDbClient().from("notification_reads").select("notification_id").eq("user_id", user.id);
+    const readSet = new Set((reads ?? []).map((r: any) => r.notification_id));
     const items = all
       .filter((n: any) => n.audience === "all" || n.audience === planId)
-      .sort((a: any, b: any) =>
-        String(a.created_at) < String(b.created_at) ? 1 : -1,
-      )
-      .slice(0, 20)
       .map((n: any) => ({
         id: n.id,
         title: n.title,
-        message: n.message,
+        message: n.body,
         created_at: n.created_at,
-        read: reads.includes(n.id),
+        read: readSet.has(n.id),
       }));
     return c.json(items);
   } catch (e) {
@@ -1735,9 +1731,9 @@ app.put("/notifications/read", async (c) => {
     const body = await c.req.json();
     const ids: string[] = Array.isArray(body.ids) ? body.ids.map(String) : [];
     if (ids.length === 0) return c.json({ error: "ids is required" }, 400);
-    const reads: string[] = (await kv.get(`notification_reads:${user.id}`)) ?? [];
-    const merged = Array.from(new Set([...reads, ...ids])).slice(-200);
-    await kv.set(`notification_reads:${user.id}`, merged);
+    for (const nid of ids) {
+      await sql.getDbClient().from("notification_reads").upsert({ notification_id: nid, user_id: user.id, read_at: new Date().toISOString() }, { onConflict: "notification_id,user_id" });
+    }
     return c.json({ ok: true });
   } catch (e) {
     console.log("PUT /notifications/read error:", e);

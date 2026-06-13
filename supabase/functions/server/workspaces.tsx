@@ -223,20 +223,15 @@ export async function deleteWorkspace(workspaceId: string) {
   for (const m of members) {
     await removeFromUserIndex(m.user_id, workspaceId);
   }
-  const tokens: string[] = (await kv.get(`ws_invites:${workspaceId}`)) ?? [];
-  if (tokens.length) {
-    await kv.mdel(tokens.map((t) => `ws_invite:${t}`));
-    await kv.del(`ws_invites:${workspaceId}`);
-  }
+  // Delete invitations via SQL CASCADE (workspace_id FK) and workspace data keys
+  await sql.getDbClient().from("workspace_invitations").delete().eq("workspace_id", workspaceId);
   await kv.mdel(WORKSPACE_DATA_KEYS.map((k) => wsDataKey(workspaceId, k)));
   await kv.del(`ws_members:${workspaceId}`);
   await kv.del(`workspace:${workspaceId}`);
 }
 
 // ── Invitations (Fase 14.2) ───────────────────────────────────────────────────
-// KV layout:
-//   ws_invite:{token}      → Invitation (single-use, expiring token)
-//   ws_invites:{wsId}      → string[] (tokens issued for the workspace)
+// SQL table: workspace_invitations (token is unique, workspace_id FK cascade)
 
 export type InvitationStatus = "pending" | "accepted" | "revoked" | "expired";
 
@@ -261,11 +256,35 @@ const randomToken = () => {
 };
 
 export async function getInvitation(token: string): Promise<Invitation | null> {
-  return (await kv.get(`ws_invite:${token}`)) ?? null;
+  const { data, error } = await sql.getDbClient().from("workspace_invitations").select("*").eq("token", token).maybeSingle();
+  if (error || !data) return null;
+  // Also fetch workspace name for the invitation object
+  const { data: ws } = await sql.getDbClient().from("workspaces").select("name").eq("id", data.workspace_id).maybeSingle();
+  return {
+    token: data.token,
+    workspace_id: data.workspace_id,
+    workspace_name: ws?.name ?? "",
+    email: data.email,
+    role: data.role as WorkspaceRole,
+    invited_by: data.invited_by,
+    status: data.status as InvitationStatus,
+    created_at: data.created_at,
+    expires_at: data.expires_at,
+  };
 }
 
 export async function saveInvitation(invitation: Invitation) {
-  await kv.set(`ws_invite:${invitation.token}`, invitation);
+  const now = new Date().toISOString();
+  await sql.getDbClient().from("workspace_invitations").upsert({
+    token: invitation.token,
+    workspace_id: invitation.workspace_id,
+    email: invitation.email,
+    role: invitation.role,
+    invited_by: invitation.invited_by,
+    status: invitation.status,
+    expires_at: invitation.expires_at,
+    updated_at: now,
+  }, { onConflict: "token" });
 }
 
 // Lazily marks a pending invitation as expired once past its expiry date.
@@ -276,9 +295,12 @@ export async function freshInvitation(
     invitation.status === "pending" &&
     new Date(invitation.expires_at) < new Date()
   ) {
-    const expired = { ...invitation, status: "expired" as InvitationStatus };
-    await saveInvitation(expired);
-    return expired;
+    const now = new Date().toISOString();
+    await sql.getDbClient().from("workspace_invitations").update({
+      status: "expired",
+      updated_at: now,
+    }).eq("token", invitation.token).eq("status", "pending");
+    return { ...invitation, status: "expired" };
   }
   return invitation;
 }
@@ -286,13 +308,21 @@ export async function freshInvitation(
 export async function listInvitations(
   workspaceId: string,
 ): Promise<Invitation[]> {
-  const tokens: string[] = (await kv.get(`ws_invites:${workspaceId}`)) ?? [];
-  const items: Invitation[] = [];
-  for (const token of tokens) {
-    const invitation = await getInvitation(token);
-    if (invitation) items.push(await freshInvitation(invitation));
-  }
-  return items.sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
+  const { data: rows, error } = await sql.getDbClient().from("workspace_invitations").select("*").eq("workspace_id", workspaceId).order("created_at", { ascending: false });
+  if (error || !rows) return [];
+  const { data: wsRow } = await sql.getDbClient().from("workspaces").select("name").eq("id", workspaceId).maybeSingle();
+  const wsName = wsRow?.name ?? "";
+  return rows.map((r: any) => ({
+    token: r.token,
+    workspace_id: r.workspace_id,
+    workspace_name: wsName,
+    email: r.email,
+    role: r.role as WorkspaceRole,
+    invited_by: r.invited_by,
+    status: r.status as InvitationStatus,
+    created_at: r.created_at,
+    expires_at: r.expires_at,
+  }));
 }
 
 export async function createInvitation(
@@ -302,30 +332,45 @@ export async function createInvitation(
   role: WorkspaceRole,
 ): Promise<Invitation> {
   // Re-invite: revoke any previous pending invitation for the same email.
-  const existing = await listInvitations(workspace.id);
-  for (const inv of existing) {
-    if (inv.status === "pending" && inv.email === email) {
-      await saveInvitation({ ...inv, status: "revoked" });
-    }
-  }
   const now = new Date();
   const expires = new Date(now);
   expires.setDate(expires.getDate() + INVITE_TTL_DAYS);
-  const invitation: Invitation = {
-    token: randomToken(),
+  const token = randomToken();
+  const nowISO = now.toISOString();
+  const expiresISO = expires.toISOString();
+  const inviterName = displayName(inviter);
+
+  // Revoke existing pending invites for this email in this workspace
+  await sql.getDbClient().from("workspace_invitations").update({
+    status: "revoked",
+    updated_at: nowISO,
+  }).eq("workspace_id", workspace.id).eq("email", email).eq("status", "pending");
+
+  const { data: inserted } = await sql.getDbClient().from("workspace_invitations").insert({
     workspace_id: workspace.id,
-    workspace_name: workspace.name,
+    token,
     email,
     role,
-    invited_by: displayName(inviter),
+    invited_by: inviterName,
     status: "pending",
-    created_at: now.toISOString(),
-    expires_at: expires.toISOString(),
+    expires_at: expiresISO,
+    created_at: nowISO,
+    updated_at: nowISO,
+  }).select().single();
+
+  if (!inserted) throw new Error("Failed to create invitation");
+
+  return {
+    token: inserted.token,
+    workspace_id: inserted.workspace_id,
+    workspace_name: workspace.name,
+    email: inserted.email,
+    role: inserted.role as WorkspaceRole,
+    invited_by: inserted.invited_by,
+    status: inserted.status as InvitationStatus,
+    created_at: inserted.created_at,
+    expires_at: inserted.expires_at,
   };
-  await saveInvitation(invitation);
-  const tokens: string[] = (await kv.get(`ws_invites:${workspace.id}`)) ?? [];
-  await kv.set(`ws_invites:${workspace.id}`, [...tokens, invitation.token]);
-  return invitation;
 }
 
 // Sends the invitation email via Resend when RESEND_API_KEY is configured;
