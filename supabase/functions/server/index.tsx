@@ -3958,8 +3958,10 @@ const SEED_MILESTONES = {
 
 app.get("/milestones/:project", async (c) => {
   try {
+    const workspace = c.get("workspace");
     const project = c.req.param("project");
-    const all = await wsGetOrSeed(c, "milestones:all", SEED_MILESTONES);
+    const row = await sql.sqlQueryFirst("workspace_milestones", workspace.id, "data");
+    const all = row?.data ?? SEED_MILESTONES;
     return c.json(all[project] ?? []);
   } catch (e) {
     console.log("GET /milestones/:project error:", e);
@@ -3969,14 +3971,16 @@ app.get("/milestones/:project", async (c) => {
 
 app.put("/milestones/:project/:index", async (c) => {
   try {
+    const workspace = c.get("workspace");
     const project = c.req.param("project");
     const idx = parseInt(c.req.param("index"));
     const body = await c.req.json();
-    const all = await wsGetOrSeed(c, "milestones:all", SEED_MILESTONES);
+    const row = await sql.sqlQueryFirst("workspace_milestones", workspace.id, "data");
+    const all = row?.data ?? SEED_MILESTONES;
     if (!all[project] || !all[project][idx]) return c.json({ error: "Not found" }, 404);
     all[project][idx] = { ...all[project][idx], ...body };
-    await kv.set(wsKey(c, "milestones:all"), all);
-    await broadcastAfterWrite(c.get("workspace").id, "milestones");
+    await sql.sqlUpsert("workspace_milestones", { workspace_id: workspace.id, data: all, updated_at: new Date().toISOString() }, "workspace_id");
+    await broadcastAfterWrite(workspace.id, "workspace_milestones");
     return c.json(all[project][idx]);
   } catch (e) {
     console.log("PUT /milestones/:project/:index error:", e);
