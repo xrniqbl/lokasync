@@ -400,7 +400,17 @@ async function requirePlan(c: any, min: "pro" | "business") {
   if (!user) {
     return { user: null, response: c.json({ error: "Unauthorized" }, 401) };
   }
-  const planId = await getEffectivePlanId(user.id);
+  let planId = await getEffectivePlanId(user.id);
+  // If personal plan is insufficient, borrow the workspace owner's plan
+  if ((PLAN_RANK[planId] ?? 0) < PLAN_RANK[min]) {
+    const workspaceId = c.req.header("X-Workspace-Id");
+    if (workspaceId) {
+      const workspacePlan = await ws.getWorkspacePlan(workspaceId);
+      if ((PLAN_RANK[workspacePlan] ?? 0) >= PLAN_RANK[min]) {
+        planId = workspacePlan;
+      }
+    }
+  }
   if ((PLAN_RANK[planId] ?? 0) < PLAN_RANK[min]) {
     return {
       user: null,
@@ -784,6 +794,10 @@ async function applyTransactionStatus(tx: any, midtransData: any) {
       current_period_end: periodEnd(tx.interval, periodBase),
       updated_at: now,
     });
+
+    // Sync workspace plans so invited members inherit the owner's subscription
+    await ws.syncWorkspacePlans(tx.user_id, tx.plan_id);
+
     if (tx.voucher_code) {
       const voucher = await kv.get(`voucher:${tx.voucher_code}`);
       if (voucher) {
@@ -1928,6 +1942,120 @@ app.post("/invites/accept", async (c) => {
     });
   } catch (e) {
     console.log("POST /invites/accept error:", e);
+    return c.json({ error: String(e) }, 500);
+  }
+});
+
+// ── Workspace plan (public fallback for invited members) ─────────────────────
+
+app.get("/workspace-plan", async (c) => {
+  try {
+    const workspaceId = c.req.header("X-Workspace-Id");
+    if (!workspaceId) {
+      return c.json({ plan: "free", owner_id: null });
+    }
+    const workspace = await ws.getWorkspace(workspaceId);
+    if (!workspace) {
+      return c.json({ plan: "free", owner_id: null });
+    }
+    return c.json({
+      plan: workspace.plan_id ?? "free",
+      owner_id: workspace.owner_id,
+    });
+  } catch (e) {
+    console.log("GET /workspace-plan error:", e);
+    return c.json({ error: String(e) }, 500);
+  }
+});
+
+// ── Member home (consolidated dashboard for invited members) ─────────────────
+
+const SEED_MENTIONS = [
+  { id: 1, type: "mention", text: "@iqbal assigned you to Review design mockups v3", project: "Mobile App", time: "10 min ago", read: false },
+  { id: 2, type: "comment", text: "2 new comments on Homepage redesign", project: "Web Application", time: "1 hr ago", read: false },
+  { id: 3, type: "assignment", text: "You were assigned to Database migration script", project: "Web Application", time: "2 hr ago", read: true },
+  { id: 4, type: "mention", text: "@elena mentioned you in Q3 Planning", project: "Internal", time: "3 hr ago", read: true },
+  { id: 5, type: "share", text: "John shared a file with you", project: "Web Application", time: "5 hr ago", read: true },
+];
+
+const SEED_TEAM_ACTIVITY = [
+  { id: 1, actor: "Alice", action: "completed", target: "Homepage redesign", time: "2 min ago" },
+  { id: 2, actor: "Bob", action: "started", target: "Login API", time: "15 min ago" },
+  { id: 3, actor: "Charlie", action: "commented on", target: "Database migration script", time: "30 min ago" },
+  { id: 4, actor: "Diana", action: "uploaded", target: "Design System v3.figma", time: "1 hr ago" },
+  { id: 5, actor: "Evan", action: "completed", target: "Mobile responsive fix", time: "2 hr ago" },
+  { id: 6, actor: "Fiona", action: "joined", target: "Mobile App", time: "3 hr ago" },
+  { id: 7, actor: "George", action: "updated", target: "Q3 Goals", time: "4 hr ago" },
+  { id: 8, actor: "Hannah", action: "started", target: "Auth module refactor", time: "5 hr ago" },
+  { id: 9, actor: "Ian", action: "completed", target: "Unit tests — payment module", time: "6 hr ago" },
+  { id: 10, actor: "Julia", action: "commented on", target: "Client presentation deck", time: "8 hr ago" },
+];
+
+app.get("/member-home", async (c) => {
+  try {
+    const user = c.get("user");
+    const workspace = c.get("workspace");
+    const membership = c.get("membership");
+    if (!user || !workspace || !membership) {
+      return c.json({ error: "Unauthorized" }, 401);
+    }
+
+    // Owner info
+    const members = await ws.getMembers(workspace.id);
+    const owner = members.find((m: any) => m.user_id === workspace.owner_id);
+    const ownerProfile = owner
+      ? await kv.get(`profile:${workspace.owner_id}`)
+      : null;
+
+    // Today's events from calendar
+    const now = new Date();
+    const todayKey = `${now.getFullYear()}-${now.getMonth() + 1}-${now.getDate()}`;
+    const calendarEvents = await wsGetOrSeed(c, "calendar:events", SEED_CALENDAR);
+    const todayEvents = calendarEvents[todayKey] ?? [];
+
+    // Tasks partitioned by status
+    const allTasks = await wsGetOrSeed(c, "tasks:list", SEED_TASKS);
+    const myTasks = {
+      in_progress: allTasks.filter((t: any) => t.status === "in-progress"),
+      in_review: allTasks.filter((t: any) => t.status === "review"),
+      due_today: allTasks.filter((t: any) => t.due === `${now.toLocaleString("en-US", { month: "short" })} ${now.getDate()}`),
+      completed: allTasks.filter((t: any) => t.status === "completed" || t.completed === true),
+    };
+
+    // Active projects with progress
+    const allProjects = await wsGetOrSeed(c, "projects:list", SEED_PROJECTS);
+    const activeProjects = allProjects
+      .filter((p: any) => p.status === "active")
+      .map((p: any) => ({
+        id: p.id,
+        name: p.name,
+        total_tasks: p.tasks?.total ?? 0,
+        completed_tasks: p.tasks?.done ?? 0,
+        progress_percent: p.progress ?? 0,
+        next_milestone: p.due ?? null,
+      }));
+
+    // Mentions & team activity (seed if empty)
+    const mentions = await wsGetOrSeed(c, "mentions:list", SEED_MENTIONS);
+    const teamActivity = await wsGetOrSeed(c, "team_activity:list", SEED_TEAM_ACTIVITY);
+
+    return c.json({
+      workspace: {
+        name: workspace.name,
+        owner_id: workspace.owner_id,
+        owner_name: ownerProfile?.full_name ?? owner?.name ?? "Owner",
+        owner_email: ownerProfile?.email ?? owner?.email ?? "",
+        total_members: members.length,
+        plan_id: workspace.plan_id ?? "free",
+      },
+      today_events: todayEvents,
+      my_tasks: myTasks,
+      projects: activeProjects,
+      mentions: mentions.slice(0, 5),
+      team_activity: teamActivity.slice(0, 10),
+    });
+  } catch (e) {
+    console.log("GET /member-home error:", e);
     return c.json({ error: String(e) }, 500);
   }
 });

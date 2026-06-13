@@ -19,6 +19,7 @@ export interface Workspace {
   id: string;
   name: string;
   owner_id: string;
+  plan_id?: string;
   created_at: string;
   updated_at: string;
 }
@@ -103,10 +104,14 @@ export async function createWorkspace(
   name: string,
 ): Promise<{ workspace: Workspace; membership: Membership }> {
   const now = new Date().toISOString();
+  // Copy owner's current subscription plan into the workspace
+  const subscription = await kv.get(`subscription:${user.id}`);
+  const ownerPlan = subscription?.status === "active" ? subscription.plan_id : "free";
   const workspace: Workspace = {
     id: crypto.randomUUID(),
     name,
     owner_id: user.id,
+    plan_id: ownerPlan,
     created_at: now,
     updated_at: now,
   };
@@ -122,6 +127,25 @@ export async function createWorkspace(
   await kv.set(`ws_members:${workspace.id}`, [membership]);
   await addToUserIndex(user.id, workspace.id);
   return { workspace, membership };
+}
+
+// Syncs plan_id on all workspaces owned by userId to the given plan.
+export async function syncWorkspacePlans(userId: string, planId: string) {
+  const ids = await listUserWorkspaceIds(userId);
+  for (const id of ids) {
+    const workspace = await getWorkspace(id);
+    if (workspace && workspace.owner_id === userId) {
+      workspace.plan_id = planId;
+      workspace.updated_at = new Date().toISOString();
+      await kv.set(`workspace:${id}`, workspace);
+    }
+  }
+}
+
+// Reads the cached plan_id for a workspace (falls back to "free").
+export async function getWorkspacePlan(workspaceId: string): Promise<string> {
+  const workspace = await getWorkspace(workspaceId);
+  return workspace?.plan_id ?? "free";
 }
 
 export async function addMember(

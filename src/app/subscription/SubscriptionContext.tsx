@@ -9,6 +9,7 @@ import {
 import { useAuth } from "../auth/AuthContext";
 import {
   getSubscription,
+  getWorkspacePlan,
   type Plan,
   type Subscription,
   type SubscriptionInfo,
@@ -50,6 +51,8 @@ interface SubscriptionState {
   /** True when the user's plan rank is at least the given plan's rank. */
   hasPlan: (min: PlanId) => boolean;
   refresh: () => Promise<void>;
+  /** Workspace-level plan for invited members (borrowed from workspace owner). */
+  workspacePlan: PlanId;
 }
 
 const SubscriptionContext = createContext<SubscriptionState>({
@@ -66,6 +69,8 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
   const { session, user } = useAuth();
   const [info, setInfo] = useState<SubscriptionInfo | null>(null);
   const [loaded, setLoaded] = useState(false);
+  // Fase 14.5 — workspace-level plan for invited members
+  const [workspacePlan, setWorkspacePlan] = useState<PlanId>("free");
 
   const userId = user?.id;
 
@@ -73,17 +78,42 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
     if (!userId || !session) {
       setInfo(null);
       setLoaded(false);
+      setWorkspacePlan("free");
       return;
     }
     let cancelled = false;
     setLoaded(false);
+    setWorkspacePlan("free");
+
     getSubscription(session.access_token)
       .then((data) => {
-        if (!cancelled) setInfo(data);
+        if (cancelled) return;
+        setInfo(data);
+        // If personal plan is free or missing, fall back to workspace plan
+        const personalPlan = data?.effective_plan?.id;
+        if (!personalPlan || personalPlan === "free") {
+          getWorkspacePlan()
+            .then((wp) => {
+              if (!cancelled) setWorkspacePlan(wp.plan as PlanId);
+            })
+            .catch(() => {
+              /* workspace plan unavailable — keep free */
+            });
+        }
       })
       .catch((e) => {
-        console.error("Failed to load subscription:", e);
-        if (!cancelled) setInfo(null);
+        if (!cancelled) {
+          console.error("Failed to load subscription:", e);
+          setInfo(null);
+          // On error, still try workspace plan
+          getWorkspacePlan()
+            .then((wp) => {
+              if (!cancelled) setWorkspacePlan(wp.plan as PlanId);
+            })
+            .catch(() => {
+              /* workspace plan unavailable — keep free */
+            });
+        }
       })
       .finally(() => {
         if (!cancelled) setLoaded(true);
@@ -106,10 +136,14 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
   }, [session?.access_token]);
 
   const plan = info?.effective_plan ?? FALLBACK_FREE_PLAN;
+  // Use whichever plan is higher: personal or workspace-inherited
+  const effectivePlanRank = Math.max(
+    PLAN_RANK[plan.id] ?? 0,
+    PLAN_RANK[workspacePlan] ?? 0,
+  );
   const hasPlan = useCallback(
-    (min: PlanId) =>
-      (PLAN_RANK[plan.id] ?? 0) >= (PLAN_RANK[min] ?? Number.MAX_SAFE_INTEGER),
-    [plan.id],
+    (min: PlanId) => effectivePlanRank >= (PLAN_RANK[min] ?? Number.MAX_SAFE_INTEGER),
+    [effectivePlanRank],
   );
 
   return (
@@ -122,6 +156,7 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
         isAdmin: info?.is_admin ?? false,
         hasPlan,
         refresh,
+        workspacePlan,
       }}
     >
       {children}

@@ -1,5 +1,7 @@
 import { useLang } from "../i18n";
 import { useState, useEffect, useRef } from "react";
+import { useWorkspace } from "../workspace/WorkspaceContext";
+import { MemberHome } from "./MemberHome";
 import { TrendingUp, TrendingDown, Target, DollarSign, Users, BarChart2, Activity, Layers, Clock, ChevronRight } from "lucide-react";
 import { toast } from "sonner";
 import { useNavigation } from "./NavigationContext";
@@ -2786,7 +2788,7 @@ function buildDashDetails(
   } satisfies Partial<api.DashboardDetails>;
 }
 
-export function DashboardPage() {
+function OwnerDashboard() {
   const { navigate, subSection } = useNavigation();
   const [dashView, setDashView] = useState<DashView>("overview");
   const [showNewTask, setShowNewTask] = useState(false);
@@ -3031,4 +3033,13 @@ export function DashboardPage() {
       <NewTaskModal open={showNewTask} onClose={() => setShowNewTask(false)} onAdd={handleAddTask} />
     </div>
   );
+}
+
+/**
+ * DashboardPage — role-based router.
+ * Owners see the full analytics dashboard; members see the task-centric MemberHome.
+ */
+export function DashboardPage() {
+  const { isOwner } = useWorkspace();
+  return isOwner ? <OwnerDashboard /> : <MemberHome />;
 }

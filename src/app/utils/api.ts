@@ -648,6 +648,23 @@ export const acceptInvite = (token: string) =>
 export const resetWorkspaceData = () =>
   request<{ ok: boolean }>("/workspace-data", { method: "DELETE" });
 
+// ── Workspace plan (Fase 14.5 — member plan inheritance) ───────────────────────
+
+export interface WorkspacePlan {
+  plan: PlanId;
+  owner_id: string | null;
+}
+
+export async function getWorkspacePlan() {
+  return request<WorkspacePlan>("/workspace-plan");
+}
+
+// ── Member home (consolidated endpoint for member dashboard) ─────────────────
+
+export async function getMemberHome() {
+  return request<any>("/member-home");
+}
+
 // ── Financial data ────────────────────────────────────────────────────────────
 
 export interface FinancialData {

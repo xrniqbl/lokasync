@@ -3,6 +3,7 @@ import { useNavigate } from "react-router";
 import { toast } from "sonner";
 import { useNavigation } from "./NavigationContext";
 import { useSubscription } from "../subscription/SubscriptionContext";
+import { useWorkspace } from "../workspace/WorkspaceContext";
 import { WorkspaceSwitcher } from "./WorkspaceSwitcher";
 import * as api from "../utils/api";
 import { signOut, getCurrentUser } from "../utils/supabase";
@@ -307,7 +308,9 @@ interface MenuItem {
   subId?: string;
   hasDropdown?: boolean;
   isActive?: boolean;
-  children?: (MenuItem & { subId?: string })[];
+  /** Role required to see this item. If undefined, visible to all. */
+  requiredRole?: api.WorkspaceRole[];
+  children?: (MenuItem & { subId?: string; requiredRole?: api.WorkspaceRole[] })[];
 }
 
 interface MenuSection {
@@ -433,13 +436,18 @@ function MenuSection({
   onToggleExpanded,
   isCollapsed,
   onItemClick,
+  role,
 }: {
   section: MenuSection;
   expandedItems: Set<string>;
   onToggleExpanded: (itemKey: string) => void;
   isCollapsed?: boolean;
   onItemClick?: (subId: string) => void;
+  role: api.WorkspaceRole;
 }) {
+  const visibleItems = section.items.filter(
+    (item) => !item.requiredRole || item.requiredRole.includes(role),
+  );
   return (
     <div className="box-border content-stretch flex flex-col items-start justify-stretch p-0 relative shrink-0 w-full">
       <div
@@ -458,9 +466,12 @@ function MenuSection({
           </div>
         </div>
       </div>
-      {section.items.map((item, index) => {
+      {visibleItems.map((item, index) => {
         const itemKey = `${section.title}-${index}`;
         const isExpanded = expandedItems.has(itemKey);
+        const visibleChildren = item.children?.filter(
+          (child) => !child.requiredRole || child.requiredRole.includes(role),
+        );
         return (
           <div
             key={itemKey}
@@ -473,9 +484,9 @@ function MenuSection({
               onItemClick={onItemClick}
               isCollapsed={isCollapsed}
             />
-            {isExpanded && item.children && !isCollapsed && (
+            {isExpanded && visibleChildren && visibleChildren.length > 0 && !isCollapsed && (
               <div className="flex flex-col gap-1 mb-2">
-                {item.children.map((child, childIndex) => (
+                {visibleChildren.map((child, childIndex) => (
                   <SubMenuItem
                     key={`${itemKey}-${childIndex}`}
                     item={child}
@@ -505,6 +516,7 @@ function getSidebarContent(
   tasks: api.Task[] = [],
   todayEvents: { title: string; tag: string }[] = [],
   recentFiles: api.FileItem[] = [],
+  role: api.WorkspaceRole = "owner",
 ): SidebarContent {
   const taskChild = (t: api.Task) => ({ label: t.title, subId: `task-${t.id}`, icon: null });
   const todayShort = new Date().toLocaleDateString("en-US", { month: "short", day: "numeric" });
@@ -873,16 +885,65 @@ function getSidebarContent(
               icon: <Report size={16} className="text-neutral-50" />,
               label: t("sidebar.performanceReport"),
               subId: "performance",
+              requiredRole: ["owner"],
             },
             {
               icon: <ChartBar size={16} className="text-neutral-50" />,
               label: t("sidebar.taskCompletionAnalytics"),
               subId: "task-completion",
+              requiredRole: ["owner"],
             },
             {
               icon: <Analytics size={16} className="text-neutral-50" />,
               label: t("sidebar.teamProductivityAnalytics"),
               subId: "productivity",
+              requiredRole: ["owner"],
+            },
+          ],
+        },
+        {
+          title: t("sidebar.insights"),
+          items: [
+            {
+              icon: <StarFilled size={16} className="text-neutral-50" />,
+              label: t("sidebar.keyMetrics"),
+              subId: "key-metrics",
+              hasDropdown: true,
+              requiredRole: ["owner"],
+              children: [
+                { label: t("sidebar.taskCompletionMetrics"), subId: "analytics-task-metrics", icon: null, requiredRole: ["owner"] },
+                { label: t("sidebar.timeTrackingAnalysis"), subId: "analytics-time-tracking", icon: null, requiredRole: ["owner"] },
+                { label: t("sidebar.teamEfficiencyReport"), subId: "analytics-team-efficiency", icon: null, requiredRole: ["owner"] },
+                { label: t("sidebar.performanceBenchmarks"), subId: "analytics-benchmarks", icon: null, requiredRole: ["owner"] },
+              ],
+            },
+            {
+              icon: <Report size={16} className="text-neutral-50" />,
+              label: t("sidebar.topPerformers"),
+              subId: "top-performers",
+              requiredRole: ["owner"],
+            },
+          ],
+        },
+      ],
+    },
+    billing: {
+      title: t("sidebar.billing"),
+      sections: [
+        {
+          title: t("sidebar.subscription"),
+          items: [
+            {
+              icon: <Report size={16} className="text-neutral-50" />,
+              label: t("sidebar.planSubscription"),
+              subId: "plan",
+              requiredRole: ["owner"],
+            },
+            {
+              icon: <Time size={16} className="text-neutral-50" />,
+              label: t("sidebar.paymentHistory"),
+              subId: "history",
+              requiredRole: ["owner"],
             },
           ],
         },
@@ -1022,60 +1083,78 @@ function getSidebarContent(
         },
         {
           title: t("sidebar.workspace"),
-          items: [
-            {
-              icon: <Settings size={16} className="text-neutral-50" />,
-              label: t("sidebar.preferences"),
-              subId: "workspace",
-              hasDropdown: true,
-              children: [
-                { label: t("sidebar.themeAppearance"), subId: "settings-theme", icon: null },
-                { label: t("sidebar.timezoneDate"), subId: "settings-timezone", icon: null },
-                { label: t("sidebar.defaultNotifications"), subId: "settings-notif-defaults", icon: null },
+          items: (role === "member"
+            ? [
+                {
+                  icon: <Settings size={16} className="text-neutral-50" />,
+                  label: t("sidebar.preferences"),
+                  subId: "workspace",
+                  hasDropdown: true,
+                  children: [
+                    { label: t("sidebar.themeAppearance"), subId: "settings-theme", icon: null },
+                    { label: t("sidebar.timezoneDate"), subId: "settings-timezone", icon: null },
+                  ],
+                },
+              ]
+            : [
+                {
+                  icon: <Settings size={16} className="text-neutral-50" />,
+                  label: t("sidebar.preferences"),
+                  subId: "workspace",
+                  hasDropdown: true,
+                  children: [
+                    { label: t("sidebar.themeAppearance"), subId: "settings-theme", icon: null },
+                    { label: t("sidebar.timezoneDate"), subId: "settings-timezone", icon: null },
+                    { label: t("sidebar.defaultNotifications"), subId: "settings-notif-defaults", icon: null },
+                  ],
+                },
+                {
+                  icon: <UserMultiple size={16} className="text-neutral-50" />,
+                  label: t("sidebar.membersPermissions"),
+                  subId: "settings-members",
+                  requiredRole: ["owner"],
+                },
+                {
+                  icon: <Report size={16} className="text-neutral-50" />,
+                  label: t("sidebar.billingPlan"),
+                  subId: "settings-billing",
+                  requiredRole: ["owner"],
+                },
+                {
+                  icon: <Integration size={16} className="text-neutral-50" />,
+                  label: t("sidebar.integrations"),
+                  subId: "integrations",
+                  requiredRole: ["owner"],
+                },
+              ]),
+        },
+        ...(role === "owner"
+          ? [{
+              title: t("sidebar.advanced"),
+              items: [
+                {
+                  icon: <ChartBar size={16} className="text-neutral-50" />,
+                  label: t("sidebar.apiWebhooks"),
+                  subId: "settings-api",
+                },
+                {
+                  icon: <View size={16} className="text-neutral-50" />,
+                  label: t("sidebar.auditLog"),
+                  subId: "settings-audit",
+                },
+                {
+                  icon: <Archive size={16} className="text-neutral-50" />,
+                  label: t("sidebar.dataExport"),
+                  subId: "settings-data",
+                },
+                {
+                  icon: <Flag size={16} className="text-neutral-50" />,
+                  label: t("sidebar.dangerZone"),
+                  subId: "settings-danger",
+                },
               ],
-            },
-            {
-              icon: <UserMultiple size={16} className="text-neutral-50" />,
-              label: t("sidebar.membersPermissions"),
-              subId: "settings-members",
-            },
-            {
-              icon: <Report size={16} className="text-neutral-50" />,
-              label: t("sidebar.billingPlan"),
-              subId: "settings-billing",
-            },
-            {
-              icon: <Integration size={16} className="text-neutral-50" />,
-              label: t("sidebar.integrations"),
-              subId: "integrations",
-            },
-          ],
-        },
-        {
-          title: t("sidebar.advanced"),
-          items: [
-            {
-              icon: <ChartBar size={16} className="text-neutral-50" />,
-              label: t("sidebar.apiWebhooks"),
-              subId: "settings-api",
-            },
-            {
-              icon: <View size={16} className="text-neutral-50" />,
-              label: t("sidebar.auditLog"),
-              subId: "settings-audit",
-            },
-            {
-              icon: <Archive size={16} className="text-neutral-50" />,
-              label: t("sidebar.dataExport"),
-              subId: "settings-data",
-            },
-            {
-              icon: <Flag size={16} className="text-neutral-50" />,
-              label: t("sidebar.dangerZone"),
-              subId: "settings-danger",
-            },
-          ],
-        },
+            }]
+          : []),
       ],
     },
   };
@@ -1284,6 +1363,7 @@ function DetailSidebar({
 }) {
   const { navigate } = useNavigation();
   const { t } = useLang();
+  const { activeWorkspace } = useWorkspace();
   const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set());
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [teams, setTeams] = useState<api.Team[]>([]);
@@ -1302,7 +1382,8 @@ function DetailSidebar({
     api.getFiles().then(({ files }) => setRecentFiles(files.filter((f) => !f.archived).slice(0, 3))).catch(() => {});
   }, []);
 
-  const content = getSidebarContent(t, activeSection, teams, tasks, todayEvents, recentFiles);
+  const role = activeWorkspace?.role ?? "member";
+  const content = getSidebarContent(t, activeSection, teams, tasks, todayEvents, recentFiles, role);
 
   const toggleExpanded = (itemKey: string) => {
     const newExpanded = new Set(expandedItems);
@@ -1356,6 +1437,7 @@ function DetailSidebar({
             onToggleExpanded={toggleExpanded}
             isCollapsed={isCollapsed}
             onItemClick={handleItemClick}
+            role={role}
           />
         ))}
       </div>
