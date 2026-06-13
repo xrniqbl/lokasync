@@ -305,7 +305,7 @@ function Logo({ small = false }: { small?: boolean }) {
       <img
         src="/lokasynclogo.png"
         alt="LokaSync"
-        className={small ? "h-5 w-auto" : "h-7 w-auto"}
+        className={small ? "h-6 w-auto" : "h-8 w-auto"}
         style={{ objectFit: "contain" }}
       />
     </Link>
