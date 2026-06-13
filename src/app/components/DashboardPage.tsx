@@ -403,7 +403,7 @@ let monthlyTrend: { month: string; delivered: number; planned: number; velocity:
 let quarterlyData: { quarter: string; revenue: number; expenses: number; profit: number }[] = [];
 let performerData: { name: string; tasks: number; rate: number; score: number }[] = [];
 let performanceMetrics: { metric: string; value: string; change: string; up: boolean }[] = [];
-let forecastData: { month: string; actual: null; forecast: number; lower: number; upper: number }[] = [];
+let forecastData: { month: string; actual: number | null; forecast: number; lower: number; upper: number }[] = [];
 let riskItems: { risk: string; likelihood: string; impact: string; color: string }[] = [];
 let dashDetails: Partial<api.DashboardDetails> = {};
 
@@ -2176,7 +2176,7 @@ function computeDerivedMetrics(
   const avgVelocity = completedTasks.length / 6;
   forecastData = months.slice(3).map((month, i) => ({
     month,
-    actual: null as null | number,
+    actual: null,
     forecast: Math.round((completedTasks.length + avgVelocity * (i + 1))),
     lower: Math.round((completedTasks.length + avgVelocity * (i + 1)) * 0.8),
     upper: Math.round((completedTasks.length + avgVelocity * (i + 1)) * 1.2),
