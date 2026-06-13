@@ -14,8 +14,10 @@ import { FullScreenLoader } from "../../auth/guards";
 import { updatePassword } from "../../utils/supabase";
 import { AuthShell } from "./AuthShell";
 import { PasswordInput } from "./PasswordInput";
+import { useLang } from "../../i18n";
 
 export function ResetPasswordPage() {
+  const { t } = useLang();
   const { user, loading } = useAuth();
   const navigate = useNavigate();
   const [password, setPassword] = useState("");
@@ -25,25 +27,23 @@ export function ResetPasswordPage() {
 
   if (loading) return <FullScreenLoader />;
 
-  // The recovery link signs the user in; without that session this page
-  // cannot change a password.
   if (!user) {
     return (
       <AuthShell
-        title="Link expired"
-        description="This password reset link is invalid or has expired"
+        title={t("auth.linkExpired")}
+        description={t("auth.resetLinkInvalid")}
         footer={
           <Link to="/login" className="text-[#fafafa] hover:underline">
-            Back to sign in
+            {t("auth.backToSignIn")}
           </Link>
         }
       >
         <p className="text-center text-sm text-neutral-400">
-          Request a new link from the{" "}
+          {t("auth.requestNewLink")}{" "}
           <Link to="/forgot-password" className="text-[#fafafa] underline">
-            forgot password
+            {t("auth.forgotPasswordPage")}
           </Link>{" "}
-          page.
+          {t("auth.pageNotFound")}.
         </p>
       </AuthShell>
     );
@@ -53,11 +53,11 @@ export function ResetPasswordPage() {
     e.preventDefault();
     setError("");
     if (password.length < 8) {
-      setError("Password must be at least 8 characters.");
+      setError(t("auth.passwordMin8"));
       return;
     }
     if (password !== confirm) {
-      setError("Passwords do not match.");
+      setError(t("auth.passwordsDoNotMatch"));
       return;
     }
     setSubmitting(true);
@@ -67,35 +67,35 @@ export function ResetPasswordPage() {
       setError(updateError.message);
       return;
     }
-    toast.success("Password updated successfully");
+    toast.success(t("auth.passwordUpdatedSuccess"));
     navigate("/app/dashboard", { replace: true });
   };
 
   return (
     <AuthShell
-      title="Set a new password"
-      description={`Updating password for ${user.email ?? "your account"}`}
+      title={t("auth.setNewPassword")}
+      description={t("auth.updatingPasswordFor").replace("{email}", user.email ?? t("settings.account"))}
     >
       <form onSubmit={handleSubmit} className="flex flex-col gap-4">
         {error && (
           <Alert variant="error">
             <AlertCircle aria-hidden="true" />
-            <AlertTitle>Could not update password</AlertTitle>
+            <AlertTitle>{t("auth.couldNotUpdatePassword")}</AlertTitle>
             <AlertDescription>{error}</AlertDescription>
           </Alert>
         )}
         <Field>
-          <FieldLabel>New password</FieldLabel>
+          <FieldLabel>{t("auth.newPassword")}</FieldLabel>
           <PasswordInput
             value={password}
             onChange={setPassword}
             autoComplete="new-password"
             required
           />
-          <FieldDescription>Minimum 8 characters.</FieldDescription>
+          <FieldDescription>{t("auth.minimum8Chars")}</FieldDescription>
         </Field>
         <Field>
-          <FieldLabel>Confirm new password</FieldLabel>
+          <FieldLabel>{t("auth.confirmNewPassword")}</FieldLabel>
           <PasswordInput
             value={confirm}
             onChange={setConfirm}
@@ -104,7 +104,7 @@ export function ResetPasswordPage() {
           />
         </Field>
         <Button type="submit" loading={submitting} className="w-full">
-          Update password
+          {t("auth.updatePassword")}
         </Button>
       </form>
     </AuthShell>

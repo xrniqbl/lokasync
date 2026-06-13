@@ -7,6 +7,7 @@ import { NewFolderModal } from "./modals/NewFolderModal";
 import { FilePreviewModal } from "./modals/FilePreviewModal";
 import { useNavigation } from "./NavigationContext";
 import * as api from "../utils/api";
+import { useLang } from "../i18n";
 
 type FileItem = api.FileItem;
 type FolderItem = api.Folder;
@@ -28,6 +29,7 @@ function FileMenu({ fileName, onDelete, onRename, onPreview, onDownload }: {
   onPreview: () => void;
   onDownload: () => void;
 }) {
+  const { t } = useLang();
   return (
     <DropdownMenu.Root>
       <DropdownMenu.Trigger asChild>
@@ -45,10 +47,10 @@ function FileMenu({ fileName, onDelete, onRename, onPreview, onDownload }: {
           align="end"
         >
           {[
-            { label: "Preview", action: (e: React.MouseEvent) => { e.stopPropagation(); onPreview(); } },
-            { label: "Download", action: (e: React.MouseEvent) => { e.stopPropagation(); onDownload(); } },
-            { label: "Rename", action: (e: React.MouseEvent) => { e.stopPropagation(); onRename(); } },
-            { label: "Share", action: (e: React.MouseEvent) => { e.stopPropagation(); toast.success("Share link copied to clipboard"); } },
+            { label: t("filesPage.preview"), action: (e: React.MouseEvent) => { e.stopPropagation(); onPreview(); } },
+            { label: t("filesPage.download"), action: (e: React.MouseEvent) => { e.stopPropagation(); onDownload(); } },
+            { label: t("filesPage.rename"), action: (e: React.MouseEvent) => { e.stopPropagation(); onRename(); } },
+            { label: t("filesPage.share"), action: (e: React.MouseEvent) => { e.stopPropagation(); toast.success(t("filesPage.shareLinkCopied")); } },
           ].map((item) => (
             <DropdownMenu.Item
               key={item.label}
@@ -63,7 +65,7 @@ function FileMenu({ fileName, onDelete, onRename, onPreview, onDownload }: {
             onClick={(e) => { e.stopPropagation(); onDelete(); }}
             className="flex items-center px-3 py-2 text-[13px] text-red-400 hover:text-red-300 hover:bg-red-950/30 rounded-lg cursor-pointer outline-none transition-colors"
           >
-            Delete
+            {t("filesPage.delete")}
           </DropdownMenu.Item>
         </DropdownMenu.Content>
       </DropdownMenu.Portal>
@@ -77,6 +79,7 @@ const tabs = ["Recent", "Shared", "Folders", "Archived"];
 const slugify = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
 
 export function FilesPage() {
+  const { t } = useLang();
   const { subSection } = useNavigation();
   const [view, setView] = useState<"list" | "grid">("list");
   const [tab, setTab] = useState("Recent");
@@ -127,7 +130,7 @@ export function FilesPage() {
 
   const deleteFile = async (name: string) => {
     setFiles((prev) => prev.filter((f) => f.name !== name));
-    toast.success(`"${name.slice(0, 30)}..." deleted`);
+    toast.success(t("filesPage.fileDeleted").replace("{name}", name.slice(0, 30)));
     try { await api.deleteFile(name); }
     catch (e) { console.log("Failed to delete file:", e); }
   };
@@ -142,7 +145,7 @@ export function FilesPage() {
     const newName = renameValue.trim();
     if (newName && newName !== oldName) {
       setFiles((prev) => prev.map((f) => f.name === oldName ? { ...f, name: newName } : f));
-      toast.success("File renamed");
+      toast.success(t("filesPage.fileRenamed"));
       try { await api.renameFile(oldName, newName); }
       catch (e) { console.log("Failed to rename file:", e); }
     }
@@ -161,7 +164,7 @@ export function FilesPage() {
       const { url } = await api.getDownloadUrl(fileName);
       window.open(url, "_blank");
     } catch (e) {
-      toast.error("Failed to generate download link");
+      toast.error(t("filesPage.failedToGenerateDownload"));
     }
   };
 
@@ -170,26 +173,33 @@ export function FilesPage() {
     setTab("Recent");
   };
 
+  const tabLabels: Record<string, string> = {
+    Recent: t("filesPage.recentDocuments"),
+    Shared: t("filesPage.sharedWithMe"),
+    Folders: t("filesPage.allFolders"),
+    Archived: t("filesPage.archivedFiles"),
+  };
+
   return (
     <div className="flex flex-col h-full font-['Lexend:Regular',_sans-serif]">
       {/* Header */}
       <div className="px-4 md:px-6 lg:px-8 pt-6 lg:pt-8 pb-0">
         <div className="flex items-center justify-between mb-4 gap-3 flex-wrap">
           <div>
-            <h1 className="text-neutral-50 font-['Lexend:SemiBold',_sans-serif] text-[18px] lg:text-[22px] leading-tight mb-1">Files</h1>
-            <p className="text-neutral-500 text-[12px] lg:text-[13px]">{files.length} files · {folders.length} folders</p>
+            <h1 className="text-neutral-50 font-['Lexend:SemiBold',_sans-serif] text-[18px] lg:text-[22px] leading-tight mb-1">{t("filesPage.filesTitle")}</h1>
+            <p className="text-neutral-500 text-[12px] lg:text-[13px]">{t("filesPage.filesCountFolders").replace("{fileCount}", String(files.length)).replace("{folderCount}", String(folders.length))}</p>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
             <div className="flex items-center bg-neutral-800/60 rounded-lg p-0.5">
               {(["list", "grid"] as const).map((v) => (
                 <button key={v} onClick={() => setView(v)}
                   className={`px-2.5 py-1.5 rounded-md text-[12px] transition-colors capitalize ${view === v ? "bg-neutral-700 text-neutral-200" : "text-neutral-500 hover:text-neutral-300"}`}>
-                  {v}
+                  {t(`filesPage.${v}` as any)}
                 </button>
               ))}
             </div>
-            <button onClick={() => setShowNewFolder(true)} className="border border-neutral-800 hover:bg-neutral-800 text-neutral-400 text-[12px] lg:text-[13px] px-3 py-2 rounded-lg transition-colors whitespace-nowrap">+ Folder</button>
-            <button onClick={() => setShowUpload(true)} className="bg-indigo-600 hover:bg-indigo-500 text-white text-[12px] lg:text-[13px] px-4 py-2 rounded-lg transition-colors">Upload</button>
+            <button onClick={() => setShowNewFolder(true)} className="border border-neutral-800 hover:bg-neutral-800 text-neutral-400 text-[12px] lg:text-[13px] px-3 py-2 rounded-lg transition-colors whitespace-nowrap">+ {t("filesPage.newFolder")}</button>
+            <button onClick={() => setShowUpload(true)} className="bg-indigo-600 hover:bg-indigo-500 text-white text-[12px] lg:text-[13px] px-4 py-2 rounded-lg transition-colors">{t("filesPage.upload")}</button>
           </div>
         </div>
 
@@ -199,7 +209,7 @@ export function FilesPage() {
             onClick={() => setCurrentFolder(null)}
             className={`transition-colors ${currentFolder ? "text-neutral-500 hover:text-neutral-300" : "text-neutral-300"}`}
           >
-            All Files
+            {t("filesPage.allFiles")}
           </button>
           {currentFolder && (
             <>
@@ -211,10 +221,10 @@ export function FilesPage() {
 
         {/* Tabs */}
         <div className="flex items-center gap-0 border-b border-neutral-800/60 overflow-x-auto">
-          {tabs.map((t) => (
-            <button key={t} onClick={() => setTab(t)}
-              className={`px-3 lg:px-4 py-2.5 text-[12px] lg:text-[13px] border-b-2 transition-colors -mb-px whitespace-nowrap ${tab === t ? "border-indigo-500 text-neutral-50" : "border-transparent text-neutral-500 hover:text-neutral-300"}`}>
-              {t}
+          {tabs.map((tabKey) => (
+            <button key={tabKey} onClick={() => setTab(tabKey)}
+              className={`px-3 lg:px-4 py-2.5 text-[12px] lg:text-[13px] border-b-2 transition-colors -mb-px whitespace-nowrap ${tab === tabKey ? "border-indigo-500 text-neutral-50" : "border-transparent text-neutral-500 hover:text-neutral-300"}`}>
+              {tabLabels[tabKey] ?? tabKey}
             </button>
           ))}
         </div>
@@ -224,8 +234,8 @@ export function FilesPage() {
       <div className="flex-1 overflow-y-auto px-4 md:px-6 lg:px-8 py-4">
         {tab === "Archived" && (
           <div className="mb-4 flex items-center gap-2 bg-neutral-800/40 border border-neutral-800/60 rounded-lg px-4 py-2.5 text-[12px] text-neutral-500">
-            <span className="text-neutral-600">These files are archived and read-only.</span>
-            <button className="ml-auto text-indigo-400 hover:text-indigo-300 transition-colors" onClick={() => toast.success("Files restored to All Files")}>Restore all</button>
+            <span className="text-neutral-600">{t("filesPage.archivedReadOnly")}</span>
+            <button className="ml-auto text-indigo-400 hover:text-indigo-300 transition-colors" onClick={() => toast.success(t("filesPage.filesRestored"))}>{t("filesPage.restoreAll")}</button>
           </div>
         )}
         {tab === "Folders" && !currentFolder ? (
@@ -243,10 +253,10 @@ export function FilesPage() {
         ) : view === "list" ? (
           <>
             <div className="hidden md:grid md:grid-cols-[1fr_80px_80px_60px_32px] gap-4 px-3 py-2 mb-1">
-              <div className="text-neutral-600 text-[11px] uppercase tracking-wider">Name</div>
-              <div className="text-neutral-600 text-[11px] uppercase tracking-wider">Size</div>
-              <div className="text-neutral-600 text-[11px] uppercase tracking-wider">Modified</div>
-              <div className="text-neutral-600 text-[11px] uppercase tracking-wider">Owner</div>
+              <div className="text-neutral-600 text-[11px] uppercase tracking-wider">{t("filesPage.name")}</div>
+              <div className="text-neutral-600 text-[11px] uppercase tracking-wider">{t("filesPage.size")}</div>
+              <div className="text-neutral-600 text-[11px] uppercase tracking-wider">{t("filesPage.modified")}</div>
+              <div className="text-neutral-600 text-[11px] uppercase tracking-wider">{t("filesPage.owner")}</div>
               <div />
             </div>
             <div className="space-y-0.5">
@@ -302,7 +312,7 @@ export function FilesPage() {
         )}
 
         {filtered.length === 0 && (
-          <div className="flex items-center justify-center h-32 text-neutral-600 text-[13px]">No files here</div>
+          <div className="flex items-center justify-center h-32 text-neutral-600 text-[13px]">{t("filesPage.noFilesHere")}</div>
         )}
       </div>
 

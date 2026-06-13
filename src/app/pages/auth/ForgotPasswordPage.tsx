@@ -11,8 +11,10 @@ import { Field, FieldLabel } from "@/components/cossui/field";
 import { Input } from "@/components/cossui/input";
 import { resetPassword } from "../../utils/supabase";
 import { AuthShell } from "./AuthShell";
+import { useLang } from "../../i18n";
 
 export function ForgotPasswordPage() {
+  const { t } = useLang();
   const [email, setEmail] = useState("");
   const [error, setError] = useState("");
   const [sent, setSent] = useState(false);
@@ -34,20 +36,18 @@ export function ForgotPasswordPage() {
   if (sent) {
     return (
       <AuthShell
-        title="Check your inbox"
-        description="Password reset link sent"
+        title={t("auth.checkYourInbox")}
+        description={t("auth.passwordResetLinkSent")}
         footer={
           <Link to="/login" className="text-[#fafafa] hover:underline">
-            Back to sign in
+            {t("auth.backToSignIn")}
           </Link>
         }
       >
         <div className="flex flex-col items-center gap-4 py-2 text-center">
           <MailCheck className="size-10 text-neutral-400" aria-hidden="true" />
           <p className="text-sm text-neutral-400">
-            If an account exists for{" "}
-            <span className="text-[#fafafa]">{email}</span>, you will receive
-            an email with a link to reset your password.
+            {t("auth.resetLinkInstructions").replace("{email}", email)}
           </p>
         </div>
       </AuthShell>
@@ -56,11 +56,11 @@ export function ForgotPasswordPage() {
 
   return (
     <AuthShell
-      title="Forgot your password?"
-      description="Enter your email and we'll send you a reset link"
+      title={t("auth.forgotYourPassword")}
+      description={t("auth.enterEmailResetLink")}
       footer={
         <Link to="/login" className="text-[#fafafa] hover:underline">
-          Back to sign in
+          {t("auth.backToSignIn")}
         </Link>
       }
     >
@@ -68,12 +68,12 @@ export function ForgotPasswordPage() {
         {error && (
           <Alert variant="error">
             <AlertCircle aria-hidden="true" />
-            <AlertTitle>Something went wrong</AlertTitle>
+            <AlertTitle>{t("auth.somethingWentWrong")}</AlertTitle>
             <AlertDescription>{error}</AlertDescription>
           </Alert>
         )}
         <Field>
-          <FieldLabel>Email</FieldLabel>
+          <FieldLabel>{t("settings.email")}</FieldLabel>
           <Input
             type="email"
             value={email}
@@ -84,7 +84,7 @@ export function ForgotPasswordPage() {
           />
         </Field>
         <Button type="submit" loading={submitting} className="w-full">
-          Send reset link
+          {t("auth.sendResetLink")}
         </Button>
       </form>
     </AuthShell>

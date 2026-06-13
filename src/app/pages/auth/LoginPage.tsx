@@ -12,8 +12,10 @@ import { Input } from "@/components/cossui/input";
 import { signInWithEmail } from "../../utils/supabase";
 import { AuthShell } from "./AuthShell";
 import { PasswordInput } from "./PasswordInput";
+import { useLang } from "../../i18n";
 
 export function LoginPage() {
+  const { t } = useLang();
   const navigate = useNavigate();
   const location = useLocation();
   const from = (location.state as { from?: { pathname: string } } | null)?.from
@@ -37,7 +39,7 @@ export function LoginPage() {
       if (/email not confirmed/i.test(signInError.message)) {
         setUnconfirmed(true);
       } else if (/invalid login credentials/i.test(signInError.message)) {
-        setError("Incorrect email or password. Please try again.");
+        setError(t("auth.incorrectCredentials"));
       } else {
         setError(signInError.message);
       }
@@ -48,13 +50,13 @@ export function LoginPage() {
 
   return (
     <AuthShell
-      title="Welcome back"
-      description="Sign in to your workspace"
+      title={t("auth.welcomeBack")}
+      description={t("auth.signInDescription")}
       footer={
         <span>
-          Don&apos;t have an account?{" "}
+          {t("auth.dontHaveAccount")}{" "}
           <Link to="/register" className="text-[#fafafa] hover:underline">
-            Sign up
+            {t("auth.signUp")}
           </Link>
         </span>
       }
@@ -63,28 +65,28 @@ export function LoginPage() {
         {error && (
           <Alert variant="error">
             <AlertCircle aria-hidden="true" />
-            <AlertTitle>Sign in failed</AlertTitle>
+            <AlertTitle>{t("auth.signInFailed")}</AlertTitle>
             <AlertDescription>{error}</AlertDescription>
           </Alert>
         )}
         {unconfirmed && (
           <Alert variant="warning">
             <AlertCircle aria-hidden="true" />
-            <AlertTitle>Email not verified</AlertTitle>
+            <AlertTitle>{t("auth.emailNotVerified")}</AlertTitle>
             <AlertDescription>
-              Please verify your email first.{" "}
+              {t("auth.pleaseVerifyEmail")}{" "}
               <Link
                 to="/verify-email"
                 state={{ email }}
                 className="underline"
               >
-                Resend verification
+                {t("auth.resendVerification")}
               </Link>
             </AlertDescription>
           </Alert>
         )}
         <Field>
-          <FieldLabel>Email</FieldLabel>
+          <FieldLabel>{t("settings.email")}</FieldLabel>
           <Input
             type="email"
             value={email}
@@ -96,18 +98,18 @@ export function LoginPage() {
         </Field>
         <Field>
           <div className="flex w-full items-center justify-between">
-            <FieldLabel>Password</FieldLabel>
+            <FieldLabel>{t("settings.newPassword")}</FieldLabel>
             <Link
               to="/forgot-password"
               className="text-xs text-neutral-400 hover:text-[#fafafa] hover:underline"
             >
-              Forgot password?
+              {t("auth.forgotYourPassword")}
             </Link>
           </div>
           <PasswordInput value={password} onChange={setPassword} required />
         </Field>
         <Button type="submit" loading={submitting} className="w-full">
-          Sign in
+          {t("auth.signIn")}
         </Button>
       </form>
     </AuthShell>

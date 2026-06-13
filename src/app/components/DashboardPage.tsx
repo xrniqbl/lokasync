@@ -1,3 +1,4 @@
+import { useLang } from "../i18n";
 import { useState, useEffect, useRef } from "react";
 import { TrendingUp, TrendingDown, Target, DollarSign, Users, BarChart2, Activity, Layers, Clock, ChevronRight } from "lucide-react";
 import { toast } from "sonner";
@@ -30,10 +31,11 @@ function ChartArea({
   xKey: string;
   height?: number;
 }) {
+  const { t } = useLang();
   const [tooltip, setTooltip] = useState<{ x: number; y: number; idx: number } | null>(null);
   const svgRef = useRef<SVGSVGElement>(null);
 
-  if (!data || data.length === 0) return <div style={{ height }} className="flex items-center justify-center text-neutral-700 text-[11px]">No data</div>;
+  if (!data || data.length === 0) return <div style={{ height }} className="flex items-center justify-center text-neutral-700 text-[11px]">{t("dashboard.noDataLabel")}</div>;
 
   const padTop = 10, padRight = 10, padBottom = 26, padLeft = 32;
   const vbW = 300;
@@ -2793,6 +2795,54 @@ export function DashboardPage() {
   const [todayEvents, setTodayEvents] = useState<{ title: string; tag: string; color?: string }[]>([]);
   const [teamChartData, setTeamChartData] = useState<{ name: string; tasks: number; done: number }[]>([]);
   const [, forceUpdate] = useState(0); // trigger re-render after module vars populated
+  const { t } = useLang();
+
+  const getViewLabel = (view: DashView): string => {
+    switch (view) {
+      case "overview": return t("sidebar.overview");
+      case "executive-summary": return t("sidebar.executiveSummary");
+      case "exec-revenue": return t("sidebar.revenueOverview");
+      case "exec-kpis": return t("sidebar.keyPerformanceIndicators");
+      case "exec-goals": return t("sidebar.strategicGoalsProgress");
+      case "exec-departments": return t("sidebar.departmentHighlights");
+      case "operations": return t("sidebar.operationsDashboard");
+      case "ops-timeline": return t("sidebar.projectTimeline");
+      case "ops-resources": return t("sidebar.resourceAllocation");
+      case "ops-performance": return t("sidebar.teamPerformance");
+      case "ops-capacity": return t("sidebar.capacityPlanning");
+      case "financial": return t("sidebar.financialDashboard");
+      case "fin-budget": return t("sidebar.budgetVsActual");
+      case "fin-cashflow": return t("sidebar.cashFlowAnalysis");
+      case "fin-expense": return t("sidebar.expenseBreakdown");
+      case "fin-pl": return t("sidebar.profitLossSummary");
+      case "weekly": return t("sidebar.weeklyReports");
+      case "weekly-productivity": return t("sidebar.teamProductivity");
+      case "weekly-completion": return t("sidebar.projectCompletion");
+      case "weekly-budget": return t("sidebar.budgetUtilization");
+      case "weekly-satisfaction": return t("sidebar.clientSatisfaction");
+      case "monthly": return t("sidebar.monthlyInsights");
+      case "monthly-revenue": return t("sidebar.revenueGrowth");
+      case "monthly-clients": return t("sidebar.newClients");
+      case "monthly-expansion": return t("sidebar.teamExpansion");
+      case "monthly-cost": return t("sidebar.costReduction");
+      case "quarterly": return t("sidebar.quarterlyAnalysis");
+      case "quarterly-market": return t("sidebar.marketPosition");
+      case "quarterly-roi": return t("sidebar.roi");
+      case "quarterly-retention": return t("sidebar.customerRetention");
+      case "quarterly-innovation": return t("sidebar.innovationIndex");
+      case "performance-metrics": return t("sidebar.performanceMetrics");
+      case "perf-sales": return t("sidebar.salesConversion");
+      case "perf-response": return t("sidebar.leadResponseTime");
+      case "perf-clv": return t("sidebar.customerLifetimeValue");
+      case "perf-churn": return t("sidebar.churnRate");
+      case "predictive": return t("sidebar.predictiveAnalytics");
+      case "pred-forecast": return t("sidebar.q4RevenueForecast");
+      case "pred-resources": return t("sidebar.resourceDemand");
+      case "pred-trends": return t("sidebar.marketTrends");
+      case "pred-risks": return t("sidebar.riskAssessment");
+      default: return view;
+    }
+  };
 
   useEffect(() => {
     const today = new Date();
@@ -2889,15 +2939,15 @@ export function DashboardPage() {
   };
 
   const navTabs: { view: DashView; label: string }[] = [
-    { view: "overview", label: "Overview" },
-    { view: "executive-summary", label: "Executive" },
-    { view: "operations", label: "Operations" },
-    { view: "financial", label: "Financial" },
-    { view: "weekly", label: "Weekly" },
-    { view: "monthly", label: "Monthly" },
-    { view: "quarterly", label: "Quarterly" },
-    { view: "performance-metrics", label: "Performance" },
-    { view: "predictive", label: "Predictive" },
+    { view: "overview", label: t("sidebar.overview") },
+    { view: "executive-summary", label: t("dashboard.executiveNav") },
+    { view: "operations", label: t("dashboard.operationsNav") },
+    { view: "financial", label: t("dashboard.financialNav") },
+    { view: "weekly", label: t("dashboard.weeklyNav") },
+    { view: "monthly", label: t("dashboard.monthlyNav") },
+    { view: "quarterly", label: t("dashboard.quarterlyNav") },
+    { view: "performance-metrics", label: t("dashboard.performanceNav") },
+    { view: "predictive", label: t("dashboard.predictiveNav") },
   ];
 
   return (
@@ -2907,7 +2957,7 @@ export function DashboardPage() {
         <div className="flex items-start justify-between gap-4 mb-4">
           <div>
             <h1 className="text-neutral-50 font-['Lexend:SemiBold',_sans-serif] text-[18px] lg:text-[22px] leading-tight mb-1">
-              {VIEW_LABELS[dashView]}
+              {getViewLabel(dashView)}
             </h1>
             <p className="text-neutral-500 text-[12px] lg:text-[13px]">{new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" })}</p>
           </div>
@@ -2915,7 +2965,7 @@ export function DashboardPage() {
             onClick={() => setShowNewTask(true)}
             className="bg-indigo-600 hover:bg-indigo-500 text-white text-[13px] px-4 py-2 rounded-lg transition-colors shrink-0"
           >
-            + New task
+            {t("dashboard.newTaskBtn")}
           </button>
         </div>
 

@@ -3,6 +3,7 @@ import { toast } from "sonner";
 import { NewTaskModal } from "./modals/NewTaskModal";
 import { TaskDetailModal } from "./modals/TaskDetailModal";
 import { useNavigation } from "./NavigationContext";
+import { useLang } from "../i18n";
 import * as api from "../utils/api";
 
 type Task = api.Task;
@@ -38,6 +39,7 @@ function Checkbox({ checked, onChange }: { checked: boolean; onChange: () => voi
 }
 
 export function TasksPage() {
+  const { t } = useLang();
   const { subSection } = useNavigation();
   const [activeTab, setActiveTab] = useState("All");
   const [tasks, setTasks] = useState<Task[]>([]);
@@ -55,7 +57,7 @@ export function TasksPage() {
       setCheckedTasks(new Set(data.filter((t) => t.completed).map((t) => t.id)));
     }).catch((e) => {
       console.log("Failed to load tasks:", e);
-      toast.error("Failed to load tasks");
+      toast.error(t("tasks.failedToLoadTasks"));
     }).finally(() => setLoading(false));
   }, []);
 
@@ -87,7 +89,7 @@ export function TasksPage() {
       await api.updateTask(id, { completed: nowCompleted, status: newStatus });
     } catch (e) {
       console.log("Failed to update task:", e);
-      toast.error("Failed to save task status");
+      toast.error(t("tasks.failedToSaveTaskStatus"));
     }
   };
 
@@ -97,7 +99,7 @@ export function TasksPage() {
       setTasks((prev) => [created, ...prev]);
     } catch (e) {
       console.log("Failed to create task:", e);
-      toast.error("Failed to create task");
+      toast.error(t("tasks.failedToCreateTask"));
     }
   };
 
@@ -110,7 +112,7 @@ export function TasksPage() {
       await api.updateTask(updated.id, updated);
     } catch (e) {
       console.log("Failed to update task:", e);
-      toast.error("Failed to save task");
+      toast.error(t("tasks.failedToSaveTask"));
     }
   };
 
@@ -123,7 +125,7 @@ export function TasksPage() {
       await api.deleteTask(id);
     } catch (e) {
       console.log("Failed to delete task:", e);
-      toast.error("Failed to delete task");
+      toast.error(t("tasks.failedToDeleteTask"));
     }
   };
 
@@ -148,9 +150,9 @@ export function TasksPage() {
       <div className="px-4 md:px-6 lg:px-8 pt-6 lg:pt-8 pb-0">
         <div className="flex items-center justify-between mb-5 gap-3">
           <div>
-            <h1 className="text-neutral-50 font-['Lexend:SemiBold',_sans-serif] text-[18px] lg:text-[22px] leading-tight mb-1">My Tasks</h1>
+            <h1 className="text-neutral-50 font-['Lexend:SemiBold',_sans-serif] text-[18px] lg:text-[22px] leading-tight mb-1">{t("tasks.myTasks")}</h1>
             <p className="text-neutral-500 text-[12px] lg:text-[13px]">
-              {tasks.length} total · {tasks.filter((t) => t.status === "in-progress").length} in progress
+              {tasks.length} {t("common.tasks")} · {tasks.filter((task) => task.status === "in-progress").length} {t("tasks.tasksInProgress")}
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -161,13 +163,13 @@ export function TasksPage() {
               <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
                 <path d="M1 3h10M3 6h6M5 9h2" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
               </svg>
-              Filter
+              {t("common.filter")}
             </button>
             <button
               onClick={() => setShowNewTask(true)}
               className="bg-indigo-600 hover:bg-indigo-500 text-white text-[13px] px-4 py-2 rounded-lg transition-colors"
             >
-              + New task
+              + {t("tasks.newTask")}
             </button>
           </div>
         </div>
@@ -175,28 +177,28 @@ export function TasksPage() {
         {/* Filter Panel */}
         {showFilter && (
           <div className="flex items-center gap-3 mb-4 p-3 bg-neutral-800/30 rounded-xl flex-wrap">
-            <span className="text-neutral-500 text-[12px]">Filter by:</span>
+            <span className="text-neutral-500 text-[12px]">{t("tasks.filterBy")}</span>
             <div className="flex items-center gap-2">
-              <label className="text-neutral-500 text-[12px]">Priority</label>
+              <label className="text-neutral-500 text-[12px]">{t("common.priority")}</label>
               <select
                 value={filterPriority}
                 onChange={(e) => setFilterPriority(e.target.value)}
                 className="bg-neutral-800 border border-neutral-700 text-neutral-200 text-[12px] px-2 py-1 rounded-lg outline-none cursor-pointer"
               >
-                <option value="all">All</option>
+                <option value="all">{t("common.all")}</option>
                 <option value="high">High</option>
                 <option value="medium">Medium</option>
                 <option value="low">Low</option>
               </select>
             </div>
             <div className="flex items-center gap-2">
-              <label className="text-neutral-500 text-[12px]">Project</label>
+              <label className="text-neutral-500 text-[12px]">{t("common.project")}</label>
               <select
                 value={filterProject}
                 onChange={(e) => setFilterProject(e.target.value)}
                 className="bg-neutral-800 border border-neutral-700 text-neutral-200 text-[12px] px-2 py-1 rounded-lg outline-none cursor-pointer"
               >
-                <option value="all">All</option>
+                <option value="all">{t("common.all")}</option>
                 {projects.map((p) => (
                   <option key={p} value={p}>{p}</option>
                 ))}
@@ -207,7 +209,7 @@ export function TasksPage() {
                 onClick={() => { setFilterPriority("all"); setFilterProject("all"); }}
                 className="text-neutral-500 hover:text-neutral-200 text-[12px] px-2 py-1 rounded-lg hover:bg-neutral-800 transition-colors"
               >
-                Clear
+                {t("tasks.clearFilters")}
               </button>
             )}
           </div>
@@ -232,11 +234,11 @@ export function TasksPage() {
         {/* Table header — hidden on mobile */}
         <div className="hidden md:grid md:grid-cols-[20px_1fr_100px_70px_90px_55px] gap-4 px-4 py-2 mb-1">
           <div />
-          <div className="text-neutral-600 text-[11px] uppercase tracking-wider">Task</div>
-          <div className="text-neutral-600 text-[11px] uppercase tracking-wider">Project</div>
-          <div className="text-neutral-600 text-[11px] uppercase tracking-wider">Priority</div>
-          <div className="text-neutral-600 text-[11px] uppercase tracking-wider">Status</div>
-          <div className="text-neutral-600 text-[11px] uppercase tracking-wider">Due</div>
+          <div className="text-neutral-600 text-[11px] uppercase tracking-wider">{t("tasks.task")}</div>
+          <div className="text-neutral-600 text-[11px] uppercase tracking-wider">{t("common.project")}</div>
+          <div className="text-neutral-600 text-[11px] uppercase tracking-wider">{t("common.priority")}</div>
+          <div className="text-neutral-600 text-[11px] uppercase tracking-wider">{t("common.status")}</div>
+          <div className="text-neutral-600 text-[11px] uppercase tracking-wider">{t("tasks.due")}</div>
         </div>
 
         {loading && (
@@ -284,9 +286,9 @@ export function TasksPage() {
 
         {!loading && filtered.length === 0 && (
           <div className="flex flex-col items-center justify-center h-32 gap-2">
-            <span className="text-neutral-600 text-[13px]">No tasks match your filters</span>
+            <span className="text-neutral-600 text-[13px]">{t("tasks.noTasksMatchFilters")}</span>
             <button onClick={() => { setActiveTab("All"); setFilterPriority("all"); setFilterProject("all"); }} className="text-indigo-400 text-[12px] hover:underline">
-              Clear filters
+              {t("tasks.clearFilters")}
             </button>
           </div>
         )}
