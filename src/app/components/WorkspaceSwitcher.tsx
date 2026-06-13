@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
+import { Briefcase } from "lucide-react";
 import { ChevronDown, AddLarge, UserMultiple, Checkmark } from "@carbon/icons-react";
 import { useWorkspace } from "../workspace/WorkspaceContext";
 import { WorkspaceMembersModal } from "./modals/WorkspaceMembersModal";
@@ -51,8 +52,12 @@ export function WorkspaceSwitcher({ isCollapsed = false }: { isCollapsed?: boole
         onClick={() => setOpen((v) => !v)}
         className="w-full flex items-center gap-2 rounded-lg border border-neutral-800 bg-[#0a0a0a] px-3 py-2 text-left transition-colors hover:bg-neutral-900"
       >
-        <div className="w-6 h-6 rounded-md bg-indigo-900/60 flex items-center justify-center text-indigo-300 text-[11px] font-['Lexend:SemiBold',_sans-serif] shrink-0">
-          {(activeWorkspace?.name ?? "?").slice(0, 1).toUpperCase()}
+        <div className="w-6 h-6 rounded-md bg-neutral-800 border border-neutral-700 flex items-center justify-center text-neutral-300 shrink-0">
+          {activeWorkspace?.name ? (
+            <span className="text-[11px] font-medium">{activeWorkspace.name.slice(0, 1).toUpperCase()}</span>
+          ) : (
+            <Briefcase className="size-3.5" aria-hidden="true" />
+          )}
         </div>
         <div className="min-w-0 flex-1">
           <div className="text-neutral-100 text-[12.5px] font-['Lexend:Regular',_sans-serif] truncate">
@@ -87,13 +92,13 @@ export function WorkspaceSwitcher({ isCollapsed = false }: { isCollapsed?: boole
                     : "text-neutral-400 hover:bg-neutral-800/50 hover:text-neutral-200"
                 }`}
               >
-                <div className="w-5 h-5 rounded bg-indigo-900/60 flex items-center justify-center text-indigo-300 text-[10px] shrink-0">
-                  {w.name.slice(0, 1).toUpperCase()}
+                <div className="w-5 h-5 rounded bg-neutral-800 border border-neutral-700/50 flex items-center justify-center text-neutral-300 shrink-0">
+                  <span className="text-[10px] font-medium">{w.name.slice(0, 1).toUpperCase()}</span>
                 </div>
                 <span className="min-w-0 flex-1 truncate">{w.name}</span>
                 <span className="text-neutral-600 text-[10px] capitalize">{w.role}</span>
                 {w.id === activeWorkspace?.id && (
-                  <Checkmark size={12} className="text-indigo-400 shrink-0" />
+                  <Checkmark size={12} className="text-neutral-300 shrink-0" />
                 )}
               </button>
             ))}
