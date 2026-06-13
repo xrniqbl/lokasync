@@ -67,22 +67,22 @@ INSERT INTO tasks (
 )
 SELECT
   (regexp_match(t.key, '^ws:([^:]+):tasks:list$'))[1]::UUID as workspace_id,
-  (t.elem->>'id')::INTEGER as legacy_id,
+  (elem->>'id')::INTEGER as legacy_id,
   p.id as project_id,
-  t.elem->>'title',
-  t.elem->>'description',
-  COALESCE(t.elem->>'status', 'todo'),
-  COALESCE(t.elem->>'priority', 'medium'),
-  t.elem->>'assignee',
-  t.elem->>'due' as due_date,
+  elem->>'title',
+  elem->>'description',
+  COALESCE(elem->>'status', 'todo'),
+  COALESCE(elem->>'priority', 'medium'),
+  elem->>'assignee',
+  elem->>'due' as due_date,
   now(),
   now()
 FROM kv_store_827698a1 t
-cross join lateral jsonb_array_elements(t.value) as t.elem
+cross join lateral jsonb_array_elements(t.value) as elem
 LEFT JOIN LATERAL (
   SELECT p.id FROM projects p
   WHERE p.workspace_id = (regexp_match(t.key, '^ws:([^:]+):tasks:list$'))[1]::UUID
-    AND p.name = t.elem->>'project'
+    AND p.name = elem->>'project'
   LIMIT 1
 ) p ON true
 WHERE t.key LIKE 'ws:%:tasks:list'
@@ -94,25 +94,25 @@ ON CONFLICT DO NOTHING;
 INSERT INTO calendar_events (workspace_id, title, start_time, end_time, color, created_at, updated_at)
 SELECT
   (regexp_match(t.key, '^ws:([^:]+):calendar:events$'))[1]::UUID as workspace_id,
-  t.elem->>'title',
+  elem->>'title',
   (CASE
     WHEN regexp_match(date_keys.date_key, '^(\d+)-(\d+)-(\d+)$') IS NOT NULL THEN
       TO_TIMESTAMP(
         regexp_match(date_keys.date_key, '^(\d+)-(\d+)-(\d+)$')[1] || '-' ||
         lpad(regexp_match(date_keys.date_key, '^(\d+)-(\d+)-(\d+)$')[2], 2, '0') || '-' ||
         lpad(regexp_match(date_keys.date_key, '^(\d+)-(\d+)-(\d+)$')[3], 2, '0') || ' ' ||
-        COALESCE(t.elem->>'time', '00:00') || ':00',
+        COALESCE(elem->>'time', '00:00') || ':00',
         'YYYY-MM-DD HH24:MI:SS'
       )
     ELSE NULL
   END) as start_time,
   NULL as end_time,
-  COALESCE(t.elem->>'color', '#6366f1'),
+  COALESCE(elem->>'color', '#6366f1'),
   now(),
   now()
 FROM kv_store_827698a1 t,
 lateral jsonb_each(t.value) as date_keys(date_key, events),
-lateral jsonb_array_elements(date_keys.events) as t.elem
+lateral jsonb_array_elements(date_keys.events) as elem
 WHERE t.key LIKE 'ws:%:calendar:events'
 ON CONFLICT DO NOTHING;
 
@@ -164,19 +164,19 @@ INSERT INTO files (workspace_id, folder_id, name, size_bytes, mime_type, storage
 SELECT
   (regexp_match(t.key, '^ws:([^:]+):files:list$'))[1]::UUID as workspace_id,
   f.id as folder_id,
-  t.elem->>'name',
-  CASE WHEN (t.elem->>'size') ~ '^\d+$' THEN (t.elem->>'size')::BIGINT ELSE 0 END,
-  COALESCE(t.elem->>'type', 'application/octet-stream'),
-  t.elem->>'storagePath',
-  t.elem->>'url',
-  COALESCE(t.elem->>'uploader', 'unknown'),
+  elem->>'name',
+  CASE WHEN (elem->>'size') ~ '^\d+$' THEN (elem->>'size')::BIGINT ELSE 0 END,
+  COALESCE(elem->>'type', 'application/octet-stream'),
+  elem->>'storagePath',
+  elem->>'url',
+  COALESCE(elem->>'uploader', 'unknown'),
   now()
 FROM kv_store_827698a1 t
-cross join lateral jsonb_array_elements(t.value) as t.elem
+cross join lateral jsonb_array_elements(t.value) as elem
 LEFT JOIN LATERAL (
   SELECT f.id FROM file_folders f
   WHERE f.workspace_id = (regexp_match(t.key, '^ws:([^:]+):files:list$'))[1]::UUID
-    AND f.name = t.elem->>'folderName'
+    AND f.name = elem->>'folderName'
   LIMIT 1
 ) f ON true
 WHERE t.key LIKE 'ws:%:files:list'
