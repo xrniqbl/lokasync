@@ -1487,6 +1487,35 @@ export const DICT = {
     notFound: { en: "Page not found", id: "Halaman tidak ditemukan" },
     goBack: { en: "Go back", id: "Kembali" },
   },
+
+  memberHome: {
+    myWorkspace: { en: "My Workspace", id: "Ruang Kerja Saya" },
+    quickActions: { en: "Quick Actions", id: "Aksi Cepat" },
+    newTask: { en: "New Task", id: "Tugas Baru" },
+    logTime: { en: "Log Time", id: "Catat Waktu" },
+    joinStandup: { en: "Join Standup", id: "Ikut Standup" },
+    uploadFile: { en: "Upload File", id: "Unggah Berkas" },
+    today: { en: "Today", id: "Hari Ini" },
+    events: { en: "Events", id: "Acara" },
+    dueTasks: { en: "Due Today", id: "Jatuh Tempo Hari Ini" },
+    viewCalendar: { en: "View Calendar", id: "Lihat Kalender" },
+    myTasks: { en: "My Tasks", id: "Tugas Saya" },
+    inProgress: { en: "In Progress", id: "Sedang Dikerjakan" },
+    inReview: { en: "In Review", id: "Sedang Ditinjau" },
+    dueSoon: { en: "Due Soon", id: "Segera Jatuh Tempo" },
+    completed: { en: "Completed", id: "Selesai" },
+    viewAllTasks: { en: "View all tasks", id: "Lihat semua tugas" },
+    projects: { en: "Projects", id: "Proyek" },
+    viewAllProjects: { en: "View all projects", id: "Lihat semua proyek" },
+    mentions: { en: "Mentions", id: "Sebutan" },
+    teamActivity: { en: "Team Activity", id: "Aktivitas Tim" },
+    noEventsToday: { en: "No events today", id: "Tidak ada acara hari ini" },
+    noDueTasks: { en: "No tasks due today", id: "Tidak ada tugas jatuh tempo hari ini" },
+    noMentions: { en: "No new mentions", id: "Tidak ada sebutan baru" },
+    noActivity: { en: "No recent activity", id: "Tidak ada aktivitas terbaru" },
+    ledBy: { en: "Led by", id: "Dipimpin oleh" },
+    members: { en: "members", id: "anggota" },
+  },
 } as const;
 
 /* ── Flattened key type ────────────────────────────────────────────────────── */
@@ -1508,7 +1537,8 @@ export type DictPath =
   | `${keyof DictShape & string}.${keyof (DictShape["dashboard"]) & string}`
   | `${keyof DictShape & string}.${keyof (DictShape["profile"]) & string}`
   | `${keyof DictShape & string}.${keyof (DictShape["admin"]) & string}`
-  | `${keyof DictShape & string}.${keyof (DictShape["onboarding"]) & string}`;
+  | `${keyof DictShape & string}.${keyof (DictShape["onboarding"]) & string}`
+  | `${keyof DictShape & string}.${keyof (DictShape["memberHome"]) & string}`;
 
 /* ── Translation helper ────────────────────────────────────────────────────── */
 
