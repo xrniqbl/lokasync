@@ -895,13 +895,17 @@ export function SettingsPage() {
                   ))}
                 </div>
               </Section>
-              <Section title={t("settings.language")} description={t("settings.chooseLanguage")}>
-                <div className="flex items-center gap-4">
-                  <LangToggle lang={lang} onChange={setLang} />
-                </div>
-              </Section>
               <SaveRow onSave={saveAppearance} />
             </>
+          )}
+
+          {/* ── Language ── */}
+          {activeNav === "Language" && (
+            <Section title={t("settings.language")} description={t("settings.chooseLanguage")}>
+              <div className="flex items-center gap-4">
+                <LangToggle lang={lang} onChange={setLang} />
+              </div>
+            </Section>
           )}
 
           {/* ── Timezone ── */}
