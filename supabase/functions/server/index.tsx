@@ -129,35 +129,53 @@ async function wsGetOrSeed(c: any, key: string, seed: any): Promise<any> {
 
 async function logActivity(c: any, action: string, target: string) {
   const user = c.get("user");
-  if (!user) return;
+  const workspace = c.get("workspace");
+  if (!user || !workspace) return;
   const actor = user.email || user.user_metadata?.full_name || "Anonymous";
-  const list = await wsGetOrSeed(c, "team_activity:list", []);
-  list.unshift({
-    id: Date.now().toString(),
+
+  const ACTION_MAP: Record<string, string> = {
+    create: "created", created: "created", added: "created", add: "created",
+    update: "updated", updated: "updated", edit: "updated", assign: "updated", assigned: "updated",
+    delete: "deleted", deleted: "deleted", remove: "deleted", removed: "deleted",
+    complete: "completed", completed: "completed", finish: "completed", done: "completed",
+    upload: "uploaded", uploaded: "uploaded",
+    leave: "left", left: "left",
+    join: "joined", joined: "joined",
+    comment: "commented", commented: "commented",
+  };
+  const mapped = ACTION_MAP[action.split(/\s+/)[0].toLowerCase()] || "created";
+
+  const t = target.toLowerCase();
+  const a = action.toLowerCase();
+  let targetType = null;
+  if (t.includes("task") || a.includes("task")) targetType = "task";
+  else if (t.includes("project") || a.includes("project")) targetType = "project";
+  else if (t.includes("file") || a.includes("upload")) targetType = "file";
+  else if (t.includes("workspace") || a.includes("join") || a.includes("leave") || a.includes("invite")) targetType = "workspace";
+  else if (a.includes("comment")) targetType = "comment";
+
+  await sql.sqlInsert("team_activity", {
+    workspace_id: workspace.id,
     actor,
-    action,
+    action: mapped,
     target,
-    time: new Date().toISOString(),
+    target_type: targetType,
+    created_at: new Date().toISOString(),
   });
-  while (list.length > 100) list.pop();
-  await kv.set(wsKey(c, "team_activity:list"), list);
 }
 
 async function addMention(c: any, mentionee: string, text: string) {
   const user = c.get("user");
-  if (!user) return;
+  const workspace = c.get("workspace");
+  if (!user || !workspace) return;
   const actor = user.email || user.user_metadata?.full_name || "Anonymous";
-  const list = await wsGetOrSeed(c, "mentions:list", []);
-  list.unshift({
-    id: Date.now().toString(),
-    type: "mention",
-    actor,
-    text,
+  await sql.sqlInsert("mentions", {
+    workspace_id: workspace.id,
     mentionee,
-    time: new Date().toISOString(),
+    text,
+    actor,
+    read: false,
   });
-  while (list.length > 50) list.pop();
-  await kv.set(wsKey(c, "mentions:list"), list);
 }
 
 async function broadcastAfterWrite(workspaceId: string, table: string) {
@@ -511,33 +529,29 @@ const PLAN_STORAGE_LIMITS: Record<string, number> = {
   business: 0,                         // 0 = unlimited
 };
 
-async function checkStorageQuota(c: any, additionalBytes: number): Promise<{ allowed: boolean; used: number; limit: number }> {
+async function getStorageUsage(c: any): Promise<{ used: number; limit: number }> {
   const user = c.get("user");
+  const workspace = c.get("workspace");
   const sub = await kv.get(`subscription:${user.id}`);
   const planId = sub?.plan_id ?? "free";
   const limit = PLAN_STORAGE_LIMITS[planId] ?? PLAN_STORAGE_LIMITS.free;
-  const usageKey = wsKey(c, "storage:usage");
-  const used = (await kv.get(usageKey)) ?? 0;
+  if (!workspace) return { used: 0, limit };
+  const rows = await sql.sqlQueryByWorkspace("files", workspace.id, "size_bytes");
+  const used = rows.reduce((sum: number, f: any) => sum + (f.size_bytes || 0), 0);
+  return { used, limit };
+}
+
+async function checkStorageQuota(c: any, additionalBytes: number): Promise<{ allowed: boolean; used: number; limit: number }> {
+  const { used, limit } = await getStorageUsage(c);
   if (limit > 0 && used + additionalBytes > limit) {
     return { allowed: false, used, limit };
   }
   return { allowed: true, used, limit };
 }
 
-async function incrementStorageUsage(c: any, deltaBytes: number) {
-  const usageKey = wsKey(c, "storage:usage");
-  const current = (await kv.get(usageKey)) ?? 0;
-  await kv.set(usageKey, Math.max(0, current + deltaBytes));
-}
-
-async function getStorageUsage(c: any): Promise<{ used: number; limit: number }> {
-  const user = c.get("user");
-  const sub = await kv.get(`subscription:${user.id}`);
-  const planId = sub?.plan_id ?? "free";
-  const limit = PLAN_STORAGE_LIMITS[planId] ?? PLAN_STORAGE_LIMITS.free;
-  const usageKey = wsKey(c, "storage:usage");
-  const used = (await kv.get(usageKey)) ?? 0;
-  return { used, limit };
+async function incrementStorageUsage(_c: any, _deltaBytes: number) {
+  // Storage usage is now computed live from the SQL files table.
+  // Call sites kept for compatibility; getStorageUsage() recalculates on demand.
 }
 
 async function requireAdmin(c: any) {
