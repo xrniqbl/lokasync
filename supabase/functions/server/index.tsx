@@ -403,17 +403,6 @@ const SEED_AUDIT_LOG = [
   { id: 15, actor: "JD", actorName: "John Doe", action: "Exported data", target: "All Tasks (CSV)", ip: "192.168.1.10", timestamp: "Jun 6, 2026 05:10 PM", category: "Settings" },
 ];
 
-// ── Helper ────────────────────────────────────────────────────────────────────
-
-async function getOrSeed(key: string, seed: any): Promise<any> {
-  let data = await kv.get(key);
-  if (data === undefined || data === null) {
-    await kv.set(key, seed);
-    data = seed;
-  }
-  return data;
-}
-
 // ── Health ────────────────────────────────────────────────────────────────────
 
 app.get("/health", (c) => c.json({ status: "ok" }));
@@ -668,16 +657,6 @@ const SEED_PLANS = [
 // Bump to force-overwrite the stored `plans` record on next read (e.g. after
 // rebranding or price changes in SEED_PLANS).
 const PLANS_SEED_VERSION = 2;
-
-async function getPlansFromKv(): Promise<any[]> {
-  const version = await kv.get("plans_seed_version");
-  if (version !== PLANS_SEED_VERSION) {
-    await kv.set("plans", SEED_PLANS);
-    await kv.set("plans_seed_version", PLANS_SEED_VERSION);
-    return SEED_PLANS;
-  }
-  return await getOrSeed("plans", SEED_PLANS);
-}
 
 app.get("/plans", async (c) => {
   try {
@@ -2225,15 +2204,12 @@ app.post("/leave-workspace", async (c) => {
       return c.json({ error: "Owner cannot leave. Transfer ownership first.", code: "owner_cannot_leave" }, 403);
     }
 
-    // Read current members
+    // Read current members (for validation only)
     const members = await ws.getMembers(workspace.id);
     const filtered = members.filter((m: any) => m.user_id !== user.id);
-    await kv.set(`ws_members:${workspace.id}`, filtered);
 
-    // Update user's workspace index
-    const ids = await ws.listUserWorkspaceIds(user.id);
-    const updatedIds = ids.filter((id: string) => id !== workspace.id);
-    await kv.set(`user_ws:${user.id}`, updatedIds);
+    // Update user's workspace index (handled by workspace_members SQL delete)
+    await ws.removeMember(workspace.id, user.id);
 
     // Log the activity
     await logActivity(c, "left", workspace.name);
