@@ -154,13 +154,16 @@ export async function sqlQueryFirst(
   table: string,
   workspaceId: string,
   select = "*",
+  extraFilters?: Record<string, any>,
 ) {
-  const { data, error } = await getDbClient()
-    .from(table)
-    .select(select)
-    .eq("workspace_id", workspaceId)
-    .limit(1)
-    .maybeSingle();
+  const supabase = getDbClient();
+  let q = supabase.from(table).select(select).eq("workspace_id", workspaceId);
+  if (extraFilters) {
+    for (const [k, v] of Object.entries(extraFilters)) {
+      q = q.eq(k, v);
+    }
+  }
+  const { data, error } = await q.limit(1).maybeSingle();
   if (error) throw new Error(`sqlQueryFirst error: ${error.message}`);
   return data;
 }

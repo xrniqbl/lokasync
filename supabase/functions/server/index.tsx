@@ -2387,8 +2387,26 @@ app.get("/teams", async (c) => {
   try {
     const gate = await requirePlan(c, "pro");
     if (!gate.user) return gate.response;
-    const teams = await wsGetOrSeed(c, "teams:list", SEED_TEAMS);
-    return c.json(teams);
+    const workspace = c.get("workspace");
+    const teams = await sql.sqlQueryByWorkspace("teams", workspace.id, "id, name, description");
+    let members: any[] = [];
+    if (teams.length) {
+      const teamIds = teams.map((t: any) => t.id);
+      const { data: m, error } = await sql.getDbClient().from("team_members").select("*").in("team_id", teamIds);
+      if (!error && m) members = m;
+    }
+    const result = teams.map((t: any) => ({
+      name: t.name,
+      description: t.description,
+      members: members.filter((m: any) => m.team_id === t.id).map((m: any) => ({
+        initials: m.initials,
+        name: m.name,
+        role: m.role,
+        status: m.status,
+        tasks: m.tasks,
+      })),
+    }));
+    return c.json(result.length ? result : SEED_TEAMS);
   } catch (e) {
     console.log("GET /teams error:", e);
     return c.json({ error: String(e) }, 500);
@@ -2399,14 +2417,32 @@ app.post("/teams/invite", async (c) => {
   try {
     const gate = await requirePlan(c, "pro");
     if (!gate.user) return gate.response;
+    const workspace = c.get("workspace");
     const { teamName, member } = await c.req.json();
-    const teams = await wsGetOrSeed(c, "teams:list", SEED_TEAMS);
-    const team = teams.find((t: any) => t.name === teamName);
-    if (!team) return c.json({ error: "Team not found" }, 404);
-    team.members.push(member);
-    await kv.set(wsKey(c, "teams:list"), teams);
-    await broadcastAfterWrite(c.get("workspace").id, "teams");
-    return c.json(team, 201);
+    const rows = await sql.sqlQueryByWorkspace("teams", workspace.id, "id, name, description", { name: teamName });
+    if (!rows.length) return c.json({ error: "Team not found" }, 404);
+    const team = rows[0];
+    await sql.sqlInsert("team_members", {
+      team_id: team.id,
+      initials: member.initials,
+      name: member.name,
+      role: member.role,
+      status: member.status ?? "offline",
+      tasks: member.tasks ?? 0,
+    });
+    await broadcastAfterWrite(workspace.id, "teams");
+    const { data: members } = await sql.getDbClient().from("team_members").select("*").eq("team_id", team.id);
+    return c.json({
+      name: team.name,
+      description: team.description,
+      members: members?.map((m: any) => ({
+        initials: m.initials,
+        name: m.name,
+        role: m.role,
+        status: m.status,
+        tasks: m.tasks,
+      })) ?? [],
+    }, 201);
   } catch (e) {
     console.log("POST /teams/invite error:", e);
     return c.json({ error: String(e) }, 500);
@@ -2417,16 +2453,21 @@ app.put("/teams/member", async (c) => {
   try {
     const gate = await requirePlan(c, "pro");
     if (!gate.user) return gate.response;
+    const workspace = c.get("workspace");
     const { teamName, initials, patch } = await c.req.json();
-    const teams = await wsGetOrSeed(c, "teams:list", SEED_TEAMS);
-    const team = teams.find((t: any) => t.name === teamName);
-    if (!team) return c.json({ error: "Team not found" }, 404);
-    const memberIdx = team.members.findIndex((m: any) => m.initials === initials);
-    if (memberIdx === -1) return c.json({ error: "Member not found" }, 404);
-    team.members[memberIdx] = { ...team.members[memberIdx], ...patch };
-    await kv.set(wsKey(c, "teams:list"), teams);
-    await broadcastAfterWrite(c.get("workspace").id, "teams");
-    return c.json(team.members[memberIdx]);
+    const rows = await sql.sqlQueryByWorkspace("teams", workspace.id, "id", { name: teamName });
+    if (!rows.length) return c.json({ error: "Team not found" }, 404);
+    const teamId = rows[0].id;
+    const { data: members } = await sql.getDbClient().from("team_members").select("*").eq("team_id", teamId).eq("initials", initials);
+    if (!members?.length) return c.json({ error: "Member not found" }, 404);
+    const member = members[0];
+    const allowed = ["initials", "name", "role", "status", "tasks"];
+    const safePatch = Object.fromEntries(Object.entries(patch).filter(([k]) => allowed.includes(k)));
+    if (Object.keys(safePatch).length) {
+      await sql.sqlUpdate("team_members", member.id, safePatch);
+    }
+    await broadcastAfterWrite(workspace.id, "teams");
+    return c.json({ ...member, ...safePatch });
   } catch (e) {
     console.log("PUT /teams/member error:", e);
     return c.json({ error: String(e) }, 500);
@@ -2437,13 +2478,15 @@ app.delete("/teams/member", async (c) => {
   try {
     const gate = await requirePlan(c, "pro");
     if (!gate.user) return gate.response;
+    const workspace = c.get("workspace");
     const { teamName, initials } = await c.req.json();
-    const teams = await wsGetOrSeed(c, "teams:list", SEED_TEAMS);
-    const team = teams.find((t: any) => t.name === teamName);
-    if (!team) return c.json({ error: "Team not found" }, 404);
-    team.members = team.members.filter((m: any) => m.initials !== initials);
-    await kv.set(wsKey(c, "teams:list"), teams);
-    await broadcastAfterWrite(c.get("workspace").id, "teams");
+    const rows = await sql.sqlQueryByWorkspace("teams", workspace.id, "id", { name: teamName });
+    if (!rows.length) return c.json({ error: "Team not found" }, 404);
+    const teamId = rows[0].id;
+    const { data: members } = await sql.getDbClient().from("team_members").select("id").eq("team_id", teamId).eq("initials", initials);
+    if (!members?.length) return c.json({ error: "Member not found" }, 404);
+    await sql.sqlDelete("team_members", members[0].id);
+    await broadcastAfterWrite(workspace.id, "teams");
     return c.json({ ok: true });
   } catch (e) {
     console.log("DELETE /teams/member error:", e);
@@ -2667,10 +2710,18 @@ app.post("/files/upload", async (c) => {
         : null,
     };
 
-    // 4. Save metadata to KV
-    const files = await wsGetOrSeed(c, "files:list", SEED_FILES);
-    files.unshift(fileRecord);
-    await kv.set(wsKey(c, "files:list"), files);
+    // 4. Save metadata to SQL
+    await sql.sqlInsert("files", {
+      workspace_id: workspace.id,
+      name: fileRecord.name,
+      size_bytes: fileRecord.size,
+      mime_type: file.type || "application/octet-stream",
+      storage_path: fileRecord.storagePath,
+      url: fileRecord.url,
+      uploader: fileRecord.owner,
+      folder_id: parsedMeta.folderId || null,
+    });
+    await broadcastAfterWrite(workspace.id, "files");
 
     // 5. Update usage counter
     await incrementStorageUsage(c, file.size);
@@ -2688,15 +2739,16 @@ app.get("/files/download/:name", async (c) => {
     const client = storageClient();
     if (!client) return c.json({ error: "Storage not configured" }, 503);
 
+    const workspace = c.get("workspace");
     const name = decodeURIComponent(c.req.param("name"));
-    const files = await wsGetOrSeed(c, "files:list", SEED_FILES);
-    const file = files.find((f: any) => f.name === name);
-    if (!file?.storagePath) return c.json({ error: "File not found" }, 404);
+    const rows = await sql.sqlQueryByWorkspace("files", workspace.id, "*", { name });
+    if (!rows.length || !rows[0].storage_path) return c.json({ error: "File not found" }, 404);
+    const file = rows[0];
 
     const { data, error } = await client
       .storage
       .from("workspace-files")
-      .createSignedUrl(file.storagePath, 60 * 60); // 1 hour
+      .createSignedUrl(file.storage_path, 60 * 60); // 1 hour
 
     if (error) return c.json({ error: error.message }, 500);
     return c.json({ url: data.signedUrl, expiresIn: 3600 });
@@ -2719,11 +2771,11 @@ app.get("/files/quota", async (c) => {
 
 app.post("/files/folders", async (c) => {
   try {
+    const workspace = c.get("workspace");
     const folder = await c.req.json();
-    const folders = await wsGetOrSeed(c, "files:folders", SEED_FOLDERS);
-    folders.push(folder);
-    await kv.set(wsKey(c, "files:folders"), folders);
-    return c.json(folder, 201);
+    const newFolder = await sql.sqlInsertInWorkspace("file_folders", workspace.id, folder);
+    await broadcastAfterWrite(workspace.id, "file_folders");
+    return c.json(newFolder, 201);
   } catch (e) {
     console.log("POST /files/folders error:", e);
     return c.json({ error: String(e) }, 500);
@@ -3215,7 +3267,7 @@ const SEED_DASHBOARD_OPS = {
 app.get("/dashboard/ops", async (c) => {
   try {
     const workspace = c.get("workspace");
-    const row = await sql.sqlQueryFirst("workspace_dashboard", workspace.id, "data");
+    const row = await sql.sqlQueryFirst("workspace_dashboard", workspace.id, "data", { category: "ops" });
     const data = row?.data ?? SEED_DASHBOARD_OPS;
     return c.json(data);
   } catch (e) {
@@ -3228,10 +3280,10 @@ app.put("/dashboard/ops", async (c) => {
   try {
     const workspace = c.get("workspace");
     const body = await c.req.json();
-    const row = await sql.sqlQueryFirst("workspace_dashboard", workspace.id, "data");
+    const row = await sql.sqlQueryFirst("workspace_dashboard", workspace.id, "data", { category: "ops" });
     const existing = row?.data ?? SEED_DASHBOARD_OPS;
     const updated = { ...existing, ...body };
-    await sql.sqlUpsert("workspace_dashboard", { workspace_id: workspace.id, data: updated, updated_at: new Date().toISOString() }, "workspace_id");
+    await sql.sqlUpsert("workspace_dashboard", { workspace_id: workspace.id, category: "ops", data: updated, updated_at: new Date().toISOString() }, "workspace_id,category");
     await broadcastAfterWrite(workspace.id, "workspace_dashboard");
     return c.json(updated);
   } catch (e) {
@@ -3860,7 +3912,9 @@ const SEED_DASHBOARD_DETAILS = {
 
 app.get("/dashboard/details", async (c) => {
   try {
-    const stored = await wsGetOrSeed(c, "dashboard:details", SEED_DASHBOARD_DETAILS);
+    const workspace = c.get("workspace");
+    const row = await sql.sqlQueryFirst("workspace_dashboard", workspace.id, "data", { category: "details" });
+    const stored = row?.data ?? SEED_DASHBOARD_DETAILS;
     const data = { ...SEED_DASHBOARD_DETAILS, ...stored };
     return c.json(data);
   } catch (e) {
@@ -3871,10 +3925,13 @@ app.get("/dashboard/details", async (c) => {
 
 app.put("/dashboard/details", async (c) => {
   try {
+    const workspace = c.get("workspace");
     const body = await c.req.json();
-    const existing = await wsGetOrSeed(c, "dashboard:details", SEED_DASHBOARD_DETAILS);
+    const row = await sql.sqlQueryFirst("workspace_dashboard", workspace.id, "data", { category: "details" });
+    const existing = row?.data ?? SEED_DASHBOARD_DETAILS;
     const updated = { ...existing, ...body };
-    await kv.set(wsKey(c, "dashboard:details"), updated);
+    await sql.sqlUpsert("workspace_dashboard", { workspace_id: workspace.id, category: "details", data: updated, updated_at: new Date().toISOString() }, "workspace_id,category");
+    await broadcastAfterWrite(workspace.id, "workspace_dashboard");
     return c.json(updated);
   } catch (e) {
     console.log("PUT /dashboard/details error:", e);
