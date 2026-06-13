@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router";
-import { ArrowRight, Check, Menu, ShieldCheck, X } from "lucide-react";
+import { ArrowRight, Check, FileCheck, Lock, Menu, Shield, ShieldCheck, X, Zap } from "lucide-react";
 import { toast } from "sonner";
 import {
   Accordion,
@@ -978,16 +978,19 @@ export function LandingPage() {
             <Reveal delay={80}>
               <div className="mt-8 flex flex-wrap items-center justify-center gap-6 sm:gap-10">
                 {[
-                  { icon: "🔒", label: t.trust?.encryption ?? "End-to-end encryption" },
-                  { icon: "🛡️", label: t.trust?.gdpr ?? "GDPR compliant" },
-                  { icon: "📋", label: t.trust?.soc2 ?? "SOC2 aligned" },
-                  { icon: "⚡", label: t.trust?.uptime ?? "99.9% uptime SLA" },
-                ].map((badge) => (
-                  <div key={badge.label} className="flex items-center gap-2 rounded-full border border-white/[0.08] bg-white/[0.03] px-4 py-2 text-[13px] text-neutral-400">
-                    <span className="text-base">{badge.icon}</span>
-                    <span>{badge.label}</span>
-                  </div>
-                ))}
+                  { icon: Lock, label: t.trust?.encryption ?? "End-to-end encryption" },
+                  { icon: Shield, label: t.trust?.gdpr ?? "GDPR compliant" },
+                  { icon: FileCheck, label: t.trust?.soc2 ?? "SOC2 aligned" },
+                  { icon: Zap, label: t.trust?.uptime ?? "99.9% uptime SLA" },
+                ].map((badge) => {
+                  const IconComp = badge.icon;
+                  return (
+                    <div key={badge.label} className="flex items-center gap-2 rounded-full border border-white/[0.08] bg-white/[0.03] px-4 py-2 text-[13px] text-neutral-400">
+                      <IconComp className="size-4 text-indigo-400" aria-hidden="true" />
+                      <span>{badge.label}</span>
+                    </div>
+                  );
+                })}
               </div>
             </Reveal>
           </div>
@@ -1172,12 +1175,14 @@ export function LandingPage() {
                     required
                     className="min-w-0 flex-1 rounded-lg border border-neutral-800 bg-[#0f0f0f] px-3 py-2 text-[13px] text-neutral-200 outline-none transition-colors placeholder:text-neutral-600 focus:border-indigo-600/60 sm:w-64"
                   />
-                  <button
+                  <Button
                     type="submit"
-                    className="shrink-0 rounded-lg bg-indigo-600 px-4 py-2 text-[13px] text-white transition-colors hover:bg-indigo-500"
+                    size="sm"
+                    variant="default"
+                    className="shrink-0 bg-indigo-600 text-white hover:bg-indigo-500 hover:text-white border-indigo-600 hover:border-indigo-500 transition-colors duration-200"
                   >
                     {t.newsletter?.button ?? "Subscribe"}
-                  </button>
+                  </Button>
                 </form>
               </div>
             </div>
