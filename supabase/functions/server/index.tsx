@@ -2750,7 +2750,9 @@ app.get("/settings/:section", async (c) => {
     const section = c.req.param("section");
     const seed = settingsSeedMap[section];
     if (!seed) return c.json({ error: "Unknown settings section: " + section }, 400);
-    const data = await wsGetOrSeed(c, "settings:" + section, seed);
+    const workspace = c.get("workspace");
+    const rows = await sql.sqlQueryByWorkspace("workspace_settings", workspace.id, "*", { section });
+    const data = rows.length ? rows[0].data : seed;
     return c.json(data);
   } catch (e) {
     console.log("GET /settings/:section error:", e);
@@ -2762,13 +2764,19 @@ app.put("/settings/:section", async (c) => {
   try {
     const section = c.req.param("section");
     if (!settingsSeedMap[section]) return c.json({ error: "Unknown settings section: " + section }, 400);
-    // Workspace-level sections are restricted to the owner (Fase 14.3).
     const OWNER_ONLY_SECTIONS = ["workspace", "members", "billing", "api-keys", "webhooks"];
     if (OWNER_ONLY_SECTIONS.includes(section) && !isOwner(c)) {
       return c.json({ error: "Only the workspace owner can change these settings", code: "owner_required" }, 403);
     }
     const body = await c.req.json();
-    await kv.set(wsKey(c, "settings:" + section), body);
+    const workspace = c.get("workspace");
+    const rows = await sql.sqlQueryByWorkspace("workspace_settings", workspace.id, "*", { section });
+    if (rows.length) {
+      await sql.sqlUpdate("workspace_settings", rows[0].id, { data: body, updated_at: new Date().toISOString() });
+    } else {
+      await sql.sqlInsertInWorkspace("workspace_settings", workspace.id, { section, data: body });
+    }
+    await broadcastAfterWrite(workspace.id, "workspace_settings");
     return c.json(body);
   } catch (e) {
     console.log("PUT /settings/:section error:", e);
@@ -2837,7 +2845,9 @@ const SEED_FINANCIAL = {
 
 app.get("/financial", async (c) => {
   try {
-    const data = await wsGetOrSeed(c, "financial:data", SEED_FINANCIAL);
+    const workspace = c.get("workspace");
+    const row = await sql.sqlQueryFirst("workspace_financial", workspace.id, "data");
+    const data = row?.data ?? SEED_FINANCIAL;
     return c.json(data);
   } catch (e) {
     console.log("GET /financial error:", e);
@@ -2847,10 +2857,13 @@ app.get("/financial", async (c) => {
 
 app.put("/financial", async (c) => {
   try {
+    const workspace = c.get("workspace");
     const body = await c.req.json();
-    const existing = await wsGetOrSeed(c, "financial:data", SEED_FINANCIAL);
+    const row = await sql.sqlQueryFirst("workspace_financial", workspace.id, "data");
+    const existing = row?.data ?? SEED_FINANCIAL;
     const updated = { ...existing, ...body };
-    await kv.set(wsKey(c, "financial:data"), updated);
+    await sql.sqlUpsert("workspace_financial", { workspace_id: workspace.id, data: updated, updated_at: new Date().toISOString() }, "workspace_id");
+    await broadcastAfterWrite(workspace.id, "workspace_financial");
     return c.json(updated);
   } catch (e) {
     console.log("PUT /financial error:", e);
@@ -2873,8 +2886,16 @@ const SEED_INTEGRATIONS = [
 
 app.get("/integrations", async (c) => {
   try {
-    const data = await wsGetOrSeed(c, "integrations:list", SEED_INTEGRATIONS);
-    return c.json(data);
+    const workspace = c.get("workspace");
+    const rows = await sql.sqlQueryByWorkspace("workspace_integrations", workspace.id);
+    const data = rows.map((r: any) => ({
+      name: r.name,
+      description: r.description,
+      connected: r.connected,
+      lastSync: r.last_sync,
+      scopes: r.scopes,
+    }));
+    return c.json(data.length ? data : SEED_INTEGRATIONS);
   } catch (e) {
     console.log("GET /integrations error:", e);
     return c.json({ error: String(e) }, 500);
@@ -2883,14 +2904,16 @@ app.get("/integrations", async (c) => {
 
 app.put("/integrations/:name", async (c) => {
   try {
+    const workspace = c.get("workspace");
     const name = decodeURIComponent(c.req.param("name"));
     const body = await c.req.json();
-    const integrations = await wsGetOrSeed(c, "integrations:list", SEED_INTEGRATIONS);
-    const idx = integrations.findIndex((i: any) => i.name === name);
-    if (idx === -1) return c.json({ error: "Integration not found" }, 404);
-    integrations[idx] = { ...integrations[idx], ...body };
-    await kv.set(wsKey(c, "integrations:list"), integrations);
-    return c.json(integrations[idx]);
+    const rows = await sql.sqlQueryByWorkspace("workspace_integrations", workspace.id, "*", { name });
+    if (!rows.length) return c.json({ error: "Integration not found" }, 404);
+    const integration = rows[0];
+    const updated = { ...integration, ...body, updated_at: new Date().toISOString() };
+    await sql.sqlUpdate("workspace_integrations", integration.id, updated);
+    await broadcastAfterWrite(workspace.id, "workspace_integrations");
+    return c.json(updated);
   } catch (e) {
     console.log("PUT /integrations/:name error:", e);
     return c.json({ error: String(e) }, 500);
@@ -2916,7 +2939,9 @@ const SEED_SESSIONS = {
 
 app.get("/sessions", async (c) => {
   try {
-    const data = await wsGetOrSeed(c, "security:sessions", SEED_SESSIONS);
+    const workspace = c.get("workspace");
+    const row = await sql.sqlQueryFirst("workspace_sessions", workspace.id, "data");
+    const data = row?.data ?? SEED_SESSIONS;
     return c.json(data);
   } catch (e) {
     console.log("GET /sessions error:", e);
@@ -2926,10 +2951,13 @@ app.get("/sessions", async (c) => {
 
 app.delete("/sessions/:device", async (c) => {
   try {
+    const workspace = c.get("workspace");
     const device = decodeURIComponent(c.req.param("device"));
-    const data = await wsGetOrSeed(c, "security:sessions", SEED_SESSIONS);
+    const row = await sql.sqlQueryFirst("workspace_sessions", workspace.id, "data");
+    const data = row?.data ?? SEED_SESSIONS;
     data.active = data.active.filter((s: any) => s.device !== device);
-    await kv.set(wsKey(c, "security:sessions"), data);
+    await sql.sqlUpsert("workspace_sessions", { workspace_id: workspace.id, data, updated_at: new Date().toISOString() }, "workspace_id");
+    await broadcastAfterWrite(workspace.id, "workspace_sessions");
     return c.json({ ok: true });
   } catch (e) {
     console.log("DELETE /sessions/:device error:", e);
@@ -3067,7 +3095,8 @@ app.get("/analytics/metrics", async (c) => {
       ? Math.round(projects.reduce((sum: number, p: any) => sum + (p.progress ?? 0), 0) / totalProjects)
       : 0;
 
-    const stored = await wsGetOrSeed(c, "analytics:metrics", SEED_ANALYTICS);
+    const storedResult = await sql.sqlQueryFirst("workspace_analytics", workspace.id, "data");
+    const stored = storedResult?.data ?? SEED_ANALYTICS;
     const data = {
       ...SEED_ANALYTICS,
       ...stored,
@@ -3084,7 +3113,10 @@ app.get("/analytics/metrics", async (c) => {
         avgProgress,
       },
     };
-    if (!stored.completionSeries) await kv.set(wsKey(c, "analytics:metrics"), data);
+    if (!stored.completionSeries) {
+      await sql.sqlUpsert("workspace_analytics", { workspace_id: workspace.id, data, updated_at: new Date().toISOString() }, "workspace_id");
+      await broadcastAfterWrite(workspace.id, "workspace_analytics");
+    }
     return c.json(data);
   } catch (e) {
     console.log("GET /analytics/metrics error:", e);
@@ -3096,10 +3128,13 @@ app.put("/analytics/metrics", async (c) => {
   try {
     const gate = await requirePlan(c, "pro");
     if (!gate.user) return gate.response;
+    const workspace = c.get("workspace");
     const body = await c.req.json();
-    const existing = await wsGetOrSeed(c, "analytics:metrics", SEED_ANALYTICS);
+    const row = await sql.sqlQueryFirst("workspace_analytics", workspace.id, "data");
+    const existing = row?.data ?? SEED_ANALYTICS;
     const updated = { ...existing, ...body };
-    await kv.set(wsKey(c, "analytics:metrics"), updated);
+    await sql.sqlUpsert("workspace_analytics", { workspace_id: workspace.id, data: updated, updated_at: new Date().toISOString() }, "workspace_id");
+    await broadcastAfterWrite(workspace.id, "workspace_analytics");
     return c.json(updated);
   } catch (e) {
     console.log("PUT /analytics/metrics error:", e);
@@ -3179,7 +3214,9 @@ const SEED_DASHBOARD_OPS = {
 
 app.get("/dashboard/ops", async (c) => {
   try {
-    const data = await wsGetOrSeed(c, "dashboard:ops", SEED_DASHBOARD_OPS);
+    const workspace = c.get("workspace");
+    const row = await sql.sqlQueryFirst("workspace_dashboard", workspace.id, "data");
+    const data = row?.data ?? SEED_DASHBOARD_OPS;
     return c.json(data);
   } catch (e) {
     console.log("GET /dashboard/ops error:", e);
@@ -3189,10 +3226,13 @@ app.get("/dashboard/ops", async (c) => {
 
 app.put("/dashboard/ops", async (c) => {
   try {
+    const workspace = c.get("workspace");
     const body = await c.req.json();
-    const existing = await wsGetOrSeed(c, "dashboard:ops", SEED_DASHBOARD_OPS);
+    const row = await sql.sqlQueryFirst("workspace_dashboard", workspace.id, "data");
+    const existing = row?.data ?? SEED_DASHBOARD_OPS;
     const updated = { ...existing, ...body };
-    await kv.set(wsKey(c, "dashboard:ops"), updated);
+    await sql.sqlUpsert("workspace_dashboard", { workspace_id: workspace.id, data: updated, updated_at: new Date().toISOString() }, "workspace_id");
+    await broadcastAfterWrite(workspace.id, "workspace_dashboard");
     return c.json(updated);
   } catch (e) {
     console.log("PUT /dashboard/ops error:", e);

@@ -146,3 +146,36 @@ export async function sqlQueryJoin<T = any>(
   if (error) throw new Error(`sqlQueryJoin error: ${error.message}`);
   return (data ?? []) as T[];
 }
+
+/* ── Single-row helpers for JSONB workspace-scoped tables ──────────────────── */
+
+/** Query exactly one row by workspace_id. Returns null if not found (no error). */
+export async function sqlQueryFirst(
+  table: string,
+  workspaceId: string,
+  select = "*",
+) {
+  const { data, error } = await getDbClient()
+    .from(table)
+    .select(select)
+    .eq("workspace_id", workspaceId)
+    .limit(1)
+    .maybeSingle();
+  if (error) throw new Error(`sqlQueryFirst error: ${error.message}`);
+  return data;
+}
+
+/** Upsert: insert if conflict column doesn't exist, update otherwise. */
+export async function sqlUpsert(
+  table: string,
+  payload: Record<string, any>,
+  conflictColumn: string,
+) {
+  const { data, error } = await getDbClient()
+    .from(table)
+    .upsert(payload, { onConflict: conflictColumn })
+    .select()
+    .single();
+  if (error) throw new Error(`sqlUpsert error: ${error.message}`);
+  return data;
+}
