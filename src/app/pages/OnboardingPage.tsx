@@ -19,10 +19,12 @@ import { FullScreenLoader } from "../auth/guards";
 import { saveProfile } from "../utils/api";
 import { supabase } from "../utils/supabase";
 import { AuthShell } from "./auth/AuthShell";
+import { useLang } from "../i18n";
 
 export function OnboardingPage() {
   const { session, profile, profileLoading, setProfile } = useAuth();
   const navigate = useNavigate();
+  const { t } = useLang();
 
   const [fullName, setFullName] = useState("");
   const [phone, setPhone] = useState("");
@@ -58,10 +60,10 @@ export function OnboardingPage() {
         },
       });
       setProfile(saved);
-      toast.success("Welcome aboard!");
+      toast.success(t("onboarding.welcomeAboard"));
       navigate("/app/dashboard", { replace: true });
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to save profile");
+      toast.error(err instanceof Error ? err.message : t("onboarding.failedToSaveProfile"));
     } finally {
       setSubmitting(false);
     }
@@ -69,8 +71,8 @@ export function OnboardingPage() {
 
   return (
     <AuthShell
-      title="Complete your profile"
-      description="One last step before you enter your workspace"
+      title={t("onboarding.completeYourProfile")}
+      description={t("onboarding.oneLastStep")}
     >
       <form onSubmit={handleSubmit} className="flex flex-col gap-4">
         <Field>
@@ -132,7 +134,7 @@ export function OnboardingPage() {
           />
         </Field>
         <Button type="submit" loading={submitting} className="w-full">
-          Continue to dashboard
+          {t("onboarding.continueToDashboard")}
         </Button>
       </form>
     </AuthShell>

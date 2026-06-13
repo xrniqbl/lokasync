@@ -703,41 +703,41 @@ export function SettingsPage() {
                 );
                 return (
                   <>
-                    <Section title="Notification Channels" description="Choose where you receive notifications.">
+                    <Section title={t("settings.notificationChannels")} description={t("settings.notificationChannelsDesc")}>
                       <div className="divide-y divide-neutral-800/40">
-                        {n("inApp", "In-app notifications", "Show notification bell in the sidebar")}
-                        {n("email", "Email notifications", "Receive summaries and alerts by email")}
-                        {n("slack", "Slack notifications", "Push to your connected Slack workspace")}
-                        {n("browser", "Browser push notifications", "Desktop alerts when the app is in background")}
+                        {n("inApp", t("settings.inApp"), t("settings.inAppDesc"))}
+                        {n("email", t("settings.emailNotifs"), t("settings.emailNotifsDesc"))}
+                        {n("slack", t("settings.slackNotifs"), t("settings.slackNotifsDesc"))}
+                        {n("browser", t("settings.browserNotifs"), t("settings.browserNotifsDesc"))}
                       </div>
                     </Section>
-                    <Section title="Tasks">
+                    <Section title={t("settings.tasks")}>
                       <div className="divide-y divide-neutral-800/40">
-                        {n("taskAssigned", "Task assigned to me")}
-                        {n("taskDue", "Task due today")}
-                        {n("taskStatus", "Task status changed", "When a task I own moves to a new status")}
-                        {n("comments", "Comments on my tasks")}
-                        {n("mentions", "Mentions in comments")}
+                        {n("taskAssigned", t("settings.taskAssigned"))}
+                        {n("taskDue", t("settings.taskDue"))}
+                        {n("taskStatus", t("settings.taskStatus"), t("settings.taskStatusDesc"))}
+                        {n("comments", t("settings.commentsOnTasks"))}
+                        {n("mentions", t("settings.mentionsInComments"))}
                       </div>
                     </Section>
-                    <Section title="Projects">
+                    <Section title={t("settings.projects")}>
                       <div className="divide-y divide-neutral-800/40">
-                        {n("projectStatus", "Project status changes")}
-                        {n("newMember", "New member added to project")}
-                        {n("milestone", "Milestone deadline approaching", "3 days before a milestone is due")}
+                        {n("projectStatus", t("settings.projectStatusChanges"))}
+                        {n("newMember", t("settings.newMemberProject"))}
+                        {n("milestone", t("settings.milestoneApproaching"), t("settings.milestoneApproachingDesc"))}
                       </div>
                     </Section>
-                    <Section title="Team & Workspace">
+                    <Section title={t("settings.teamWorkspace")}>
                       <div className="divide-y divide-neutral-800/40">
-                        {n("teamMember", "New team member joined", "When someone joins your workspace")}
-                        {n("announcements", "Team announcements")}
+                        {n("teamMember", t("settings.newTeamMemberJoined"), t("settings.newTeamMemberJoinedDesc"))}
+                        {n("announcements", t("settings.teamAnnouncements"))}
                       </div>
                     </Section>
-                    <Section title="Digest & Updates">
+                    <Section title={t("settings.digestUpdates")}>
                       <div className="divide-y divide-neutral-800/40">
-                        {n("digest", "Weekly activity digest", "Summary every Monday morning")}
-                        {n("productUpdates", "Product & feature updates")}
-                        {n("security", "Security & compliance alerts")}
+                        {n("digest", t("settings.weeklyDigest"), t("settings.weeklyDigestDesc"))}
+                        {n("productUpdates", t("settings.productUpdates"))}
+                        {n("security", t("settings.securityAlerts"))}
                       </div>
                     </Section>
                     <SaveRow onSave={saveNotifications} />
@@ -750,19 +750,19 @@ export function SettingsPage() {
           {/* ── Workspace ── */}
           {activeNav === "Workspace" && (
             <>
-              <Section title="Workspace Identity" description="Settings visible to all workspace members.">
+              <Section title={t("settings.workspaceIdentity")} description={t("settings.workspaceIdentityDesc")}>
                 <div className="space-y-4">
                   <div className="flex items-center gap-4">
                     <div className="w-14 h-14 rounded-xl bg-indigo-900/60 flex items-center justify-center text-indigo-300 text-[20px] font-['Lexend:SemiBold',_sans-serif] shrink-0">{workspaceData.name?.[0]?.toUpperCase() ?? "?"}</div>
                     <div>
-                      <button onClick={() => toast.success("Logo upload coming soon")} className="border border-neutral-800 hover:bg-neutral-800 text-neutral-300 text-[12px] px-3 py-1.5 rounded-lg transition-colors">Upload logo</button>
-                      <p className="text-neutral-600 text-[11px] mt-1">PNG or SVG · 512×512 recommended</p>
+                      <button onClick={() => toast.success("Logo upload coming soon")} className="border border-neutral-800 hover:bg-neutral-800 text-neutral-300 text-[12px] px-3 py-1.5 rounded-lg transition-colors">{t("settings.uploadLogo")}</button>
+                      <p className="text-neutral-600 text-[11px] mt-1">{t("settings.pngOrSvg")}</p>
                     </div>
                   </div>
-                  <InputField label="Workspace name" value={workspaceData.name ?? ""} onChange={(v) => setWorkspaceData((p: any) => ({ ...p, name: v }))} />
-                  <InputField label="Workspace URL" value={workspaceData.url ?? ""} onChange={(v) => setWorkspaceData((p: any) => ({ ...p, url: v }))} hint="Changing this will break all existing shared links." />
+                  <InputField label={t("settings.workspaceName")} value={workspaceData.name ?? ""} onChange={(v) => setWorkspaceData((p: any) => ({ ...p, name: v }))} />
+                  <InputField label={t("settings.workspaceUrl")} value={workspaceData.url ?? ""} onChange={(v) => setWorkspaceData((p: any) => ({ ...p, url: v }))} hint={t("settings.workspaceUrlHint")} />
                   <div>
-                    <label className="block text-neutral-300 text-[13px] mb-1.5">Industry</label>
+                    <label className="block text-neutral-300 text-[13px] mb-1.5">{t("settings.industry")}</label>
                     <select
                       value={workspaceData.industry ?? "Software / Technology"}
                       onChange={(e) => setWorkspaceData((p: any) => ({ ...p, industry: e.target.value }))}
@@ -811,13 +811,13 @@ export function SettingsPage() {
                   </div>
                 </div>
               </Section>
-              <Section title="Workspace Preferences">
+              <Section title={t("settings.workspacePreferences")}>
                 <div className="divide-y divide-neutral-800/40">
-                  <ToggleRow label="Show completed tasks" description="Display completed tasks in all task lists" />
-                  <ToggleRow label="Compact view" description="Reduce spacing in task and file lists" />
-                  <ToggleRow label="Allow public project links" description="Members can share project links externally" defaultChecked />
-                  <ToggleRow label="Require 2FA for all members" description="Enforce two-factor auth workspace-wide" />
-                  <ToggleRow label="Guest access" description="Allow external collaborators with limited access" defaultChecked />
+                  <ToggleRow label={t("settings.showCompletedTasks")} description={t("settings.showCompletedTasksDesc")} />
+                  <ToggleRow label={t("settings.compactView")} description={t("settings.compactViewDesc")} />
+                  <ToggleRow label={t("settings.publicProjectLinks")} description={t("settings.publicProjectLinksDesc")} defaultChecked />
+                  <ToggleRow label={t("settings.require2FA")} description={t("settings.require2FADesc")} />
+                  <ToggleRow label={t("settings.guestAccess")} description={t("settings.guestAccessDesc")} defaultChecked />
                 </div>
               </Section>
               <SaveRow onSave={async () => {
@@ -830,29 +830,29 @@ export function SettingsPage() {
           {/* ── Appearance ── */}
           {activeNav === "Appearance" && (
             <>
-              <Section title="Theme" description="Choose your preferred color scheme.">
+              <Section title={t("settings.theme")} description={t("settings.themeDesc")}>
                 <div className="grid grid-cols-3 gap-3">
-                  {(["dark", "light", "system"] as const).map((t) => (
+                  {(["dark", "light", "system"] as const).map((opt) => (
                     <button
-                      key={t}
-                      onClick={() => { setTheme(t); toast.success(`Theme set to ${t}`); }}
-                      className={`relative p-3 rounded-xl border transition-all text-left ${theme === t ? "border-indigo-500 bg-indigo-950/20" : "border-neutral-800 hover:border-neutral-700"}`}
+                      key={opt}
+                      onClick={() => { setTheme(opt); toast.success(`Theme set to ${opt}`); }}
+                      className={`relative p-3 rounded-xl border transition-all text-left ${theme === opt ? "border-indigo-500 bg-indigo-950/20" : "border-neutral-800 hover:border-neutral-700"}`}
                     >
-                      <div className={`h-14 rounded-lg mb-2.5 overflow-hidden ${t === "dark" ? "bg-neutral-900" : t === "light" ? "bg-neutral-200" : "bg-gradient-to-br from-neutral-900 to-neutral-200"}`}>
-                        <div className={`h-3 w-full ${t === "dark" ? "bg-neutral-800" : t === "light" ? "bg-neutral-300" : "bg-gradient-to-r from-neutral-800 to-neutral-300"}`} />
+                      <div className={`h-14 rounded-lg mb-2.5 overflow-hidden ${opt === "dark" ? "bg-neutral-900" : opt === "light" ? "bg-neutral-200" : "bg-gradient-to-br from-neutral-900 to-neutral-200"}`}>
+                        <div className={`h-3 w-full ${opt === "dark" ? "bg-neutral-800" : opt === "light" ? "bg-neutral-300" : "bg-gradient-to-r from-neutral-800 to-neutral-300"}`} />
                         <div className="p-1.5 space-y-1">
                           {[1, 2].map((i) => (
-                            <div key={i} className={`h-1.5 rounded-full ${t === "dark" ? "bg-neutral-700" : t === "light" ? "bg-neutral-400" : "bg-neutral-500"}`} style={{ width: i === 1 ? "80%" : "60%" }} />
+                            <div key={i} className={`h-1.5 rounded-full ${opt === "dark" ? "bg-neutral-700" : opt === "light" ? "bg-neutral-400" : "bg-neutral-500"}`} style={{ width: i === 1 ? "80%" : "60%" }} />
                           ))}
                         </div>
                       </div>
-                      <div className="text-neutral-200 text-[12px] capitalize">{t}</div>
-                      {theme === t && <Check size={12} className="absolute top-2.5 right-2.5 text-indigo-400" />}
+                      <div className="text-neutral-200 text-[12px] capitalize">{opt}</div>
+                      {theme === opt && <Check size={12} className="absolute top-2.5 right-2.5 text-indigo-400" />}
                     </button>
                   ))}
                 </div>
               </Section>
-              <Section title="Accent Color" description="Used for buttons, highlights, and active states.">
+              <Section title={t("settings.accentColor")} description={t("settings.accentColorDesc")}>
                 <div className="flex items-center gap-3">
                   {accentColors.map((c) => (
                     <button
@@ -865,7 +865,7 @@ export function SettingsPage() {
                   ))}
                 </div>
               </Section>
-              <Section title="Font Size">
+              <Section title={t("settings.fontSize")}>
                 <div className="flex items-center gap-2">
                   {(["small", "medium", "large"] as const).map((s) => (
                     <button key={s} onClick={() => setFontSize(s)}
@@ -875,7 +875,7 @@ export function SettingsPage() {
                   ))}
                 </div>
               </Section>
-              <Section title="Density" description="Controls spacing throughout the interface.">
+              <Section title={t("settings.density")} description={t("settings.densityDesc")}>
                 <div className="flex items-center gap-2">
                   {(["compact", "comfortable", "spacious"] as const).map((d) => (
                     <button key={d} onClick={() => setDensity(d)}
@@ -885,7 +885,7 @@ export function SettingsPage() {
                   ))}
                 </div>
               </Section>
-              <Section title="Sidebar Position">
+              <Section title={t("settings.sidebarPosition")}>
                 <div className="flex items-center gap-2">
                   {["Left", "Right"].map((p, i) => (
                     <button key={p} onClick={() => toast.success(`Sidebar position: ${p}`)}
@@ -907,10 +907,10 @@ export function SettingsPage() {
           {/* ── Timezone ── */}
           {activeNav === "Timezone" && (
             <>
-              <Section title="Time Zone" description="Used for task deadlines, calendar events, and timestamps.">
+              <Section title={t("settings.timeZone")} description={t("settings.timeZoneDesc")}>
                 <div className="space-y-4">
                   <div>
-                    <label className="block text-neutral-300 text-[13px] mb-1.5">Time zone</label>
+                    <label className="block text-neutral-300 text-[13px] mb-1.5">{t("settings.timezoneLabel")}</label>
                     <select className="w-full bg-[#0f0f0f] border border-neutral-800 rounded-lg px-3 py-2.5 text-neutral-200 text-[13px] outline-none appearance-none cursor-pointer">
                       <option>Asia/Jakarta (UTC+7)</option>
                       <option>Asia/Singapore (UTC+8)</option>
@@ -924,14 +924,14 @@ export function SettingsPage() {
                   </div>
                   <div className="flex items-center justify-between py-2">
                     <div>
-                      <div className="text-neutral-200 text-[13px]">Auto-detect timezone</div>
-                      <div className="text-neutral-600 text-[12px] mt-0.5">Use your browser's timezone automatically</div>
+                      <div className="text-neutral-200 text-[13px]">{t("settings.autoDetectTimezone")}</div>
+                      <div className="text-neutral-600 text-[12px] mt-0.5">{t("settings.autoDetectTimezoneDesc")}</div>
                     </div>
                     <Toggle checked={false} onChange={() => toast.success("Auto-detect enabled")} />
                   </div>
                 </div>
               </Section>
-              <Section title="Date Format">
+              <Section title={t("settings.dateFormat")}>
                 <div className="space-y-1">
                   {[
                     { fmt: "MM/DD/YYYY", preview: new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) },
@@ -951,7 +951,7 @@ export function SettingsPage() {
                   ))}
                 </div>
               </Section>
-              <Section title="Time Format">
+              <Section title={t("settings.timeFormat")}>
                 <div className="flex items-center gap-2">
                   {[{ val: "12h", label: "12-hour (3:00 PM)" }, { val: "24h", label: "24-hour (15:00)" }].map((f) => (
                     <button key={f.val} onClick={() => setTimeFormat(f.val)}
@@ -961,7 +961,7 @@ export function SettingsPage() {
                   ))}
                 </div>
               </Section>
-              <Section title="First Day of Week">
+              <Section title={t("settings.firstDayOfWeek")}>
                 <div className="flex items-center gap-2">
                   {["Sunday", "Monday", "Saturday"].map((d) => (
                     <button key={d} onClick={() => setWeekStart(d)}
@@ -978,24 +978,24 @@ export function SettingsPage() {
           {/* ── Default Notifications ── */}
           {activeNav === "Default Notifications" && (
             <>
-              <Section title="Workspace Defaults" description="These settings apply to all new workspace members. Members can override them individually.">
+              <Section title={t("settings.workspaceDefaults")} description={t("settings.workspaceDefaultsDesc")}>
                 <div className="mb-4 px-3 py-2.5 bg-neutral-800/40 rounded-lg text-neutral-500 text-[12px]">
-                  Changes here apply to new members going forward, not existing ones.
+                  {t("settings.changesApplyToNewMembers")}
                 </div>
                 <div className="divide-y divide-neutral-800/40">
-                  <ToggleRow label="Task assigned" defaultChecked />
-                  <ToggleRow label="Task due today" defaultChecked />
-                  <ToggleRow label="Comments and mentions" defaultChecked />
-                  <ToggleRow label="Project status changes" />
-                  <ToggleRow label="New team member added" />
-                  <ToggleRow label="Weekly digest email" defaultChecked />
-                  <ToggleRow label="Product updates" />
-                  <ToggleRow label="Security alerts" defaultChecked />
+                  <ToggleRow label={t("settings.taskAssigned")} defaultChecked />
+                  <ToggleRow label={t("settings.taskDue")} defaultChecked />
+                  <ToggleRow label={t("settings.commentsAndMentions")} defaultChecked />
+                  <ToggleRow label={t("settings.projectStatusChangesDefault")} />
+                  <ToggleRow label={t("settings.newTeamMemberDefault")} />
+                  <ToggleRow label={t("settings.weeklyDigestEmail")} defaultChecked />
+                  <ToggleRow label={t("settings.productUpdatesDefault")} />
+                  <ToggleRow label={t("settings.securityAlertsDefault")} defaultChecked />
                 </div>
               </Section>
               <div className="flex items-center justify-between">
                 <button onClick={() => toast.success("Defaults reset to system values")} className="text-neutral-500 hover:text-neutral-300 text-[13px] flex items-center gap-1.5 transition-colors">
-                  <RefreshCw size={13} /> Reset to system defaults
+                  <RefreshCw size={13} /> {t("settings.resetToSystemDefaults")}
                 </button>
                 <button onClick={async () => {
                   try {
@@ -1006,7 +1006,7 @@ export function SettingsPage() {
                     toast.success("Default notification settings saved");
                   } catch (e) { console.log("Failed to save defaults:", e); toast.error("Failed to save"); }
                 }} className="bg-indigo-600 hover:bg-indigo-500 text-white text-[13px] px-5 py-2 rounded-lg transition-colors">
-                  Save defaults
+                  {t("settings.saveDefaults")}
                 </button>
               </div>
             </>
@@ -1015,16 +1015,16 @@ export function SettingsPage() {
           {/* ── Members ── */}
           {activeNav === "Members" && (
             <>
-              <Section title="Members & Permissions" description={`${members.length} active members in this workspace.`}>
+              <Section title={t("settings.membersPermissions")} description={`${members.length} ${t("settings.membersPermissionsDesc")}`}>
                 <div className="flex items-center justify-between mb-4">
-                  <div className="text-neutral-500 text-[12px]">Manage roles and access levels</div>
+                  <div className="text-neutral-500 text-[12px]">{t("settings.manageRoles")}</div>
                   <button onClick={() => setShowInvite(true)} className="bg-indigo-600 hover:bg-indigo-500 text-white text-[12px] px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1.5">
-                    <Plus size={13} /> Invite member
+                    <Plus size={13} /> {t("settings.inviteMember")}
                   </button>
                 </div>
                 <div className="bg-[#141414] border border-neutral-800/60 rounded-xl overflow-hidden">
                   <div className="hidden md:grid grid-cols-[1fr_100px_80px_32px] gap-4 px-4 py-2.5 border-b border-neutral-800/40">
-                    {["Member", "Role", "Status", ""].map((h) => (
+                    {[t("settings.member"), t("settings.role"), t("settings.status"), ""].map((h) => (
                       <div key={h} className="text-neutral-600 text-[11px] uppercase tracking-wider">{h}</div>
                     ))}
                   </div>
@@ -1051,7 +1051,7 @@ export function SettingsPage() {
                           }}
                           className="bg-neutral-800 border border-neutral-700 text-neutral-300 text-[12px] px-2 py-1.5 rounded-lg outline-none cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                         >
-                          {["Owner", "Admin", "Member", "Viewer"].map((r) => <option key={r}>{r}</option>)}
+                          {["Owner", "Admin", "Member", "Viewer"].map((r) => <option key={r}>{r === "Owner" ? t("settings.owner") : r === "Admin" ? t("settings.admin") : r === "Member" ? t("settings.member") : t("settings.viewer")}</option>)}
                         </select>
                         <div className="hidden md:flex items-center gap-1.5">
                           <div className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: m.status === "online" ? "#10b981" : m.status === "away" ? "#f59e0b" : "#404040" }} />
@@ -1069,7 +1069,7 @@ export function SettingsPage() {
                   </div>
                 </div>
               </Section>
-              <Section title="Pending Invites" description="Awaiting acceptance.">
+              <Section title={t("settings.pendingInvites")} description={t("settings.pendingInvitesDesc")}>
                 <div className="space-y-2">
                   {pendingList.map((inv) => (
                     <div key={inv.email} className="flex items-center justify-between p-3 bg-[#141414] border border-neutral-800/60 rounded-xl gap-3">
@@ -1083,13 +1083,13 @@ export function SettingsPage() {
                           setPendingList(updated);
                           toast.success(`Invite resent to ${inv.email}`);
                           await saveMembers(members, updated);
-                        }} className="text-neutral-400 hover:text-neutral-200 text-[12px] px-2.5 py-1 rounded-lg border border-neutral-800 hover:bg-neutral-800 transition-colors">Resend</button>
+                        }} className="text-neutral-400 hover:text-neutral-200 text-[12px] px-2.5 py-1 rounded-lg border border-neutral-800 hover:bg-neutral-800 transition-colors">{t("settings.resend")}</button>
                         <button onClick={async () => {
                           const updated = pendingList.filter((p) => p.email !== inv.email);
                           setPendingList(updated);
                           toast.success(`Invite to ${inv.email} cancelled`);
                           await saveMembers(members, updated);
-                        }} className="text-red-400 hover:text-red-300 text-[12px] px-2.5 py-1 rounded-lg border border-red-900/40 hover:bg-red-950/30 transition-colors">Cancel</button>
+                        }} className="text-red-400 hover:text-red-300 text-[12px] px-2.5 py-1 rounded-lg border border-red-900/40 hover:bg-red-950/30 transition-colors">{t("common.cancel")}</button>
                       </div>
                     </div>
                   ))}
@@ -1101,22 +1101,22 @@ export function SettingsPage() {
           {/* ── Billing ── */}
           {activeNav === "Billing" && (
             <>
-              <Section title="Current Plan" description={`Your workspace is on the ${billing?.plan ?? "—"} plan.`}>
+              <Section title={t("settings.currentPlan")} description={`${t("settings.currentPlanDesc")} ${billing?.plan ?? "—"}.`}>
                 <div className="p-4 bg-indigo-950/20 border border-indigo-800/40 rounded-xl mb-3">
                   <div className="flex items-start justify-between gap-3 mb-3">
                     <div>
                       <div className="text-neutral-50 text-[16px] font-['Lexend:SemiBold',_sans-serif] mb-0.5">{billing?.plan ?? "—"} Plan</div>
                       <div className="text-neutral-400 text-[13px]">${billing?.price ?? 0} per seat / month · {billing?.seats ?? 0} seats</div>
                     </div>
-                    <span className="text-[11px] px-2.5 py-1 rounded-full bg-indigo-900/60 text-indigo-300 shrink-0">Active</span>
+                    <span className="text-[11px] px-2.5 py-1 rounded-full bg-indigo-900/60 text-indigo-300 shrink-0">{t("settings.active")}</span>
                   </div>
                   <div className="text-neutral-500 text-[12px] mb-4">Next billing: <span className="text-neutral-300">{billing?.nextBilling ?? "—"}</span> · <span className="text-neutral-300">{billing ? `$${(billing.price * billing.seats).toFixed(2)}` : "—"}</span></div>
                   <button onClick={() => toast.success("Upgrade flow coming soon")} className="bg-indigo-600 hover:bg-indigo-500 text-white text-[13px] px-4 py-2 rounded-lg transition-colors">
-                    Upgrade to Enterprise
+                    {t("settings.upgradeToEnterprise")}
                   </button>
                 </div>
               </Section>
-              <Section title="Usage" description="Current usage against your plan limits.">
+              <Section title={t("settings.usage")} description={t("settings.usageDesc")}>
                 {(() => {
                   const usedGB = quota ? (quota.unlimited ? "∞" : (quota.used / (1024 * 1024 * 1024)).toFixed(2)) : "—";
                   const limitGB = quota ? (quota.unlimited ? "∞" : (quota.limit / (1024 * 1024 * 1024)).toFixed(0)) : "—";
@@ -1124,9 +1124,9 @@ export function SettingsPage() {
                   return (
                     <div className="space-y-4">
                       {[
-                        { label: "Members", used: billing?.usage?.members ?? 0, limit: billing?.usage?.memberLimit ?? 0, color: "#818cf8" },
-                        { label: "Active projects", used: billing?.usage?.projects ?? 0, limit: billing?.usage?.projectLimit ?? 0, color: "#34d399" },
-                        { label: "Storage", used: usedGB, limit: limitGB, unit: " GB", color: "#f59e0b", pct },
+                        { label: t("settings.membersUsage"), used: billing?.usage?.members ?? 0, limit: billing?.usage?.memberLimit ?? 0, color: "#818cf8" },
+                        { label: t("settings.activeProjectsUsage"), used: billing?.usage?.projects ?? 0, limit: billing?.usage?.projectLimit ?? 0, color: "#34d399" },
+                        { label: t("settings.storage"), used: usedGB, limit: limitGB, unit: " GB", color: "#f59e0b", pct },
                       ].map((u: any) => (
                         <div key={u.label}>
                           <div className="flex justify-between text-[12px] mb-1.5">
@@ -1142,7 +1142,7 @@ export function SettingsPage() {
                   );
                 })()}
               </Section>
-              <Section title="Payment Method">
+              <Section title={t("settings.paymentMethod")}>
                 <div className="flex items-center justify-between p-3 bg-[#141414] border border-neutral-800/60 rounded-xl">
                   <div className="flex items-center gap-3">
                     <div className="w-8 h-8 rounded-lg bg-neutral-800 flex items-center justify-center text-neutral-400">
@@ -1150,13 +1150,13 @@ export function SettingsPage() {
                     </div>
                     <div>
                       <div className="text-neutral-200 text-[13px]">{billing?.payment?.brand ?? "Card"} ending in {billing?.payment?.last4 ?? "····"}</div>
-                      <div className="text-neutral-600 text-[11px]">Expires {billing?.payment?.expiry ?? "—"}</div>
+                      <div className="text-neutral-600 text-[11px]">{t("settings.expires")} {billing?.payment?.expiry ?? "—"}</div>
                     </div>
                   </div>
-                  <button onClick={() => toast.success("Payment method update coming soon")} className="border border-neutral-800 hover:bg-neutral-800 text-neutral-400 hover:text-neutral-200 text-[12px] px-3 py-1.5 rounded-lg transition-colors">Update</button>
+                  <button onClick={() => toast.success("Payment method update coming soon")} className="border border-neutral-800 hover:bg-neutral-800 text-neutral-400 hover:text-neutral-200 text-[12px] px-3 py-1.5 rounded-lg transition-colors">{t("settings.update")}</button>
                 </div>
               </Section>
-              <Section title="Billing History">
+              <Section title={t("settings.billingHistory")}>
                 <div className="bg-[#141414] border border-neutral-800/60 rounded-xl overflow-hidden">
                   <div className="divide-y divide-neutral-800/40">
                     {(billing?.invoices ?? []).map((inv: any) => (
@@ -1180,7 +1180,7 @@ export function SettingsPage() {
 
           {/* ── Integrations ── */}
           {activeNav === "Integrations" && (
-            <Section title="Integrations" description="Connect external tools and services to your workspace.">
+            <Section title={t("settings.integrations")} description={t("settings.integrationsDesc")}>
               <div className="space-y-3">
                 {integrations.map((integration) => (
                   <div key={integration.name} className="p-3 lg:p-4 bg-[#141414] border border-neutral-800/60 rounded-xl">
@@ -1199,9 +1199,9 @@ export function SettingsPage() {
                           </button>
                         )}
                         {integration.connected ? (
-                          <button onClick={() => toggleIntegration(integration.name)} className="text-neutral-500 hover:text-neutral-300 text-[12px] px-2.5 py-1 rounded-lg border border-neutral-800 hover:bg-neutral-800 transition-colors">Disconnect</button>
+                          <button onClick={() => toggleIntegration(integration.name)} className="text-neutral-500 hover:text-neutral-300 text-[12px] px-2.5 py-1 rounded-lg border border-neutral-800 hover:bg-neutral-800 transition-colors">{t("settings.disconnect")}</button>
                         ) : (
-                          <button onClick={() => toggleIntegration(integration.name)} className="text-neutral-300 text-[12px] px-3 py-1.5 rounded-lg border border-neutral-800 hover:bg-neutral-800 transition-colors">Connect</button>
+                          <button onClick={() => toggleIntegration(integration.name)} className="text-neutral-300 text-[12px] px-3 py-1.5 rounded-lg border border-neutral-800 hover:bg-neutral-800 transition-colors">{t("settings.connect")}</button>
                         )}
                       </div>
                     </div>
@@ -1209,10 +1209,10 @@ export function SettingsPage() {
                       <div className="mt-2.5 pt-2.5 border-t border-neutral-800/40 flex items-center gap-4 text-[11px]">
                         <div className="flex items-center gap-1.5">
                           <div className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-                          <span className="text-emerald-400">Connected · synced {integration.lastSync}</span>
+                          <span className="text-emerald-400">{t("settings.connectedSynced")} {integration.lastSync}</span>
                         </div>
                         <span className="text-neutral-700">·</span>
-                        <span className="text-neutral-600">Scopes: {integration.scopes}</span>
+                        <span className="text-neutral-600">{t("settings.scopes")}: {integration.scopes}</span>
                       </div>
                     )}
                   </div>
@@ -1224,10 +1224,10 @@ export function SettingsPage() {
           {/* ── API Keys ── */}
           {activeNav === "API Keys" && (
             <>
-              <Section title="API Keys" description="Use these keys to authenticate API requests from your applications.">
+              <Section title={t("settings.apiKeys")} description={t("settings.apiKeysDesc")}>
                 <div className="bg-[#141414] border border-neutral-800/60 rounded-xl overflow-hidden mb-3">
                   <div className="hidden md:grid grid-cols-[1fr_100px_100px_auto] gap-4 px-4 py-2.5 border-b border-neutral-800/40">
-                    {["Name", "Created", "Last used", ""].map((h) => (
+                    {[t("settings.name"), t("settings.created"), t("settings.lastUsed"), ""].map((h) => (
                       <div key={h} className="text-neutral-600 text-[11px] uppercase tracking-wider">{h}</div>
                     ))}
                   </div>
@@ -1239,34 +1239,34 @@ export function SettingsPage() {
                       </div>
                       <div className="hidden md:block text-neutral-500 text-[12px]">{k.created}</div>
                       <div className="hidden md:block text-neutral-500 text-[12px]">{k.lastUsed}</div>
-                      <button onClick={() => revokeKey(k.name)} className="text-red-400 hover:text-red-300 text-[12px] px-2.5 py-1 rounded-lg border border-red-900/40 hover:bg-red-950/30 transition-colors whitespace-nowrap">Revoke</button>
+                      <button onClick={() => revokeKey(k.name)} className="text-red-400 hover:text-red-300 text-[12px] px-2.5 py-1 rounded-lg border border-red-900/40 hover:bg-red-950/30 transition-colors whitespace-nowrap">{t("settings.revokeKey")}</button>
                     </div>
                   ))}
                   {apiKeysList.length === 0 && (
-                    <div className="px-4 py-6 text-center text-neutral-600 text-[13px]">No active API keys</div>
+                    <div className="px-4 py-6 text-center text-neutral-600 text-[13px]">{t("settings.noActiveApiKeys")}</div>
                   )}
                 </div>
 
                 {!showNewKey ? (
                   <button onClick={() => setShowNewKey(true)} className="flex items-center gap-2 border border-neutral-800 hover:bg-neutral-800 text-neutral-300 text-[13px] px-4 py-2 rounded-lg transition-colors">
-                    <Plus size={14} /> Generate new key
+                    <Plus size={14} /> {t("settings.generateNewKey")}
                   </button>
                 ) : generatedKey ? (
                   <div className="p-4 bg-emerald-950/20 border border-emerald-800/40 rounded-xl space-y-3">
-                    <div className="text-emerald-300 text-[13px] font-['Lexend:SemiBold',_sans-serif]">Key generated — copy it now</div>
-                    <p className="text-neutral-500 text-[12px]">This key will not be shown again. Store it securely.</p>
+                    <div className="text-emerald-300 text-[13px] font-['Lexend:SemiBold',_sans-serif]">{t("settings.keyGenerated")}</div>
+                    <p className="text-neutral-500 text-[12px]">{t("settings.keyGeneratedDesc")}</p>
                     <div className="flex items-center gap-2">
                       <code className="flex-1 bg-[#0f0f0f] border border-neutral-800 rounded-lg px-3 py-2 text-emerald-300 text-[12px] font-mono truncate">{generatedKey}</code>
                       <button onClick={copyKey} className="shrink-0 border border-neutral-800 hover:bg-neutral-800 text-neutral-400 px-2.5 py-2 rounded-lg transition-colors flex items-center gap-1.5 text-[12px]">
-                        {keyCopied ? <><Check size={13} className="text-emerald-400" /> Copied</> : <><Copy size={13} /> Copy</>}
+                        {keyCopied ? <><Check size={13} className="text-emerald-400" /> {t("settings.copied")}</> : <><Copy size={13} /> {t("settings.copy")}</>}
                       </button>
                     </div>
-                    <button onClick={() => { setShowNewKey(false); setGeneratedKey(null); setNewKeyName(""); }} className="text-neutral-500 hover:text-neutral-300 text-[12px] transition-colors">Done</button>
+                    <button onClick={() => { setShowNewKey(false); setGeneratedKey(null); setNewKeyName(""); }} className="text-neutral-500 hover:text-neutral-300 text-[12px] transition-colors">{t("common.done")}</button>
                   </div>
                 ) : (
                   <div className="p-4 bg-neutral-800/30 border border-neutral-800 rounded-xl space-y-3">
                     <div>
-                      <label className="block text-neutral-300 text-[13px] mb-1.5">Key name</label>
+                      <label className="block text-neutral-300 text-[13px] mb-1.5">{t("settings.keyName")}</label>
                       <input
                         type="text"
                         value={newKeyName}
@@ -1276,21 +1276,21 @@ export function SettingsPage() {
                       />
                     </div>
                     <div className="flex gap-2">
-                      <button onClick={generateApiKey} className="bg-indigo-600 hover:bg-indigo-500 text-white text-[13px] px-4 py-2 rounded-lg transition-colors">Generate</button>
-                      <button onClick={() => { setShowNewKey(false); setNewKeyName(""); }} className="border border-neutral-800 hover:bg-neutral-800 text-neutral-400 text-[13px] px-4 py-2 rounded-lg transition-colors">Cancel</button>
+                      <button onClick={generateApiKey} className="bg-indigo-600 hover:bg-indigo-500 text-white text-[13px] px-4 py-2 rounded-lg transition-colors">{t("settings.generate")}</button>
+                      <button onClick={() => { setShowNewKey(false); setNewKeyName(""); }} className="border border-neutral-800 hover:bg-neutral-800 text-neutral-400 text-[13px] px-4 py-2 rounded-lg transition-colors">{t("common.cancel")}</button>
                     </div>
                   </div>
                 )}
               </Section>
 
-              <Section title="Webhooks" description="Receive HTTP POST requests when events occur in your workspace.">
+              <Section title={t("settings.webhooks")} description={t("settings.webhooksDesc")}>
                 <div className="space-y-2 mb-3">
                   {webhooksList.map((w, i) => (
                     <div key={i} className="p-3 bg-[#141414] border border-neutral-800/60 rounded-xl">
                       <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0">
                           <div className="text-neutral-200 text-[12px] font-mono truncate">{w.url}</div>
-                          <div className="text-neutral-600 text-[11px] mt-1">Events: {w.events}</div>
+                          <div className="text-neutral-600 text-[11px] mt-1">{t("settings.events")}: {w.events}</div>
                         </div>
                         <div className="flex items-center gap-2 shrink-0">
                           <Toggle checked={w.active} onChange={() => toggleWebhook(i)} />
@@ -1304,12 +1304,12 @@ export function SettingsPage() {
                 </div>
                 {!showWebhookForm ? (
                   <button onClick={() => setShowWebhookForm(true)} className="flex items-center gap-2 border border-neutral-800 hover:bg-neutral-800 text-neutral-300 text-[13px] px-4 py-2 rounded-lg transition-colors">
-                    <Plus size={14} /> Add webhook
+                    <Plus size={14} /> {t("settings.addWebhook")}
                   </button>
                 ) : (
                   <div className="p-4 bg-neutral-800/30 border border-neutral-800 rounded-xl space-y-3">
                     <div>
-                      <label className="block text-neutral-300 text-[13px] mb-1.5">Endpoint URL</label>
+                      <label className="block text-neutral-300 text-[13px] mb-1.5">{t("settings.endpointUrl")}</label>
                       <input
                         type="url"
                         value={newWebhookUrl}
@@ -1319,7 +1319,7 @@ export function SettingsPage() {
                       />
                     </div>
                     <div>
-                      <label className="block text-neutral-300 text-[13px] mb-1.5">Events (comma-separated)</label>
+                      <label className="block text-neutral-300 text-[13px] mb-1.5">{t("settings.eventsCommaSeparated")}</label>
                       <input
                         type="text"
                         value={newWebhookEvents}
@@ -1329,8 +1329,8 @@ export function SettingsPage() {
                       />
                     </div>
                     <div className="flex gap-2">
-                      <button onClick={addWebhook} className="bg-indigo-600 hover:bg-indigo-500 text-white text-[13px] px-4 py-2 rounded-lg transition-colors">Add webhook</button>
-                      <button onClick={() => { setShowWebhookForm(false); setNewWebhookUrl(""); setNewWebhookEvents(""); }} className="border border-neutral-800 hover:bg-neutral-800 text-neutral-400 text-[13px] px-4 py-2 rounded-lg transition-colors">Cancel</button>
+                      <button onClick={addWebhook} className="bg-indigo-600 hover:bg-indigo-500 text-white text-[13px] px-4 py-2 rounded-lg transition-colors">{t("settings.addWebhook")}</button>
+                      <button onClick={() => { setShowWebhookForm(false); setNewWebhookUrl(""); setNewWebhookEvents(""); }} className="border border-neutral-800 hover:bg-neutral-800 text-neutral-400 text-[13px] px-4 py-2 rounded-lg transition-colors">{t("common.cancel")}</button>
                     </div>
                   </div>
                 )}
@@ -1340,9 +1340,9 @@ export function SettingsPage() {
 
           {/* ── Audit Log ── */}
           {activeNav === "Audit Log" && (
-            <Section title="Audit Log" description="All security and administrative actions in your workspace.">
+            <Section title={t("settings.auditLog")} description={t("settings.auditLogDesc")}>
               <div className="flex items-center gap-1 mb-4 overflow-x-auto pb-0.5">
-                {["All", "Security", "Members", "Integrations", "API", "Settings"].map((f) => (
+                {[t("settings.all"), t("settings.security"), t("sidebar.members"), t("settings.integrations"), t("settings.api"), t("settings.settings")].map((f) => (
                   <button key={f} onClick={() => setAuditFilter(f)}
                     className={`px-3 py-1.5 rounded-lg text-[12px] whitespace-nowrap transition-colors ${auditFilter === f ? "bg-neutral-800 text-neutral-50" : "text-neutral-500 hover:text-neutral-300 hover:bg-neutral-800/40"}`}>
                     {f}
@@ -1376,7 +1376,7 @@ export function SettingsPage() {
                 </div>
               </div>
               <button onClick={() => toast.success("No older entries available")} className="w-full mt-3 py-2 text-neutral-600 hover:text-neutral-400 text-[12px] transition-colors">
-                Load more
+                {t("settings.loadMore")}
               </button>
             </Section>
           )}
@@ -1384,13 +1384,13 @@ export function SettingsPage() {
           {/* ── Data & Export ── */}
           {activeNav === "Data & Export" && (
             <>
-              <Section title="Export Data" description="Download your workspace data in CSV or JSON format.">
+              <Section title={t("settings.exportData")} description={t("settings.exportDataDesc")}>
                 <div className="space-y-3">
                   {[
-                    { label: "All tasks", description: "Titles, assignees, statuses, due dates" },
-                    { label: "All projects", description: "Project details, milestones, team members" },
-                    { label: "Team data", description: "Member list, roles, activity summary" },
-                    { label: "Files & attachments", description: "Metadata and download links" },
+                    { label: t("settings.allTasks"), description: t("settings.allTasksDesc") },
+                    { label: t("settings.allProjects"), description: t("settings.allProjectsDesc") },
+                    { label: t("settings.teamData"), description: t("settings.teamDataDesc") },
+                    { label: t("settings.filesAttachments"), description: t("settings.filesAttachmentsDesc") },
                   ].map((item) => (
                     <div key={item.label} className="flex items-center justify-between p-3 bg-[#141414] border border-neutral-800/60 rounded-xl gap-3 flex-wrap">
                       <div>
@@ -1407,35 +1407,35 @@ export function SettingsPage() {
                           <option>JSON</option>
                         </select>
                         <button onClick={() => handleExport(item.label)} className="flex items-center gap-1.5 border border-neutral-800 hover:bg-neutral-800 text-neutral-300 text-[12px] px-3 py-1.5 rounded-lg transition-colors">
-                          <Download size={13} /> Download
+                          <Download size={13} /> {t("settings.download")}
                         </button>
                       </div>
                     </div>
                   ))}
                 </div>
               </Section>
-              <Section title="Data Retention" description="Control how long data is kept in your workspace.">
+              <Section title={t("settings.dataRetention")} description={t("settings.dataRetentionDesc")}>
                 <div className="divide-y divide-neutral-800/40">
-                  <ToggleRow label="Auto-archive completed tasks" description="Archive tasks after 90 days of completion" defaultChecked />
-                  <ToggleRow label="Auto-delete archived files" description="Permanently remove archived files after 365 days" />
-                  <ToggleRow label="Retain audit logs" description="Keep audit log history for 12 months" defaultChecked />
+                  <ToggleRow label={t("settings.autoArchiveCompletedTasks")} description={t("settings.autoArchiveCompletedTasksDesc")} defaultChecked />
+                  <ToggleRow label={t("settings.autoDeleteArchivedFiles")} description={t("settings.autoDeleteArchivedFilesDesc")} />
+                  <ToggleRow label={t("settings.retainAuditLogs")} description={t("settings.retainAuditLogsDesc")} defaultChecked />
                 </div>
               </Section>
-              <Section title="Privacy & GDPR">
+              <Section title={t("settings.privacyGdpr")}>
                 <div className="space-y-3">
                   <div className="flex items-center justify-between p-3 bg-[#141414] border border-neutral-800/60 rounded-xl gap-3">
                     <div>
-                      <div className="text-neutral-200 text-[13px]">Download personal data</div>
-                      <div className="text-neutral-600 text-[11px] mt-0.5">A copy of all data associated with your account</div>
+                      <div className="text-neutral-200 text-[13px]">{t("settings.downloadPersonalData")}</div>
+                      <div className="text-neutral-600 text-[11px] mt-0.5">{t("settings.downloadPersonalDataDesc")}</div>
                     </div>
-                    <button onClick={() => toast.success("Data download requested — you'll receive an email within 24h")} className="border border-neutral-800 hover:bg-neutral-800 text-neutral-300 text-[12px] px-3 py-1.5 rounded-lg transition-colors shrink-0">Request download</button>
+                    <button onClick={() => toast.success("Data download requested — you'll receive an email within 24h")} className="border border-neutral-800 hover:bg-neutral-800 text-neutral-300 text-[12px] px-3 py-1.5 rounded-lg transition-colors shrink-0">{t("settings.requestDownload")}</button>
                   </div>
                   <div className="flex items-center justify-between p-3 bg-[#141414] border border-neutral-800/60 rounded-xl gap-3">
                     <div>
-                      <div className="text-neutral-200 text-[13px]">Request data deletion</div>
-                      <div className="text-neutral-600 text-[11px] mt-0.5">Permanently remove all your personal data</div>
+                      <div className="text-neutral-200 text-[13px]">{t("settings.requestDataDeletion")}</div>
+                      <div className="text-neutral-600 text-[11px] mt-0.5">{t("settings.requestDataDeletionDesc")}</div>
                     </div>
-                    <button onClick={() => toast.error("Contact support to initiate data deletion")} className="border border-red-900/40 hover:bg-red-950/30 text-red-400 hover:text-red-300 text-[12px] px-3 py-1.5 rounded-lg transition-colors shrink-0">Request deletion</button>
+                    <button onClick={() => toast.error("Contact support to initiate data deletion")} className="border border-red-900/40 hover:bg-red-950/30 text-red-400 hover:text-red-300 text-[12px] px-3 py-1.5 rounded-lg transition-colors shrink-0">{t("settings.requestDeletion")}</button>
                   </div>
                 </div>
               </Section>
@@ -1446,44 +1446,44 @@ export function SettingsPage() {
           {activeNav === "Danger Zone" && (
             <div className="space-y-4">
               <div className="pb-4 border-b border-neutral-800/40">
-                <h2 className="text-neutral-50 text-[14px] lg:text-[15px] font-['Lexend:SemiBold',_sans-serif] mb-1">Danger Zone</h2>
-                <p className="text-neutral-500 text-[12px]">These actions are irreversible. Proceed with extreme caution.</p>
+                <h2 className="text-neutral-50 text-[14px] lg:text-[15px] font-['Lexend:SemiBold',_sans-serif] mb-1">{t("settings.dangerZone")}</h2>
+                <p className="text-neutral-500 text-[12px]">{t("settings.dangerZoneDesc")}</p>
               </div>
 
               <div className="p-4 border border-neutral-800/60 rounded-xl space-y-4">
                 <div>
-                  <div className="text-neutral-200 text-[14px] font-['Lexend:SemiBold',_sans-serif] mb-1">Transfer Ownership</div>
-                  <div className="text-neutral-500 text-[12px]">Transfer workspace ownership to another admin. You will lose owner privileges.</div>
+                  <div className="text-neutral-200 text-[14px] font-['Lexend:SemiBold',_sans-serif] mb-1">{t("settings.transferOwnership")}</div>
+                  <div className="text-neutral-500 text-[12px]">{t("settings.transferOwnershipDesc")}</div>
                 </div>
                 <div>
-                  <label className="block text-neutral-300 text-[13px] mb-1.5">New owner</label>
+                  <label className="block text-neutral-300 text-[13px] mb-1.5">{t("settings.newOwner")}</label>
                   <select className="w-full bg-[#0f0f0f] border border-neutral-800 rounded-lg px-3 py-2.5 text-neutral-200 text-[13px] outline-none appearance-none cursor-pointer">
                     {members.filter((m) => m.role === "Admin").length > 0 ? (
                       members.filter((m) => m.role === "Admin").map((m) => (
                         <option key={m.initials}>{m.name} ({m.email})</option>
                       ))
                     ) : (
-                      <option>No admins found</option>
+                      <option>{t("settings.noAdminsFound")}</option>
                     )}
                   </select>
                 </div>
                 <button onClick={() => toast.success("Ownership transfer request sent — the new owner must accept via email")} className="border border-amber-800/60 hover:bg-amber-950/30 text-amber-400 hover:text-amber-300 text-[13px] px-4 py-2 rounded-lg transition-colors">
-                  Transfer ownership
+                  {t("settings.transfer")}
                 </button>
               </div>
 
               <div className="p-4 border border-red-900/30 rounded-xl space-y-4">
                 <div>
-                  <div className="text-neutral-200 text-[14px] font-['Lexend:SemiBold',_sans-serif] mb-1">Reset Workspace Data</div>
-                  <div className="text-neutral-500 text-[12px]">Permanently delete all tasks, projects, files, and settings. Members and billing are preserved.</div>
+                  <div className="text-neutral-200 text-[14px] font-['Lexend:SemiBold',_sans-serif] mb-1">{t("settings.resetWorkspaceData")}</div>
+                  <div className="text-neutral-500 text-[12px]">{t("settings.resetWorkspaceDataDesc")}</div>
                 </div>
                 <div>
-                  <label className="block text-neutral-500 text-[12px] mb-1.5">Type <span className="text-neutral-300 font-mono">RESET</span> to confirm</label>
+                  <label className="block text-neutral-500 text-[12px] mb-1.5">{t("settings.typeResetToConfirm")}</label>
                   <input
                     type="text"
                     value={dangerReset}
                     onChange={(e) => setDangerReset(e.target.value)}
-                    placeholder="RESET"
+                    placeholder={t("settings.reset")}
                     className="w-full bg-[#0f0f0f] border border-neutral-800 focus:border-red-600/40 rounded-lg px-3 py-2.5 text-neutral-200 text-[13px] outline-none transition-colors placeholder:text-neutral-700 font-mono"
                   />
                 </div>
@@ -1498,17 +1498,17 @@ export function SettingsPage() {
                   }}
                   className="border border-red-800/60 hover:bg-red-950/30 text-red-400 hover:text-red-300 text-[13px] px-4 py-2 rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2"
                 >
-                  <AlertTriangle size={14} /> Reset workspace data
+                  <AlertTriangle size={14} /> {t("settings.resetWorkspaceDataBtn")}
                 </button>
               </div>
 
               <div className="p-4 border border-red-900/30 rounded-xl space-y-4">
                 <div>
-                  <div className="text-neutral-200 text-[14px] font-['Lexend:SemiBold',_sans-serif] mb-1">Delete Account</div>
-                  <div className="text-neutral-500 text-[12px]">Permanently delete your account and all associated data. This cannot be undone.</div>
+                  <div className="text-neutral-200 text-[14px] font-['Lexend:SemiBold',_sans-serif] mb-1">{t("settings.deleteAccountDanger")}</div>
+                  <div className="text-neutral-500 text-[12px]">{t("settings.deleteAccountDangerDesc")}</div>
                 </div>
                 <div>
-                  <label className="block text-neutral-500 text-[12px] mb-1.5">Type your email <span className="text-neutral-300 font-mono">{profileData.email ?? "your email"}</span> to confirm</label>
+                  <label className="block text-neutral-500 text-[12px] mb-1.5">{t("settings.typeEmailToConfirm")} <span className="text-neutral-300 font-mono">{profileData.email ?? "your email"}</span></label>
                   <input
                     type="email"
                     value={dangerEmail}
@@ -1522,7 +1522,7 @@ export function SettingsPage() {
                   onClick={() => toast.error("Account deletion is disabled in this demo")}
                   className="bg-red-700 hover:bg-red-600 disabled:opacity-40 disabled:cursor-not-allowed text-white text-[13px] px-4 py-2 rounded-lg transition-colors flex items-center gap-2"
                 >
-                  <Trash2 size={14} /> Delete my account
+                  <Trash2 size={14} /> {t("settings.deleteMyAccount")}
                 </button>
               </div>
             </div>

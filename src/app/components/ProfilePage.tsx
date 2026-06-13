@@ -28,6 +28,7 @@ import { useNavigation } from "./NavigationContext";
 import { supabase, updatePassword } from "../utils/supabase";
 import * as api from "../utils/api";
 import { PasswordInput } from "../pages/auth/PasswordInput";
+import { useLang } from "../i18n";
 
 function initialsOf(name: string) {
   return (
@@ -41,6 +42,7 @@ function initialsOf(name: string) {
 }
 
 export function ProfilePage() {
+  const { t } = useLang();
   const { user, session, profile, setProfile } = useAuth();
   const { plan } = useSubscription();
   const { subSection, navigate } = useNavigation();
@@ -74,11 +76,11 @@ export function ProfilePage() {
   const handleSaveProfile = async (e: FormEvent) => {
     e.preventDefault();
     if (!fullName.trim()) {
-      toast.error("Full name is required");
+      toast.error(t("profile.fullNameRequired"));
       return;
     }
     if (!phone.trim()) {
-      toast.error("Phone number is required");
+      toast.error(t("profile.phoneRequired"));
       return;
     }
     if (!session) return;
@@ -94,7 +96,7 @@ export function ProfilePage() {
       });
     } catch (err) {
       setSaving(false);
-      toast.error(err instanceof Error ? err.message : "Failed to save profile");
+      toast.error(err instanceof Error ? err.message : t("profile.failedToSaveProfile"));
       return;
     }
     setProfile(saved);
@@ -124,17 +126,17 @@ export function ProfilePage() {
       // best-effort mirror; the KV profile is the source of truth
     }
     setSaving(false);
-    toast.success("Profile updated");
+    toast.success(t("profile.profileUpdated"));
   };
 
   const handleUpdatePassword = async (e: FormEvent) => {
     e.preventDefault();
     if (newPassword.length < 8) {
-      toast.error("Password must be at least 8 characters");
+      toast.error(t("profile.passwordMin8"));
       return;
     }
     if (newPassword !== confirmPassword) {
-      toast.error("Passwords do not match");
+      toast.error(t("profile.passwordsDoNotMatch"));
       return;
     }
     setUpdatingPassword(true);
@@ -146,7 +148,7 @@ export function ProfilePage() {
     }
     setNewPassword("");
     setConfirmPassword("");
-    toast.success("Password updated");
+    toast.success(t("profile.passwordUpdated"));
   };
 
   return (
@@ -162,7 +164,7 @@ export function ProfilePage() {
           </div>
           <div className="min-w-0 flex-1">
             <h1 className="truncate text-[18px] text-neutral-50">
-              {fullName || "Your profile"}
+              {fullName || t("profile.yourProfile")}
             </h1>
             <p className="truncate text-[13px] text-neutral-500">
               {user?.email}
@@ -173,7 +175,7 @@ export function ProfilePage() {
             onClick={() => navigate("billing")}
             className="shrink-0 rounded-full border border-neutral-700 px-3 py-1 text-[11px] text-neutral-300 transition-colors hover:border-neutral-500 hover:text-neutral-100"
           >
-            {plan.name} plan
+            {t("profile.planLabel", { plan: plan.name })}
           </button>
         </div>
 
@@ -182,15 +184,15 @@ export function ProfilePage() {
         {/* Profile details */}
         <Card className="border-neutral-800 bg-[#1a1a1a]" id="details">
           <CardHeader>
-            <CardTitle className="text-neutral-50">Profile details</CardTitle>
+            <CardTitle className="text-neutral-50">{t("profile.profileDetails")}</CardTitle>
             <CardDescription className="text-neutral-400">
-              This information is used across your workspace and for billing.
+              {t("profile.profileDetailsDesc")}
             </CardDescription>
           </CardHeader>
           <form onSubmit={handleSaveProfile}>
             <CardPanel className="flex flex-col gap-4">
               <Field>
-                <FieldLabel>Full name</FieldLabel>
+                <FieldLabel>{t("profile.fullName")}</FieldLabel>
                 <Input
                   type="text"
                   value={fullName}
@@ -200,14 +202,14 @@ export function ProfilePage() {
                 />
               </Field>
               <Field>
-                <FieldLabel>Email</FieldLabel>
+                <FieldLabel>{t("profile.email")}</FieldLabel>
                 <Input type="email" value={user?.email ?? ""} disabled />
                 <FieldDescription>
-                  Your sign-in email cannot be changed here.
+                  {t("profile.emailCannotChange")}
                 </FieldDescription>
               </Field>
               <Field>
-                <FieldLabel>Phone number</FieldLabel>
+                <FieldLabel>{t("profile.phoneNumber")}</FieldLabel>
                 <InputGroup>
                   <InputGroupAddon>
                     <InputGroupText>+62</InputGroupText>
@@ -225,15 +227,15 @@ export function ProfilePage() {
                   />
                 </InputGroup>
                 <FieldDescription>
-                  Used for billing and payment receipts.
+                  {t("profile.usedForBilling")}
                 </FieldDescription>
               </Field>
               <div className="grid gap-4 sm:grid-cols-2">
                 <Field>
                   <FieldLabel>
-                    Job title{" "}
+                    {t("profile.jobTitle")}{" "}
                     <span className="font-normal text-neutral-500">
-                      (optional)
+                      {t("profile.optional")}
                     </span>
                   </FieldLabel>
                   <Input
@@ -245,9 +247,9 @@ export function ProfilePage() {
                 </Field>
                 <Field>
                   <FieldLabel>
-                    Company or team{" "}
+                    {t("profile.companyOrTeam")}{" "}
                     <span className="font-normal text-neutral-500">
-                      (optional)
+                      {t("profile.optional")}
                     </span>
                   </FieldLabel>
                   <Input
@@ -261,7 +263,7 @@ export function ProfilePage() {
             </CardPanel>
             <CardFooter className="justify-end">
               <Button type="submit" loading={saving}>
-                Save changes
+                {t("profile.saveChanges")}
               </Button>
             </CardFooter>
           </form>
@@ -271,25 +273,25 @@ export function ProfilePage() {
         <div ref={securityRef}>
           <Card className="border-neutral-800 bg-[#1a1a1a]">
             <CardHeader>
-              <CardTitle className="text-neutral-50">Security</CardTitle>
+              <CardTitle className="text-neutral-50">{t("profile.security")}</CardTitle>
               <CardDescription className="text-neutral-400">
-                Change the password you use to sign in.
+                {t("profile.securityDesc")}
               </CardDescription>
             </CardHeader>
             <form onSubmit={handleUpdatePassword}>
               <CardPanel className="flex flex-col gap-4">
                 <Field>
-                  <FieldLabel>New password</FieldLabel>
+                  <FieldLabel>{t("profile.newPassword")}</FieldLabel>
                   <PasswordInput
                     value={newPassword}
                     onChange={setNewPassword}
                     autoComplete="new-password"
                     required
                   />
-                  <FieldDescription>Minimum 8 characters.</FieldDescription>
+                  <FieldDescription>{t("profile.min8Chars")}</FieldDescription>
                 </Field>
                 <Field>
-                  <FieldLabel>Confirm new password</FieldLabel>
+                  <FieldLabel>{t("profile.confirmNewPassword")}</FieldLabel>
                   <PasswordInput
                     value={confirmPassword}
                     onChange={setConfirmPassword}
@@ -304,7 +306,7 @@ export function ProfilePage() {
                   variant="outline"
                   loading={updatingPassword}
                 >
-                  Update password
+                  {t("profile.updatePassword")}
                 </Button>
               </CardFooter>
             </form>

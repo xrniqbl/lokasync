@@ -27,6 +27,7 @@ import { Label } from "@/components/cossui/label";
 import { Spinner } from "@/components/cossui/spinner";
 import { Textarea } from "@/components/cossui/textarea";
 import { useSubscription } from "../subscription/SubscriptionContext";
+import { useLang } from "../i18n";
 import * as api from "../utils/api";
 import { NotFoundPage } from "./NotFoundPage";
 
@@ -50,15 +51,7 @@ type Tab =
   | "notifications"
   | "migration";
 
-const TABS: { id: Tab; label: string; icon: typeof LayoutDashboard }[] = [
-  { id: "overview", label: "Overview", icon: LayoutDashboard },
-  { id: "vouchers", label: "Vouchers", icon: Ticket },
-  { id: "subscribers", label: "Subscribers", icon: Users },
-  { id: "maintenance", label: "Maintenance", icon: Wrench },
-  { id: "notifications", label: "Notifications", icon: BellRing },
-  { id: "reminders", label: "Reminders", icon: MailWarning },
-  { id: "migration", label: "Migration", icon: Database },
-];
+
 
 /* ── Overview ─────────────────────────────────────────────────────────────── */
 
@@ -92,9 +85,9 @@ function OverviewTab() {
   if (error) {
     return (
       <p className="py-12 text-center text-[13px] text-neutral-500">
-        Could not load the overview.{" "}
+        {t("admin.couldNotLoadOverview")}{" "}
         <button onClick={load} className="text-indigo-400 hover:underline">
-          Retry
+          {t("admin.retry")}
         </button>
       </p>
     );
@@ -114,24 +107,24 @@ function OverviewTab() {
     <div className="flex flex-col gap-4">
       {data.maintenance.enabled && (
         <div className="rounded-2xl border border-amber-500/30 bg-amber-950/30 px-4 py-3 text-[13px] text-amber-200">
-          Maintenance mode is ON — users currently see the maintenance screen.
+          {t("admin.maintenanceModeOn")}
         </div>
       )}
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <StatCard label="Registered users" value={String(data.total_users)} />
+        <StatCard label={t("admin.registeredUsers")} value={String(data.total_users)} />
         <StatCard
-          label="Active subscriptions"
+          label={t("admin.activeSubscriptions")}
           value={String(activePro + activeBusiness)}
-          sub={`${activePro} Pro · ${activeBusiness} Business`}
+          sub={`${activePro} ${t("admin.proBusiness").split(" · ")[0]} · ${activeBusiness} ${t("admin.proBusiness").split(" · ")[1]}`}
         />
-        <StatCard label="Expired subscriptions" value={String(data.expired_subscriptions)} />
-        <StatCard label="Vouchers" value={String(data.voucher_count)} />
+        <StatCard label={t("admin.expiredSubscriptions")} value={String(data.expired_subscriptions)} />
+        <StatCard label={t("admin.vouchers")} value={String(data.voucher_count)} />
         <StatCard
-          label="Total revenue (settled)"
+          label={t("admin.totalRevenueSettled")}
           value={idr.format(data.revenue_total)}
-          sub={`${data.paid_transactions} paid payments`}
+          sub={`${data.paid_transactions} ${t("admin.paidPayments")}`}
         />
-        <StatCard label="Pending payments" value={String(data.pending_transactions)} />
+        <StatCard label={t("admin.pendingPayments")} value={String(data.pending_transactions)} />
       </div>
     </div>
   );
@@ -150,6 +143,7 @@ const EMPTY_VOUCHER_FORM = {
 };
 
 function VouchersTab() {
+  const { t } = useLang();
   const [vouchers, setVouchers] = useState<api.Voucher[] | null>(null);
   const [form, setForm] = useState(EMPTY_VOUCHER_FORM);
   const [saving, setSaving] = useState(false);
@@ -160,7 +154,7 @@ function VouchersTab() {
       .then(setVouchers)
       .catch((e) => {
         console.error("Failed to load vouchers:", e);
-        toast.error("Failed to load vouchers");
+        toast.error(t("admin.failedToLoadVouchers"));
       });
   }, []);
 
@@ -176,7 +170,7 @@ function VouchersTab() {
           ? null
           : [form.pro && "pro", form.business && "business"].filter(Boolean) as string[];
       if (applies_to && applies_to.length === 0) {
-        toast.error("Pick at least one plan the voucher applies to");
+        toast.error(t("admin.pickAtLeastOnePlan"));
         return;
       }
       const created = await api.adminCreateVoucher({
@@ -189,9 +183,9 @@ function VouchersTab() {
       });
       setVouchers((prev) => (prev ? [created, ...prev] : [created]));
       setForm(EMPTY_VOUCHER_FORM);
-      toast.success(`Voucher ${created.code} created`);
+      toast.success(t("admin.voucherCreated", { code: created.code }));
     } catch (err) {
-      toast.error(err instanceof api.ApiError ? err.message : "Failed to create voucher");
+      toast.error(err instanceof api.ApiError ? err.message : t("admin.failedToCreateVoucher"));
     } finally {
       setSaving(false);
     }
@@ -205,20 +199,20 @@ function VouchersTab() {
       setVouchers((prev) =>
         prev ? prev.map((v) => (v.code === updated.code ? updated : v)) : prev,
       );
-      toast.success(`${updated.code} ${updated.active ? "activated" : "deactivated"}`);
+      toast.success(updated.active ? t("admin.voucherActivated", { code: updated.code }) : t("admin.voucherDeactivated", { code: updated.code }));
     } catch (err) {
-      toast.error(err instanceof api.ApiError ? err.message : "Failed to update voucher");
+      toast.error(err instanceof api.ApiError ? err.message : t("admin.failedToUpdateVoucher"));
     }
   };
 
   const remove = async (voucher: api.Voucher) => {
-    if (!window.confirm(`Delete voucher ${voucher.code}? This cannot be undone.`)) return;
+    if (!window.confirm(t("admin.deleteVoucherConfirm", { code: voucher.code }))) return;
     try {
       await api.adminDeleteVoucher(voucher.code);
       setVouchers((prev) => (prev ? prev.filter((v) => v.code !== voucher.code) : prev));
-      toast.success(`${voucher.code} deleted`);
+      toast.success(t("admin.voucherDeleted", { code: voucher.code }));
     } catch (err) {
-      toast.error(err instanceof api.ApiError ? err.message : "Failed to delete voucher");
+      toast.error(err instanceof api.ApiError ? err.message : t("admin.failedToDeleteVoucher"));
     }
   };
 
@@ -226,15 +220,15 @@ function VouchersTab() {
     <div className="flex flex-col gap-6">
       <Card className="border-neutral-800 bg-[#1a1a1a]">
         <CardHeader>
-          <CardTitle className="text-neutral-50">New voucher</CardTitle>
+          <CardTitle className="text-neutral-50">{t("admin.newVoucher")}</CardTitle>
           <CardDescription className="text-neutral-400">
-            Discounts apply at checkout. Usage advances only after a payment settles.
+            {t("admin.vouchersDesc")}
           </CardDescription>
         </CardHeader>
         <CardPanel>
           <form onSubmit={create} className="grid gap-4 sm:grid-cols-2">
             <Field>
-              <FieldLabel>Code</FieldLabel>
+              <FieldLabel>{t("admin.code")}</FieldLabel>
               <Input
                 value={form.code}
                 onChange={(e) =>
@@ -245,7 +239,7 @@ function VouchersTab() {
               />
             </Field>
             <Field>
-              <FieldLabel>Type</FieldLabel>
+              <FieldLabel>{t("admin.type")}</FieldLabel>
               <select
                 value={form.type}
                 onChange={(e) =>
@@ -253,13 +247,13 @@ function VouchersTab() {
                 }
                 className="h-9 rounded-lg border border-neutral-700 bg-[#141414] px-3 text-[13px] text-neutral-100 outline-none focus:border-neutral-500"
               >
-                <option value="percent">Percent (%)</option>
-                <option value="fixed">Fixed amount (Rp)</option>
+                <option value="percent">{t("admin.percentType")}</option>
+                <option value="fixed">{t("admin.fixedAmountType")}</option>
               </select>
             </Field>
             <Field>
               <FieldLabel>
-                {form.type === "percent" ? "Discount (%)" : "Discount (Rp)"}
+                {form.type === "percent" ? t("admin.discountPercent") : t("admin.discountRp")}
               </FieldLabel>
               <Input
                 type="number"
@@ -273,7 +267,7 @@ function VouchersTab() {
             </Field>
             <Field>
               <FieldLabel>
-                Max uses <span className="font-normal text-neutral-500">(optional)</span>
+                {t("admin.maxUses")} <span className="font-normal text-neutral-500">{t("profile.optional")}</span>
               </FieldLabel>
               <Input
                 type="number"
@@ -285,7 +279,7 @@ function VouchersTab() {
             </Field>
             <Field>
               <FieldLabel>
-                Expires <span className="font-normal text-neutral-500">(optional)</span>
+                {t("admin.expires")} <span className="font-normal text-neutral-500">{t("profile.optional")}</span>
               </FieldLabel>
               <Input
                 type="date"
@@ -294,7 +288,7 @@ function VouchersTab() {
               />
             </Field>
             <div className="flex flex-col gap-2">
-              <span className="text-[13px] text-neutral-200">Applies to</span>
+              <span className="text-[13px] text-neutral-200">{t("admin.appliesTo")}</span>
               <div className="flex items-center gap-4 pt-1">
                 <span className="flex items-center gap-2">
                   <Checkbox
@@ -320,7 +314,7 @@ function VouchersTab() {
             </div>
             <div className="sm:col-span-2">
               <Button type="submit" loading={saving}>
-                Create voucher
+                {t("admin.createVoucher")}
               </Button>
             </div>
           </form>
@@ -329,7 +323,7 @@ function VouchersTab() {
 
       <Card className="border-neutral-800 bg-[#1a1a1a]">
         <CardHeader>
-          <CardTitle className="text-neutral-50">All vouchers</CardTitle>
+          <CardTitle className="text-neutral-50">{t("admin.allVouchers")}</CardTitle>
         </CardHeader>
         <CardPanel>
           {!vouchers ? (
@@ -338,7 +332,7 @@ function VouchersTab() {
             </div>
           ) : vouchers.length === 0 ? (
             <p className="py-6 text-center text-[13px] text-neutral-500">
-              No vouchers yet.
+              {t("admin.noVouchersYet")}
             </p>
           ) : (
             <div className="divide-y divide-neutral-800/70">
@@ -356,23 +350,23 @@ function VouchersTab() {
                             : "bg-neutral-800 text-neutral-500"
                         }`}
                       >
-                        {v.active ? "Active" : "Inactive"}
+                        {v.active ? t("admin.active") : t("admin.inactive")}
                       </span>
                     </div>
                     <p className="mt-0.5 text-[11.5px] text-neutral-500">
-                      {v.type === "percent" ? `${v.value}% off` : `${idr.format(v.value)} off`}
+                      {v.type === "percent" ? `${v.value}% ${t("admin.off")}` : `${idr.format(v.value)} ${t("admin.off")}`}
                       {" · "}
-                      used {v.used_count ?? 0}
+                      {t("admin.used")} {v.used_count ?? 0}
                       {v.max_uses != null ? ` / ${v.max_uses}` : ""}
                       {v.expires_at
-                        ? ` · expires ${dateFmt.format(new Date(v.expires_at))}`
+                        ? ` · ${t("admin.expires")} ${dateFmt.format(new Date(v.expires_at))}`
                         : ""}
                       {" · "}
-                      {v.applies_to ? v.applies_to.join(", ") : "all paid plans"}
+                      {v.applies_to ? v.applies_to.join(", ") : t("admin.allPaidPlans")}
                     </p>
                   </div>
                   <Button size="sm" variant="outline" onClick={() => toggleActive(v)}>
-                    {v.active ? "Deactivate" : "Activate"}
+                    {v.active ? t("admin.deactivate") : t("admin.activate")}
                   </Button>
                   <button
                     type="button"
@@ -395,6 +389,7 @@ function VouchersTab() {
 /* ── Subscribers ──────────────────────────────────────────────────────────── */
 
 function SubscribersTab() {
+  const { t } = useLang();
   const [rows, setRows] = useState<api.SubscriberRow[] | null>(null);
 
   useEffect(() => {
@@ -403,9 +398,9 @@ function SubscribersTab() {
       .then(setRows)
       .catch((e) => {
         console.error("Failed to load subscribers:", e);
-        toast.error("Failed to load subscribers");
+        toast.error(t("admin.failedToLoadSubscribers"));
       });
-  }, []);
+  }, [t]);
 
   if (!rows) {
     return (
@@ -418,15 +413,15 @@ function SubscribersTab() {
   return (
     <Card className="border-neutral-800 bg-[#1a1a1a]">
       <CardHeader>
-        <CardTitle className="text-neutral-50">Subscribers</CardTitle>
+        <CardTitle className="text-neutral-50">{t("admin.subscribersTitle")}</CardTitle>
         <CardDescription className="text-neutral-400">
-          Everyone who has ever had a paid subscription, newest period first.
+          {t("admin.subscribersDesc")}
         </CardDescription>
       </CardHeader>
       <CardPanel>
         {rows.length === 0 ? (
           <p className="py-6 text-center text-[13px] text-neutral-500">
-            No subscribers yet.
+            {t("admin.noSubscribersYet")}
           </p>
         ) : (
           <div className="divide-y divide-neutral-800/70">
@@ -454,7 +449,7 @@ function SubscribersTab() {
                   {row.status}
                 </span>
                 <span className="text-[11.5px] text-neutral-500">
-                  until {dateFmt.format(new Date(row.current_period_end))}
+                  {t("admin.until")} {dateFmt.format(new Date(row.current_period_end))}
                 </span>
               </div>
             ))}
@@ -468,6 +463,7 @@ function SubscribersTab() {
 /* ── Maintenance ──────────────────────────────────────────────────────────── */
 
 function MaintenanceTab() {
+  const { t } = useLang();
   const [loaded, setLoaded] = useState(false);
   const [enabled, setEnabled] = useState(false);
   const [message, setMessage] = useState("");
@@ -483,9 +479,9 @@ function MaintenanceTab() {
       })
       .catch((e) => {
         console.error("Failed to load status:", e);
-        toast.error("Failed to load maintenance status");
+        toast.error(t("admin.failedToLoadMaintenanceStatus"));
       });
-  }, []);
+  }, [t]);
 
   const save = async () => {
     setSaving(true);
@@ -493,10 +489,10 @@ function MaintenanceTab() {
       const { maintenance } = await api.adminSetMaintenance({ enabled, message });
       setEnabled(maintenance.enabled);
       toast.success(
-        maintenance.enabled ? "Maintenance mode is ON" : "Maintenance mode is OFF",
+        maintenance.enabled ? t("admin.maintenanceOn") : t("admin.maintenanceOff"),
       );
     } catch (err) {
-      toast.error(err instanceof api.ApiError ? err.message : "Failed to save");
+      toast.error(err instanceof api.ApiError ? err.message : t("admin.failedToSaveMaintenance"));
     } finally {
       setSaving(false);
     }
@@ -513,11 +509,9 @@ function MaintenanceTab() {
   return (
     <Card className="border-neutral-800 bg-[#1a1a1a]">
       <CardHeader>
-        <CardTitle className="text-neutral-50">Maintenance mode</CardTitle>
+        <CardTitle className="text-neutral-50">{t("admin.maintenanceMode")}</CardTitle>
         <CardDescription className="text-neutral-400">
-          While enabled, signed-in users see a maintenance screen and workspace
-          requests are rejected. Founder accounts, the landing page, billing, and
-          payment webhooks keep working.
+          {t("admin.maintenanceModeDesc")}
         </CardDescription>
       </CardHeader>
       <CardPanel className="flex flex-col gap-4">
@@ -528,7 +522,7 @@ function MaintenanceTab() {
             onCheckedChange={(v) => setEnabled(v === true)}
           />
           <Label htmlFor="mt-enabled" className="text-[13px] text-neutral-200">
-            Enable maintenance mode
+            {t("admin.enableMaintenanceMode")}
           </Label>
         </div>
         <Field>
@@ -545,7 +539,7 @@ function MaintenanceTab() {
         </Field>
         <div>
           <Button onClick={save} loading={saving}>
-            Save
+            {t("admin.save")}
           </Button>
         </div>
       </CardPanel>
@@ -563,6 +557,7 @@ const AUDIENCES = [
 ] as const;
 
 function NotificationsTab() {
+  const { t } = useLang();
   const [items, setItems] = useState<api.AdminNotification[] | null>(null);
   const [title, setTitle] = useState("");
   const [message, setMessage] = useState("");
@@ -576,9 +571,9 @@ function NotificationsTab() {
       .then(setItems)
       .catch((e) => {
         console.error("Failed to load notifications:", e);
-        toast.error("Failed to load notifications");
+        toast.error(t("admin.failedToLoadNotifications"));
       });
-  }, []);
+  }, [t]);
 
   const send = async (e: FormEvent) => {
     e.preventDefault();
@@ -588,22 +583,22 @@ function NotificationsTab() {
       setItems((prev) => (prev ? [created, ...prev] : [created]));
       setTitle("");
       setMessage("");
-      toast.success("Notification sent");
+      toast.success(t("admin.notificationSent"));
     } catch (err) {
-      toast.error(err instanceof api.ApiError ? err.message : "Failed to send");
+      toast.error(err instanceof api.ApiError ? err.message : t("admin.failedToSendNotification"));
     } finally {
       setSending(false);
     }
   };
 
   const remove = async (item: api.AdminNotification) => {
-    if (!window.confirm(`Delete "${item.title}"? Users will no longer see it.`)) return;
+    if (!window.confirm(t("admin.deleteNotificationConfirm", { title: item.title }))) return;
     try {
       await api.adminDeleteNotification(item.id);
       setItems((prev) => (prev ? prev.filter((n) => n.id !== item.id) : prev));
-      toast.success("Notification deleted");
+      toast.success(t("admin.notificationDeleted"));
     } catch (err) {
-      toast.error(err instanceof api.ApiError ? err.message : "Failed to delete");
+      toast.error(err instanceof api.ApiError ? err.message : t("admin.failedToDeleteNotification"));
     }
   };
 
@@ -611,16 +606,16 @@ function NotificationsTab() {
     <div className="flex flex-col gap-6">
       <Card className="border-neutral-800 bg-[#1a1a1a]">
         <CardHeader>
-          <CardTitle className="text-neutral-50">Send a notification</CardTitle>
+          <CardTitle className="text-neutral-50">{t("admin.sendNotification")}</CardTitle>
           <CardDescription className="text-neutral-400">
-            Shows as an in-app banner the next time matching users open the app.
+            {t("admin.sendNotificationDesc")}
           </CardDescription>
         </CardHeader>
         <CardPanel>
           <form onSubmit={send} className="flex flex-col gap-4">
             <div className="grid gap-4 sm:grid-cols-2">
               <Field>
-                <FieldLabel>Title</FieldLabel>
+                <FieldLabel>{t("admin.notificationTitle")}</FieldLabel>
                 <Input
                   value={title}
                   onChange={(e) => setTitle(e.target.value)}
@@ -639,14 +634,17 @@ function NotificationsTab() {
                 >
                   {AUDIENCES.map((a) => (
                     <option key={a.value} value={a.value}>
-                      {a.label}
+                      {a.value === "all" ? t("admin.audienceAll") :
+                       a.value === "free" ? t("admin.audienceFree") :
+                       a.value === "pro" ? t("admin.audiencePro") :
+                       t("admin.audienceBusiness")}
                     </option>
                   ))}
                 </select>
               </Field>
             </div>
             <Field>
-              <FieldLabel>Message</FieldLabel>
+              <FieldLabel>{t("admin.message")}</FieldLabel>
               <Textarea
                 value={message}
                 onChange={(e) => setMessage(e.target.value)}
@@ -657,7 +655,7 @@ function NotificationsTab() {
             </Field>
             <div>
               <Button type="submit" loading={sending}>
-                Send notification
+                {t("admin.sendNotificationBtn")}
               </Button>
             </div>
           </form>
@@ -666,7 +664,7 @@ function NotificationsTab() {
 
       <Card className="border-neutral-800 bg-[#1a1a1a]">
         <CardHeader>
-          <CardTitle className="text-neutral-50">Sent notifications</CardTitle>
+          <CardTitle className="text-neutral-50">{t("admin.sentNotifications")}</CardTitle>
         </CardHeader>
         <CardPanel>
           {!items ? (
@@ -675,7 +673,7 @@ function NotificationsTab() {
             </div>
           ) : items.length === 0 ? (
             <p className="py-6 text-center text-[13px] text-neutral-500">
-              Nothing sent yet.
+              {t("admin.nothingSentYet")}
             </p>
           ) : (
             <div className="divide-y divide-neutral-800/70">
@@ -712,6 +710,7 @@ function NotificationsTab() {
 /* ── Reminders (Fase 13.4) ──────────────────────────────────────────────── */
 
 function RemindersTab() {
+  const { t } = useLang();
   const [result, setResult] = useState<{ sent: number; skipped: number; daysAhead: number } | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -720,9 +719,13 @@ function RemindersTab() {
     try {
       const res = await api.sendReminders(days);
       setResult(res);
-      toast.success(`Sent ${res.sent} reminder email${res.sent !== 1 ? "s" : ""}`);
+      toast.success(
+        res.sent === 1
+          ? t("admin.remindersSent", { count: res.sent }) + " " + t("admin.reminderEmail_one")
+          : t("admin.remindersSent", { count: res.sent }) + " " + t("admin.reminderEmail_other")
+      );
     } catch {
-      toast.error("Failed to send reminders");
+      toast.error(t("admin.failedToSendReminders"));
     } finally {
       setLoading(false);
     }
@@ -731,30 +734,30 @@ function RemindersTab() {
   return (
     <Card className="border-neutral-800 bg-[#1a1a1a]">
       <CardHeader>
-        <CardTitle className="text-neutral-50">Subscription Reminders</CardTitle>
+        <CardTitle className="text-neutral-50">{t("admin.subscriptionReminders")}</CardTitle>
         <CardDescription className="text-neutral-400">
-          Send expiry reminder emails to users with active subscriptions ending soon.
+          {t("admin.subscriptionRemindersDesc")}
         </CardDescription>
       </CardHeader>
       <CardPanel className="flex flex-col gap-4">
         <div className="flex gap-2">
           <Button onClick={() => send(7)} loading={loading}>
-            Send 7-day reminders
+            {t("admin.send7dayReminders")}
           </Button>
           <Button onClick={() => send(14)} loading={loading} variant="outline">
-            Send 14-day reminders
+            {t("admin.send14dayReminders")}
           </Button>
           <Button onClick={() => send(30)} loading={loading} variant="outline">
-            Send 30-day reminders
+            {t("admin.send30dayReminders")}
           </Button>
         </div>
         {result && (
           <div className="text-[13px] text-neutral-400">
-            Sent: <span className="text-emerald-400">{result.sent}</span>
+            {t("admin.sent")} <span className="text-emerald-400">{result.sent}</span>
             {" | "}
-            Skipped (no email or already reminded): <span className="text-neutral-500">{result.skipped}</span>
+            {t("admin.skippedNoEmail")} <span className="text-neutral-500">{result.skipped}</span>
             {" | "}
-            Window: {result.daysAhead} days
+            {t("admin.window")} {result.daysAhead} {t("admin.days")}
           </div>
         )}
       </CardPanel>
@@ -772,8 +775,8 @@ function MigrationTab() {
   const run = async (dryRun: boolean) => {
     if (!dryRun) {
       const warning = purgeLegacy
-        ? "Run the REAL migration AND delete the legacy global keys afterwards? This cannot be undone."
-        : "Run the REAL migration? Legacy global keys are kept as a backup.";
+        ? t("admin.confirmPurgeAndMigrate")
+        : t("admin.confirmRunRealMigration");
       if (!window.confirm(warning)) return;
     }
     setRunning(true);
@@ -785,11 +788,11 @@ function MigrationTab() {
       setReport(result);
       toast.success(
         result.dry_run
-          ? "Dry run complete — nothing was written"
-          : `Migration complete — ${result.keys_copied} keys copied`,
+          ? t("admin.dryRunComplete")
+          : t("admin.migrationComplete", { count: result.keys_copied }),
       );
     } catch (err) {
-      toast.error(err instanceof api.ApiError ? err.message : "Migration failed");
+      toast.error(err instanceof api.ApiError ? err.message : t("admin.migrationFailed"));
     } finally {
       setRunning(false);
     }
@@ -800,12 +803,10 @@ function MigrationTab() {
       <Card className="border-neutral-800 bg-[#1a1a1a]">
         <CardHeader>
           <CardTitle className="text-neutral-50">
-            Workspace data migration
+            {t("admin.workspaceDataMigration")}
           </CardTitle>
           <CardDescription className="text-neutral-400">
-            Copies the pre-workspace global data (tasks, projects, files, …) into
-            each user's default workspace. Idempotent — keys that already exist
-            (e.g. via lazy migration) are skipped. Always start with a dry run.
+            {t("admin.migrationDesc")}
           </CardDescription>
         </CardHeader>
         <CardPanel className="flex flex-col gap-4">
@@ -816,20 +817,20 @@ function MigrationTab() {
               onCheckedChange={(v) => setPurgeLegacy(v === true)}
             />
             <Label htmlFor="purge-legacy" className="text-[13px] text-neutral-200">
-              Purge legacy global keys after a real run{" "}
-              <span className="text-amber-400/90">(final cutover — irreversible)</span>
+              {t("admin.purgeLegacyAfterRun")}{" "}
+              <span className="text-amber-400/90">{t("admin.finalCutover")}</span>
             </Label>
           </div>
           <div className="flex gap-2">
             <Button onClick={() => run(true)} loading={running}>
-              Run dry run
+              {t("admin.runDryRun")}
             </Button>
             <Button
               onClick={() => run(false)}
               loading={running}
               className="bg-amber-600 hover:bg-amber-500"
             >
-              Run real migration
+              {t("admin.runRealMigration")}
             </Button>
           </div>
         </CardPanel>
@@ -839,37 +840,37 @@ function MigrationTab() {
         <Card className="border-neutral-800 bg-[#1a1a1a]">
           <CardHeader>
             <CardTitle className="text-neutral-50">
-              {report.dry_run ? "Dry run report" : "Migration report"}
+              {report.dry_run ? t("admin.dryRunReport") : t("admin.migrationReport")}
             </CardTitle>
             <CardDescription className="text-neutral-400">
-              Legacy keys found: {report.legacy_keys_found.length}
-              {report.legacy_purged && " · legacy keys purged"}
+              {t("admin.legacyKeysFound")} {report.legacy_keys_found.length}
+              {report.legacy_purged && ` ${t("admin.legacyKeysPurged")}`}
             </CardDescription>
           </CardHeader>
           <CardPanel className="flex flex-col gap-4">
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-              <StatCard label="Users processed" value={String(report.users_processed)} />
+              <StatCard label={t("admin.usersProcessed")} value={String(report.users_processed)} />
               <StatCard
-                label="Workspaces created"
+                label={t("admin.workspacesCreated")}
                 value={String(report.workspaces_created)}
-                sub={report.dry_run ? "would be created" : undefined}
+                sub={report.dry_run ? t("admin.wouldBeCreated") : undefined}
               />
               <StatCard
-                label="Keys copied"
+                label={t("admin.keysCopied")}
                 value={String(report.keys_copied)}
-                sub={report.dry_run ? "would be copied" : undefined}
+                sub={report.dry_run ? t("admin.wouldBeCopied") : undefined}
               />
-              <StatCard label="Keys skipped" value={String(report.keys_skipped)} sub="already migrated" />
+              <StatCard label={t("admin.keysSkipped")} value={String(report.keys_skipped)} sub={t("admin.alreadyMigrated")} />
             </div>
             {report.details.length > 0 && (
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-[12px]">
                   <thead>
                     <tr className="border-b border-neutral-800 text-neutral-500">
-                      <th className="py-2 pr-4 font-normal">User</th>
-                      <th className="py-2 pr-4 font-normal">Workspace</th>
-                      <th className="py-2 pr-4 font-normal">Copied</th>
-                      <th className="py-2 font-normal">Skipped</th>
+                      <th className="py-2 pr-4 font-normal">{t("admin.user")}</th>
+                      <th className="py-2 pr-4 font-normal">{t("admin.workspace")}</th>
+                      <th className="py-2 pr-4 font-normal">{t("admin.copied")}</th>
+                      <th className="py-2 font-normal">{t("admin.skipped")}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -877,7 +878,7 @@ function MigrationTab() {
                       <tr key={d.email} className="border-b border-neutral-800/50 text-neutral-300">
                         <td className="py-2 pr-4">{d.email}</td>
                         <td className="py-2 pr-4 text-neutral-500">
-                          {d.workspace_created ? "(new)" : (d.workspace_id ?? "—").slice(0, 8)}
+                          {d.workspace_created ? t("admin.newWorkspace") : (d.workspace_id ?? "—").slice(0, 8)}
                         </td>
                         <td className="py-2 pr-4">{d.copied}</td>
                         <td className="py-2">{d.skipped}</td>
@@ -925,7 +926,7 @@ export function AdminPage() {
               </span>
             </Link>
             <span className="rounded-full bg-indigo-900/50 px-2.5 py-0.5 text-[11px] text-indigo-300">
-              Founder panel
+              {t("admin.founderPanel")}
             </span>
           </div>
           <Link
@@ -933,7 +934,7 @@ export function AdminPage() {
             className="flex items-center gap-1.5 text-[13px] text-neutral-400 transition-colors hover:text-neutral-100"
           >
             <ArrowLeft className="size-3.5" />
-            Back to app
+            {t("admin.backToApp")}
           </Link>
         </div>
       </header>
