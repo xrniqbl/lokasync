@@ -11,7 +11,7 @@
 // the workspace-scoped key.
 
 import * as kv from "./kv_store.tsx";
-import * as emails from "./emails.tsx";
+import * as sql from "./sql_client.tsx";
 
 export type WorkspaceRole = "owner" | "member";
 
@@ -65,35 +65,38 @@ export const WORKSPACE_DATA_KEYS = [
 ];
 
 export async function getWorkspace(id: string): Promise<Workspace | null> {
-  return (await kv.get(`workspace:${id}`)) ?? null;
+  const { data, error } = await sql.getDbClient().from("workspaces").select("*").eq("id", id).maybeSingle();
+  if (error || !data) return null;
+  return { id: data.id, name: data.name, owner_id: data.owner_id, plan_id: data.plan_id, created_at: data.created_at, updated_at: data.updated_at };
 }
 
 export async function getMembers(workspaceId: string): Promise<Membership[]> {
-  return (await kv.get(`ws_members:${workspaceId}`)) ?? [];
+  const { data, error } = await sql.getDbClient().from("workspace_members").select("*").eq("workspace_id", workspaceId);
+  if (error || !data) return [];
+  return data.map((m: any) => ({ workspace_id: m.workspace_id, user_id: m.user_id, role: m.role, email: m.email, name: m.name, joined_at: m.joined_at }));
 }
 
 export async function getMembership(
   workspaceId: string,
   userId: string,
 ): Promise<Membership | null> {
-  const members = await getMembers(workspaceId);
-  return members.find((m) => m.user_id === userId) ?? null;
+  const { data, error } = await sql.getDbClient().from("workspace_members").select("*").eq("workspace_id", workspaceId).eq("user_id", userId).maybeSingle();
+  if (error || !data) return null;
+  return { workspace_id: data.workspace_id, user_id: data.user_id, role: data.role, email: data.email, name: data.name, joined_at: data.joined_at };
 }
 
 export async function listUserWorkspaceIds(userId: string): Promise<string[]> {
-  return (await kv.get(`user_ws:${userId}`)) ?? [];
+  const { data, error } = await sql.getDbClient().from("workspace_members").select("workspace_id").eq("user_id", userId);
+  if (error || !data) return [];
+  return data.map((m: any) => m.workspace_id);
 }
 
-async function addToUserIndex(userId: string, workspaceId: string) {
-  const ids = await listUserWorkspaceIds(userId);
-  if (!ids.includes(workspaceId)) {
-    await kv.set(`user_ws:${userId}`, [...ids, workspaceId]);
-  }
+async function addToUserIndex(_userId: string, _workspaceId: string) {
+  // No-op: workspace_members table handles the mapping natively
 }
 
-async function removeFromUserIndex(userId: string, workspaceId: string) {
-  const ids = await listUserWorkspaceIds(userId);
-  await kv.set(`user_ws:${userId}`, ids.filter((id) => id !== workspaceId));
+async function removeFromUserIndex(_userId: string, _workspaceId: string) {
+  // No-op: workspace_members table handles the mapping natively
 }
 
 const displayName = (user: any) =>
@@ -105,16 +108,27 @@ export async function createWorkspace(
 ): Promise<{ workspace: Workspace; membership: Membership }> {
   const now = new Date().toISOString();
   // Copy owner's current subscription plan into the workspace
-  const subscription = await kv.get(`subscription:${user.id}`);
+  const { data: subscription } = await sql.getDbClient().from("subscriptions").select("plan_id, status").eq("user_id", user.id).maybeSingle();
   const ownerPlan = subscription?.status === "active" ? subscription.plan_id : "free";
-  const workspace: Workspace = {
-    id: crypto.randomUUID(),
+
+  const { data: wsResult, error: wsErr } = await sql.getDbClient().from("workspaces").insert({
     name,
     owner_id: user.id,
     plan_id: ownerPlan,
     created_at: now,
     updated_at: now,
+  }).select().single();
+  if (!wsResult || wsErr) throw new Error("Failed to create workspace: " + wsErr?.message);
+
+  const workspace: Workspace = {
+    id: wsResult.id,
+    name: wsResult.name,
+    owner_id: wsResult.owner_id,
+    plan_id: wsResult.plan_id,
+    created_at: wsResult.created_at,
+    updated_at: wsResult.updated_at,
   };
+
   const membership: Membership = {
     workspace_id: workspace.id,
     user_id: user.id,
@@ -123,23 +137,13 @@ export async function createWorkspace(
     name: displayName(user),
     joined_at: now,
   };
-  await kv.set(`workspace:${workspace.id}`, workspace);
-  await kv.set(`ws_members:${workspace.id}`, [membership]);
-  await addToUserIndex(user.id, workspace.id);
+  await sql.getDbClient().from("workspace_members").insert(membership);
   return { workspace, membership };
 }
 
 // Syncs plan_id on all workspaces owned by userId to the given plan.
 export async function syncWorkspacePlans(userId: string, planId: string) {
-  const ids = await listUserWorkspaceIds(userId);
-  for (const id of ids) {
-    const workspace = await getWorkspace(id);
-    if (workspace && workspace.owner_id === userId) {
-      workspace.plan_id = planId;
-      workspace.updated_at = new Date().toISOString();
-      await kv.set(`workspace:${id}`, workspace);
-    }
-  }
+  await sql.getDbClient().from("workspaces").update({ plan_id: planId, updated_at: new Date().toISOString() }).eq("owner_id", userId);
 }
 
 // Reads the cached plan_id for a workspace (falls back to "free").
@@ -153,9 +157,8 @@ export async function addMember(
   user: any,
   role: WorkspaceRole,
 ): Promise<Membership> {
-  const members = await getMembers(workspaceId);
-  const existing = members.find((m) => m.user_id === user.id);
-  if (existing) return existing;
+  const { data: existing } = await sql.getDbClient().from("workspace_members").select("*").eq("workspace_id", workspaceId).eq("user_id", user.id).maybeSingle();
+  if (existing) return { workspace_id: existing.workspace_id, user_id: existing.user_id, role: existing.role, email: existing.email, name: existing.name, joined_at: existing.joined_at };
   const membership: Membership = {
     workspace_id: workspaceId,
     user_id: user.id,
@@ -164,18 +167,12 @@ export async function addMember(
     name: displayName(user),
     joined_at: new Date().toISOString(),
   };
-  await kv.set(`ws_members:${workspaceId}`, [...members, membership]);
-  await addToUserIndex(user.id, workspaceId);
+  await sql.getDbClient().from("workspace_members").insert(membership);
   return membership;
 }
 
 export async function removeMember(workspaceId: string, userId: string) {
-  const members = await getMembers(workspaceId);
-  await kv.set(
-    `ws_members:${workspaceId}`,
-    members.filter((m) => m.user_id !== userId),
-  );
-  await removeFromUserIndex(userId, workspaceId);
+  await sql.getDbClient().from("workspace_members").delete().eq("workspace_id", workspaceId).eq("user_id", userId);
 }
 
 export async function updateMemberRole(
@@ -183,12 +180,11 @@ export async function updateMemberRole(
   userId: string,
   role: WorkspaceRole,
 ): Promise<Membership | null> {
-  const members = await getMembers(workspaceId);
-  const idx = members.findIndex((m) => m.user_id === userId);
-  if (idx === -1) return null;
-  members[idx] = { ...members[idx], role };
-  await kv.set(`ws_members:${workspaceId}`, members);
-  return members[idx];
+  const { data: existing } = await sql.getDbClient().from("workspace_members").select("*").eq("workspace_id", workspaceId).eq("user_id", userId).maybeSingle();
+  if (!existing) return null;
+  const updated: Membership = { workspace_id: existing.workspace_id, user_id: existing.user_id, role, email: existing.email, name: existing.name, joined_at: existing.joined_at };
+  await sql.getDbClient().from("workspace_members").update(updated).eq("workspace_id", workspaceId).eq("user_id", userId);
+  return updated;
 }
 
 // Every user gets a personal default workspace on first authenticated request.

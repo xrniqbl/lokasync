@@ -690,11 +690,14 @@ app.get("/plans", async (c) => {
           plan_id: p.id,
           name: p.name,
           description: p.description,
+          monthly_price: p.monthly,
+          yearly_price: p.yearly,
           price: p.monthly,
           features: JSON.stringify(p.features),
           storage_limit: PLAN_STORAGE_LIMITS[p.id] ?? 0,
           max_projects: p.id === "free" ? 3 : p.id === "pro" ? 100 : 999,
           max_members: p.id === "free" ? 1 : p.id === "pro" ? 50 : 500,
+          highlighted: p.highlighted ?? false,
           active: true,
           sort_order: p.id === "free" ? 1 : p.id === "pro" ? 2 : 3,
           created_at: now,
@@ -704,7 +707,16 @@ app.get("/plans", async (c) => {
       const { data: seeded } = await sql.getDbClient().from("plans").select("*").eq("active", true).order("sort_order", { ascending: true });
       return c.json(seeded.map((p: any) => ({ ...p, id: p.plan_id })));
     }
-    return c.json(plans.map((p: any) => ({ ...p, id: p.plan_id })));
+    return c.json(plans.map((p: any) => ({
+      id: p.plan_id,
+      name: p.name,
+      description: p.description,
+      currency: "IDR",
+      monthly: p.monthly_price,
+      yearly: p.yearly_price,
+      features: typeof p.features === "string" ? JSON.parse(p.features) : p.features,
+      highlighted: p.highlighted,
+    })));
   } catch (e) {
     console.log("GET /plans error:", e);
     return c.json({ error: String(e) }, 500);
@@ -897,12 +909,12 @@ async function applyTransactionStatus(tx: any, midtransData: any) {
 
     // ── Send payment receipt email (Fase 13.2) ─────────────────────────────
     try {
-      const { data: profile } = await sql.getDbClient().from("profiles").select("*").eq("user_id", tx.user_id).maybeSingle();
-      const userEmail = profile?.email;
-      const userName = profile?.full_name || userEmail?.split("@")[0] || "User";
-      const subscription = await kv.get(`subscription:${tx.user_id}`);
+      const { data: rawProfile } = await sql.getDbClient().from("profiles").select("*").eq("user_id", tx.user_id).maybeSingle();
+      const userEmail = rawProfile?.email;
+      const userName = [rawProfile?.first_name, rawProfile?.last_name].filter(Boolean).join(" ") || userEmail?.split("@")[0] || "User";
+      const { data: sub } = await sql.getDbClient().from("subscriptions").select("*").eq("user_id", tx.user_id).maybeSingle();
       if (userEmail) {
-        const periodEndStr = subscription?.current_period_end ?? periodEnd(tx.interval, started);
+        const periodEndStr = sub?.current_period_end ?? periodEnd(tx.interval, started);
         const html = emails.receiptHtml({
           userName,
           planName: tx.plan_name || tx.plan_id,
@@ -952,8 +964,13 @@ app.post("/payments/checkout", async (c) => {
       );
     }
 
-    const profile = await kv.get(`profile:${user.id}`);
-    if (!profile) return c.json({ error: "Complete your profile first" }, 400);
+    const { data: rawProfile } = await sql.getDbClient().from("profiles").select("*").eq("user_id", user.id).maybeSingle();
+    if (!rawProfile) return c.json({ error: "Complete your profile first" }, 400);
+    const profile = {
+      full_name: [rawProfile.first_name, rawProfile.last_name].filter(Boolean).join(" "),
+      email: rawProfile.email,
+      phone: rawProfile.phone,
+    };
 
     const body = await c.req.json();
     const planId = String(body.plan_id ?? "");
@@ -962,7 +979,16 @@ app.post("/payments/checkout", async (c) => {
       ? String(body.voucher_code).trim().toUpperCase()
       : null;
 
-    const plans = await getPlansFromKv();
+    const { data: rawPlans } = await sql.getDbClient().from("plans").select("*").eq("active", true).order("sort_order", { ascending: true });
+    if (!rawPlans?.length) return c.json({ error: "Plans not found" }, 400);
+    const plans = rawPlans.map((p: any) => ({
+      id: p.plan_id,
+      name: p.name,
+      description: p.description,
+      monthly: p.monthly_price,
+      yearly: p.yearly_price,
+      features: typeof p.features === "string" ? JSON.parse(p.features) : p.features,
+    }));
     const plan = plans.find((p: any) => p.id === planId);
     if (!plan || plan.monthly === 0) return c.json({ error: "Invalid plan" }, 400);
     const base = interval === "yearly" ? plan.yearly : plan.monthly;
@@ -978,10 +1004,12 @@ app.post("/payments/checkout", async (c) => {
         (voucher.max_uses == null || voucher.used_count < voucher.max_uses) &&
         (!voucher.applies_to || voucher.applies_to.includes(plan.id));
       if (!usable) return c.json({ error: "This voucher code is not valid" }, 400);
+      const vType = voucher.discount_type ?? "percentage";
+      const vValue = voucher.discount_value ?? 0;
       discount =
-        voucher.type === "percent"
-          ? Math.round((base * voucher.value) / 100)
-          : Math.min(voucher.value, base);
+        vType === "percentage"
+          ? Math.round((base * vValue) / 100)
+          : Math.min(vValue, base);
     }
     const total = base - discount;
 
@@ -2144,7 +2172,7 @@ app.get("/member-home", async (c) => {
       const teamActivity = await sql.sqlQueryByWorkspace("team_activity", workspaceId, "*");
 
       // Owner info
-      const ownerProfile = await kv.get(`profile:${workspace.owner_id}`);
+      const { data: ownerProfile } = await sql.getDbClient().from("profiles").select("first_name, last_name, email").eq("user_id", workspace.owner_id).maybeSingle();
       const members = await ws.getMembers(workspace.id);
       const owner = members.find((m: any) => m.user_id === workspace.owner_id);
 
@@ -2152,7 +2180,7 @@ app.get("/member-home", async (c) => {
         workspace: {
           name: workspace.name,
           owner_id: workspace.owner_id,
-          owner_name: ownerProfile?.full_name ?? owner?.name ?? "Owner",
+          owner_name: [ownerProfile?.first_name, ownerProfile?.last_name].filter(Boolean).join(" ") || owner?.name ?? "Owner",
           owner_email: ownerProfile?.email ?? owner?.email ?? "",
           total_members: members.length,
           plan_id: workspace.plan_id ?? "free",
