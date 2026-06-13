@@ -30,9 +30,12 @@ export function AuthShell({
       style={{ fontFamily: "Lexend, sans-serif" }}
     >
       <Link to="/" aria-label="LokaSync home">
-        <span className="text-lg font-bold tracking-[0.08em] text-[#fafafa]">
-          LOKASYNC
-        </span>
+        <img
+          src="/lokasynclogo.png"
+          alt="LokaSync"
+          className="h-7 w-auto"
+          style={{ objectFit: "contain" }}
+        />
       </Link>
       <Card
         className={`w-full border-neutral-800 bg-[#1a1a1a] ${wide ? "max-w-md" : "max-w-sm"}`}

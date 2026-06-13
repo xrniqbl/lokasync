@@ -267,13 +267,12 @@ const DEMO_TASKS = [
 function Logo({ small = false }: { small?: boolean }) {
   return (
     <Link to="/" aria-label="LokaSync home">
-      <span
-        className={`font-bold tracking-[0.08em] text-[#fafafa] ${
-          small ? "text-[14px]" : "text-[17px]"
-        }`}
-      >
-        LOKASYNC
-      </span>
+      <img
+        src="/lokasynclogo.png"
+        alt="LokaSync"
+        className={small ? "h-5 w-auto" : "h-7 w-auto"}
+        style={{ objectFit: "contain" }}
+      />
     </Link>
   );
 }
