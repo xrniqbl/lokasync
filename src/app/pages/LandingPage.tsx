@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router";
 import { ArrowRight, Check, Menu, ShieldCheck, X } from "lucide-react";
+import { toast } from "sonner";
 import {
   Accordion,
   AccordionItem,
@@ -131,6 +132,12 @@ const STRINGS = {
       sub: "Create your workspace in a minute. Bring the team when you're ready.",
       button: "Create your workspace",
     },
+    newsletter: {
+      title: "Stay in the loop",
+      sub: "Get product updates and tips — no spam.",
+      placeholder: "your@email.com",
+      button: "Subscribe",
+    },
     footer: {
       tagline: "One minimal workspace for your team's projects, tasks, and reporting.",
       product: "Product",
@@ -258,6 +265,12 @@ const STRINGS = {
       title: "Beri pekerjaan sebuah tempat.",
       sub: "Buat ruang kerja dalam satu menit. Ajak tim saat Anda siap.",
       button: "Buat ruang kerja",
+    },
+    newsletter: {
+      title: "Ikuti perkembangan",
+      sub: "Dapatkan update produk dan tips — tanpa spam.",
+      placeholder: "email@anda.com",
+      button: "Langganan",
     },
     footer: {
       tagline: "Satu ruang kerja minimal untuk proyek, tugas, dan laporan tim Anda.",
@@ -905,6 +918,30 @@ export function LandingPage() {
           </div>
         </section>
 
+        {/* Trust badges */}
+        <section className="border-t border-neutral-800/70">
+          <div className="mx-auto w-full max-w-5xl px-6 py-16 text-center">
+            <Reveal>
+              <h2 className="text-[18px] text-neutral-50">{t.trust?.title ?? "Built with security in mind"}</h2>
+            </Reveal>
+            <Reveal delay={80}>
+              <div className="mt-8 flex flex-wrap items-center justify-center gap-6 sm:gap-10">
+                {[
+                  { icon: "🔒", label: t.trust?.encryption ?? "End-to-end encryption" },
+                  { icon: "🛡️", label: t.trust?.gdpr ?? "GDPR compliant" },
+                  { icon: "📋", label: t.trust?.soc2 ?? "SOC2 aligned" },
+                  { icon: "⚡", label: t.trust?.uptime ?? "99.9% uptime SLA" },
+                ].map((badge) => (
+                  <div key={badge.label} className="flex items-center gap-2 rounded-full border border-white/[0.08] bg-white/[0.03] px-4 py-2 text-[13px] text-neutral-400">
+                    <span className="text-base">{badge.icon}</span>
+                    <span>{badge.label}</span>
+                  </div>
+                ))}
+              </div>
+            </Reveal>
+          </div>
+        </section>
+
         {/* Pricing strip — amounts come from the server, same source as /pricing */}
         {plans && plans.length > 0 && (
           <section className="border-t border-neutral-800/70">
@@ -1059,6 +1096,42 @@ export function LandingPage() {
       {/* Footer */}
       <footer className="relative border-t border-neutral-800/70">
         <div className="mx-auto w-full max-w-5xl px-6 pb-8 pt-14">
+          {/* Newsletter */}
+          <Reveal>
+            <div className="mb-12 rounded-2xl border border-white/[0.06] bg-white/[0.02] p-6 sm:p-8">
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <h3 className="text-[16px] text-neutral-100">{t.newsletter?.title ?? "Stay in the loop"}</h3>
+                  <p className="mt-1 text-[13px] text-neutral-500">{t.newsletter?.sub ?? "Get product updates and tips — no spam."}</p>
+                </div>
+                <form
+                  className="flex w-full gap-2 sm:w-auto"
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    const input = e.currentTarget.querySelector("input");
+                    if (input && (input as HTMLInputElement).value) {
+                      toast.success("Thanks for subscribing!");
+                      (input as HTMLInputElement).value = "";
+                    }
+                  }}
+                >
+                  <input
+                    type="email"
+                    placeholder={t.newsletter?.placeholder ?? "your@email.com"}
+                    required
+                    className="min-w-0 flex-1 rounded-lg border border-neutral-800 bg-[#0f0f0f] px-3 py-2 text-[13px] text-neutral-200 outline-none transition-colors placeholder:text-neutral-600 focus:border-indigo-600/60 sm:w-64"
+                  />
+                  <button
+                    type="submit"
+                    className="shrink-0 rounded-lg bg-indigo-600 px-4 py-2 text-[13px] text-white transition-colors hover:bg-indigo-500"
+                  >
+                    {t.newsletter?.button ?? "Subscribe"}
+                  </button>
+                </form>
+              </div>
+            </div>
+          </Reveal>
+
           <div className="grid gap-10 sm:grid-cols-2 lg:grid-cols-4">
             {/* Brand */}
             <div className="lg:col-span-2">
@@ -1162,6 +1235,18 @@ export function LandingPage() {
                 >
                   {t.footer.links.terms}
                 </Link>
+                <a
+                  href="#"
+                  className="text-neutral-500 transition-colors hover:text-neutral-200"
+                >
+                  Status
+                </a>
+                <a
+                  href="#"
+                  className="text-neutral-500 transition-colors hover:text-neutral-200"
+                >
+                  Changelog
+                </a>
               </nav>
             </div>
             <LangToggle lang={lang} onChange={changeLang} />
