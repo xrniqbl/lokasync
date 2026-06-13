@@ -4,6 +4,7 @@ import { AppLayout } from "./AppLayout";
 import { AuthProvider } from "./auth/AuthContext";
 import { RedirectIfAuthed, RequireAuth, RequireProfile } from "./auth/guards";
 import { SubscriptionProvider } from "./subscription/SubscriptionContext";
+import { LangProvider } from "./i18n";
 import { AdminPage } from "./pages/AdminPage";
 import { CheckoutPage } from "./pages/CheckoutPage";
 import { InvitePage } from "./pages/InvitePage";
@@ -22,6 +23,7 @@ import { NotFoundPage } from "./pages/NotFoundPage";
 
 export default function App() {
   return (
+    <LangProvider>
     <AuthProvider>
       <SubscriptionProvider>
       <Routes>
@@ -122,7 +124,8 @@ export default function App() {
 
         <Route path="*" element={<NotFoundPage />} />
       </Routes>
-      </SubscriptionProvider>
+        </SubscriptionProvider>
+      </AuthProvider>
       <Toaster
         position="bottom-right"
         toastOptions={{
@@ -135,6 +138,6 @@ export default function App() {
           },
         }}
       />
-    </AuthProvider>
+    </LangProvider>
   );
 }

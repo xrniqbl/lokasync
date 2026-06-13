@@ -6,6 +6,7 @@ import { useSubscription } from "../subscription/SubscriptionContext";
 import { WorkspaceSwitcher } from "./WorkspaceSwitcher";
 import * as api from "../utils/api";
 import { signOut, getCurrentUser } from "../utils/supabase";
+import { useLang } from "../i18n";
 import svgPaths from "../imports/svg-svkvdgwod6";
 import {
   Search,
@@ -117,10 +118,10 @@ function Avatar() {
 }
 
 const profileStatuses = [
-  { value: "online",  label: "Online",         color: "#10b981" },
-  { value: "away",    label: "Away",            color: "#f59e0b" },
-  { value: "dnd",     label: "Do not disturb", color: "#ef4444" },
-  { value: "offline", label: "Offline",         color: "#404040" },
+  { value: "online",  labelKey: "online",       color: "#10b981" },
+  { value: "away",    labelKey: "away",         color: "#f59e0b" },
+  { value: "dnd",     labelKey: "doNotDisturb", color: "#ef4444" },
+  { value: "offline", labelKey: "offline",      color: "#404040" },
 ];
 
 function ProfilePanel({
@@ -130,6 +131,7 @@ function ProfilePanel({
   onNavigate: (section: string, sub?: string) => void;
   onClose: () => void;
 }) {
+  const { t } = useLang();
   const [status, setStatus] = useState("online");
   const [profile, setProfile] = useState<{ firstName?: string; lastName?: string; email?: string } | null>(null);
   const { isAdmin } = useSubscription();
@@ -164,7 +166,7 @@ function ProfilePanel({
 
       {/* Status selector */}
       <div className="px-2 py-2 border-b border-neutral-800/60">
-        <div className="text-neutral-600 text-[10px] uppercase tracking-wider px-2 mb-1.5">Status</div>
+        <div className="text-neutral-600 text-[10px] uppercase tracking-wider px-2 mb-1.5">{t("sidebar.status")}</div>
         {profileStatuses.map((s) => (
           <button
             key={s.value}
@@ -176,7 +178,7 @@ function ProfilePanel({
             }`}
           >
             <div className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: s.color }} />
-            {s.label}
+            {t(`sidebar.${s.labelKey}`)}
             {status === s.value && (
               <div className="ml-auto w-1.5 h-1.5 rounded-full" style={{ backgroundColor: s.color }} />
             )}
@@ -190,32 +192,32 @@ function ProfilePanel({
           onClick={() => { onNavigate("profile"); onClose(); }}
           className="w-full text-left px-2 py-1.5 text-[12px] text-neutral-400 hover:text-neutral-100 hover:bg-neutral-800/50 rounded-lg transition-colors"
         >
-          Edit profile
+          {t("sidebar.editProfile")}
         </button>
         <button
           onClick={() => { onNavigate("billing"); onClose(); }}
           className="w-full text-left px-2 py-1.5 text-[12px] text-neutral-400 hover:text-neutral-100 hover:bg-neutral-800/50 rounded-lg transition-colors"
         >
-          Billing &amp; plan
+          {t("sidebar.billingPlanText")}
         </button>
         <button
           onClick={() => { onNavigate("settings", "notifications"); onClose(); }}
           className="w-full text-left px-2 py-1.5 text-[12px] text-neutral-400 hover:text-neutral-100 hover:bg-neutral-800/50 rounded-lg transition-colors"
         >
-          Notification preferences
+          {t("sidebar.notificationPreferences")}
         </button>
         <button
           onClick={() => { onNavigate("settings"); onClose(); }}
           className="w-full text-left px-2 py-1.5 text-[12px] text-neutral-400 hover:text-neutral-100 hover:bg-neutral-800/50 rounded-lg transition-colors"
         >
-          Settings
+          {t("sidebar.settings")}
         </button>
         {isAdmin && (
           <button
             onClick={() => { routerNavigate("/admin"); onClose(); }}
             className="w-full text-left px-2 py-1.5 text-[12px] text-indigo-300 hover:text-indigo-200 hover:bg-indigo-950/40 rounded-lg transition-colors"
           >
-            Founder panel
+            {t("sidebar.founderPanel")}
           </button>
         )}
       </div>
@@ -225,12 +227,12 @@ function ProfilePanel({
         <button
           onClick={async () => {
             await signOut();
-            toast.success("Signed out successfully");
+            toast.success(t("sidebar.signedOutSuccessfully"));
             onClose();
           }}
           className="w-full text-left px-2 py-1.5 text-[12px] text-red-400 hover:text-red-300 hover:bg-red-950/30 rounded-lg transition-colors"
         >
-          Sign out
+          {t("sidebar.signOut")}
         </button>
       </div>
     </div>
@@ -242,6 +244,7 @@ function SearchContainer({
 }: {
   isCollapsed?: boolean;
 }) {
+  const { t } = useLang();
   const [searchValue, setSearchValue] = useState("");
 
   return (
@@ -280,7 +283,7 @@ function SearchContainer({
             <div className="box-border content-stretch flex flex-col gap-2 items-start justify-center pl-0 pr-2 py-1 relative w-full">
               <input
                 type="text"
-                placeholder="Search tasks, projects..."
+                placeholder={t("sidebar.searchTasksProjects")}
                 value={searchValue}
                 onChange={(e) => setSearchValue(e.target.value)}
                 className="w-full bg-transparent border-none outline-none font-['Lexend:Regular',_sans-serif] font-normal text-[14px] text-neutral-50 placeholder:text-neutral-400 leading-[20px]"
@@ -496,6 +499,7 @@ const teamSlug = (name: string) =>
 const slugify = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
 
 function getSidebarContent(
+  t: (path: string) => string,
   activeSection: string,
   teams: api.Team[] = [],
   tasks: api.Task[] = [],
@@ -533,121 +537,121 @@ function getSidebarContent(
 
   const contentMap: Record<string, SidebarContent> = {
     dashboard: {
-      title: "Dashboard",
+      title: t("sidebar.dashboard"),
       sections: [
         {
-          title: "Dashboard Types",
+          title: t("sidebar.dashboardTypes"),
           items: [
             {
               icon: <View size={16} className="text-neutral-50" />,
-              label: "Overview",
+              label: t("sidebar.overview"),
               subId: "overview",
               isActive: true,
             },
             {
               icon: <Dashboard size={16} className="text-neutral-50" />,
-              label: "Executive Summary",
+              label: t("sidebar.executiveSummary"),
               subId: "executive-summary",
               hasDropdown: true,
               children: [
-                { label: "Revenue Overview", subId: "exec-revenue", icon: null },
-                { label: "Key Performance Indicators", subId: "exec-kpis", icon: null },
-                { label: "Strategic Goals Progress", subId: "exec-goals", icon: null },
-                { label: "Department Highlights", subId: "exec-departments", icon: null },
+                { label: t("sidebar.revenueOverview"), subId: "exec-revenue", icon: null },
+                { label: t("sidebar.keyPerformanceIndicators"), subId: "exec-kpis", icon: null },
+                { label: t("sidebar.strategicGoalsProgress"), subId: "exec-goals", icon: null },
+                { label: t("sidebar.departmentHighlights"), subId: "exec-departments", icon: null },
               ],
             },
             {
               icon: <ChartBar size={16} className="text-neutral-50" />,
-              label: "Operations Dashboard",
+              label: t("sidebar.operationsDashboard"),
               subId: "operations",
               hasDropdown: true,
               children: [
-                { label: "Project Timeline", subId: "ops-timeline", icon: null },
-                { label: "Resource Allocation", subId: "ops-resources", icon: null },
-                { label: "Team Performance", subId: "ops-performance", icon: null },
-                { label: "Capacity Planning", subId: "ops-capacity", icon: null },
+                { label: t("sidebar.projectTimeline"), subId: "ops-timeline", icon: null },
+                { label: t("sidebar.resourceAllocation"), subId: "ops-resources", icon: null },
+                { label: t("sidebar.teamPerformance"), subId: "ops-performance", icon: null },
+                { label: t("sidebar.capacityPlanning"), subId: "ops-capacity", icon: null },
               ],
             },
             {
               icon: <Analytics size={16} className="text-neutral-50" />,
-              label: "Financial Dashboard",
+              label: t("sidebar.financialDashboard"),
               subId: "financial",
               hasDropdown: true,
               children: [
-                { label: "Budget vs Actual", subId: "fin-budget", icon: null },
-                { label: "Cash Flow Analysis", subId: "fin-cashflow", icon: null },
-                { label: "Expense Breakdown", subId: "fin-expense", icon: null },
-                { label: "Profit & Loss Summary", subId: "fin-pl", icon: null },
+                { label: t("sidebar.budgetVsActual"), subId: "fin-budget", icon: null },
+                { label: t("sidebar.cashFlowAnalysis"), subId: "fin-cashflow", icon: null },
+                { label: t("sidebar.expenseBreakdown"), subId: "fin-expense", icon: null },
+                { label: t("sidebar.profitLossSummary"), subId: "fin-pl", icon: null },
               ],
             },
           ],
         },
         {
-          title: "Report Summaries",
+          title: t("sidebar.reportSummaries"),
           items: [
             {
               icon: <Report size={16} className="text-neutral-50" />,
-              label: "Weekly Reports",
+              label: t("sidebar.weeklyReports"),
               subId: "weekly",
               hasDropdown: true,
               children: [
-                { label: "Team Productivity", subId: "weekly-productivity", icon: null },
-                { label: "Project Completion", subId: "weekly-completion", icon: null },
-                { label: "Budget Utilization", subId: "weekly-budget", icon: null },
-                { label: "Client Satisfaction", subId: "weekly-satisfaction", icon: null },
+                { label: t("sidebar.teamProductivity"), subId: "weekly-productivity", icon: null },
+                { label: t("sidebar.projectCompletion"), subId: "weekly-completion", icon: null },
+                { label: t("sidebar.budgetUtilization"), subId: "weekly-budget", icon: null },
+                { label: t("sidebar.clientSatisfaction"), subId: "weekly-satisfaction", icon: null },
               ],
             },
             {
               icon: <StarFilled size={16} className="text-neutral-50" />,
-              label: "Monthly Insights",
+              label: t("sidebar.monthlyInsights"),
               subId: "monthly",
               hasDropdown: true,
               children: [
-                { label: "Revenue Growth", subId: "monthly-revenue", icon: null },
-                { label: "New Clients", subId: "monthly-clients", icon: null },
-                { label: "Team Expansion", subId: "monthly-expansion", icon: null },
-                { label: "Cost Reduction", subId: "monthly-cost", icon: null },
+                { label: t("sidebar.revenueGrowth"), subId: "monthly-revenue", icon: null },
+                { label: t("sidebar.newClients"), subId: "monthly-clients", icon: null },
+                { label: t("sidebar.teamExpansion"), subId: "monthly-expansion", icon: null },
+                { label: t("sidebar.costReduction"), subId: "monthly-cost", icon: null },
               ],
             },
             {
               icon: <View size={16} className="text-neutral-50" />,
-              label: "Quarterly Analysis",
+              label: t("sidebar.quarterlyAnalysis"),
               subId: "quarterly",
               hasDropdown: true,
               children: [
-                { label: "Market Position", subId: "quarterly-market", icon: null },
-                { label: "ROI", subId: "quarterly-roi", icon: null },
-                { label: "Customer Retention", subId: "quarterly-retention", icon: null },
-                { label: "Innovation Index", subId: "quarterly-innovation", icon: null },
+                { label: t("sidebar.marketPosition"), subId: "quarterly-market", icon: null },
+                { label: t("sidebar.roi"), subId: "quarterly-roi", icon: null },
+                { label: t("sidebar.customerRetention"), subId: "quarterly-retention", icon: null },
+                { label: t("sidebar.innovationIndex"), subId: "quarterly-innovation", icon: null },
               ],
             },
           ],
         },
         {
-          title: "Business Intelligence",
+          title: t("sidebar.businessIntelligence"),
           items: [
             {
               icon: <ChartBar size={16} className="text-neutral-50" />,
-              label: "Performance Metrics",
+              label: t("sidebar.performanceMetrics"),
               subId: "performance-metrics",
               hasDropdown: true,
               children: [
-                { label: "Sales Conversion", subId: "perf-sales", icon: null },
-                { label: "Lead Response Time", subId: "perf-response", icon: null },
-                { label: "Customer Lifetime Value", subId: "perf-clv", icon: null },
-                { label: "Churn Rate", subId: "perf-churn", icon: null },
+                { label: t("sidebar.salesConversion"), subId: "perf-sales", icon: null },
+                { label: t("sidebar.leadResponseTime"), subId: "perf-response", icon: null },
+                { label: t("sidebar.customerLifetimeValue"), subId: "perf-clv", icon: null },
+                { label: t("sidebar.churnRate"), subId: "perf-churn", icon: null },
               ],
             },
             {
               icon: <Analytics size={16} className="text-neutral-50" />,
-              label: "Predictive Analytics",
+              label: t("sidebar.predictiveAnalytics"),
               subId: "predictive",
               hasDropdown: true,
               children: [
-                { label: "Q4 Revenue Forecast", subId: "pred-forecast", icon: null },
-                { label: "Resource Demand", subId: "pred-resources", icon: null },
-                { label: "Market Trends", subId: "pred-trends", icon: null },
-                { label: "Risk Assessment", subId: "pred-risks", icon: null },
+                { label: t("sidebar.q4RevenueForecast"), subId: "pred-forecast", icon: null },
+                { label: t("sidebar.resourceDemand"), subId: "pred-resources", icon: null },
+                { label: t("sidebar.marketTrends"), subId: "pred-trends", icon: null },
+                { label: t("sidebar.riskAssessment"), subId: "pred-risks", icon: null },
               ],
             },
           ],
@@ -655,43 +659,43 @@ function getSidebarContent(
       ],
     },
     tasks: {
-      title: "Tasks",
+      title: t("sidebar.tasks"),
       sections: [
         {
-          title: "Quick Actions",
+          title: t("sidebar.quickActions"),
           items: [
             {
               icon: <AddLarge size={16} className="text-neutral-50" />,
-              label: "New task",
+              label: t("sidebar.newTask"),
               subId: "new-task",
             },
             {
               icon: <Filter size={16} className="text-neutral-50" />,
-              label: "Filter tasks",
+              label: t("sidebar.filterTasks"),
               subId: "filter",
             },
           ],
         },
         {
-          title: "My Tasks",
+          title: t("sidebar.myTasksSection"),
           items: [
             {
               icon: <Time size={16} className="text-neutral-50" />,
-              label: "Due today",
+              label: t("sidebar.dueToday"),
               subId: "today",
               hasDropdown: true,
               children: dueTodayChildren,
             },
             {
               icon: <InProgress size={16} className="text-neutral-50" />,
-              label: "In progress",
+              label: t("sidebar.inProgress"),
               subId: "in-progress",
               hasDropdown: true,
               children: inProgressChildren,
             },
             {
               icon: <CheckmarkOutline size={16} className="text-neutral-50" />,
-              label: "Completed",
+              label: t("sidebar.completed"),
               subId: "completed",
               hasDropdown: true,
               children: completedChildren,
@@ -699,18 +703,18 @@ function getSidebarContent(
           ],
         },
         {
-          title: "Other",
+          title: t("sidebar.other"),
           items: [
             {
               icon: <Flag size={16} className="text-neutral-50" />,
-              label: "Priority tasks",
+              label: t("sidebar.priorityTasks"),
               subId: "priority",
               hasDropdown: true,
               children: priorityChildren,
             },
             {
               icon: <Archive size={16} className="text-neutral-50" />,
-              label: "Archived",
+              label: t("sidebar.archived"),
               subId: "all",
             },
           ],
@@ -718,60 +722,60 @@ function getSidebarContent(
       ],
     },
     projects: {
-      title: "Projects",
+      title: t("sidebar.projects"),
       sections: [
         {
-          title: "Quick Actions",
+          title: t("sidebar.quickActions"),
           items: [
             {
               icon: <AddLarge size={16} className="text-neutral-50" />,
-              label: "New project",
+              label: t("sidebar.newProject"),
               subId: "new-project",
             },
             {
               icon: <Filter size={16} className="text-neutral-50" />,
-              label: "Filter projects",
+              label: t("sidebar.filterProjects"),
               subId: "all",
             },
           ],
         },
         {
-          title: "Active Projects",
+          title: t("sidebar.activeProjectsSection"),
           items: [
             {
               icon: <FolderOpen size={16} className="text-neutral-50" />,
-              label: "Web Application",
+              label: t("sidebar.webApplication"),
               subId: "web-application",
               hasDropdown: true,
               children: [
-                { label: "Frontend development", subId: "proj-web-frontend", icon: null },
-                { label: "API integration", subId: "proj-web-api", icon: null },
-                { label: "Testing & QA", subId: "proj-web-qa", icon: null },
+                { label: t("sidebar.frontendDevelopment"), subId: "proj-web-frontend", icon: null },
+                { label: t("sidebar.apiIntegration"), subId: "proj-web-api", icon: null },
+                { label: t("sidebar.testingQa"), subId: "proj-web-qa", icon: null },
               ],
             },
             {
               icon: <FolderOpen size={16} className="text-neutral-50" />,
-              label: "Mobile App",
+              label: t("sidebar.mobileApp"),
               subId: "mobile-app",
               hasDropdown: true,
               children: [
-                { label: "UI/UX design", subId: "proj-mobile-design", icon: null },
-                { label: "Native development", subId: "proj-mobile-native", icon: null },
+                { label: t("sidebar.uiUxDesign"), subId: "proj-mobile-design", icon: null },
+                { label: t("sidebar.nativeDevelopment"), subId: "proj-mobile-native", icon: null },
               ],
             },
           ],
         },
         {
-          title: "Other",
+          title: t("sidebar.other"),
           items: [
             {
               icon: <CheckmarkOutline size={16} className="text-neutral-50" />,
-              label: "Completed",
+              label: t("sidebar.projCompleted"),
               subId: "proj-completed",
             },
             {
               icon: <Archive size={16} className="text-neutral-50" />,
-              label: "Archived",
+              label: t("sidebar.projArchived"),
               subId: "proj-archived",
             },
           ],
@@ -779,56 +783,56 @@ function getSidebarContent(
       ],
     },
     calendar: {
-      title: "Calendar",
+      title: t("sidebar.calendar"),
       sections: [
         {
-          title: "Views",
+          title: t("sidebar.views"),
           items: [
             {
               icon: <View size={16} className="text-neutral-50" />,
-              label: "Month view",
+              label: t("sidebar.monthView"),
               subId: "month",
             },
             {
               icon: <CalendarIcon size={16} className="text-neutral-50" />,
-              label: "Week view",
+              label: t("sidebar.weekView"),
               subId: "week",
             },
             {
               icon: <Time size={16} className="text-neutral-50" />,
-              label: "Day view",
+              label: t("sidebar.dayView"),
               subId: "day",
             },
           ],
         },
         {
-          title: "Events",
+          title: t("sidebar.events"),
           items: [
             {
               icon: <Time size={16} className="text-neutral-50" />,
-              label: "Today's events",
+              label: t("sidebar.todaysEvents"),
               subId: "today",
               hasDropdown: true,
               children: eventChildren,
             },
             {
               icon: <CalendarIcon size={16} className="text-neutral-50" />,
-              label: "Upcoming events",
+              label: t("sidebar.upcomingEvents"),
               subId: "upcoming",
             },
           ],
         },
         {
-          title: "Quick Actions",
+          title: t("sidebar.quickActionsCalendar"),
           items: [
             {
               icon: <AddLarge size={16} className="text-neutral-50" />,
-              label: "New event",
+              label: t("sidebar.newEvent"),
               subId: "new-event",
             },
             {
               icon: <Share size={16} className="text-neutral-50" />,
-              label: "Share calendar",
+              label: t("sidebar.shareCalendar"),
               subId: "share-calendar",
             },
           ],
@@ -836,23 +840,23 @@ function getSidebarContent(
       ],
     },
     teams: {
-      title: "Teams",
+      title: t("sidebar.teams"),
       sections: [
         {
-          title: "My Teams",
+          title: t("sidebar.myTeams"),
           items: teamNavItems,
         },
         {
-          title: "Quick Actions",
+          title: t("sidebar.quickActionsTeams"),
           items: [
             {
               icon: <AddLarge size={16} className="text-neutral-50" />,
-              label: "Invite member",
+              label: t("sidebar.inviteMember"),
               subId: "invite",
             },
             {
               icon: <UserMultiple size={16} className="text-neutral-50" />,
-              label: "Manage teams",
+              label: t("sidebar.manageTeams"),
               subId: "manage",
             },
           ],
@@ -860,46 +864,46 @@ function getSidebarContent(
       ],
     },
     analytics: {
-      title: "Analytics",
+      title: t("sidebar.analytics"),
       sections: [
         {
-          title: "Reports",
+          title: t("sidebar.reports"),
           items: [
             {
               icon: <Report size={16} className="text-neutral-50" />,
-              label: "Performance report",
+              label: t("sidebar.performanceReport"),
               subId: "performance",
             },
             {
               icon: <ChartBar size={16} className="text-neutral-50" />,
-              label: "Task completion",
+              label: t("sidebar.taskCompletionAnalytics"),
               subId: "task-completion",
             },
             {
               icon: <Analytics size={16} className="text-neutral-50" />,
-              label: "Team productivity",
+              label: t("sidebar.teamProductivityAnalytics"),
               subId: "productivity",
             },
           ],
         },
         {
-          title: "Insights",
+          title: t("sidebar.insights"),
           items: [
             {
               icon: <StarFilled size={16} className="text-neutral-50" />,
-              label: "Key metrics",
+              label: t("sidebar.keyMetrics"),
               subId: "key-metrics",
               hasDropdown: true,
               children: [
-                { label: "Task completion metrics", subId: "analytics-task-metrics", icon: null },
-                { label: "Time tracking analysis", subId: "analytics-time-tracking", icon: null },
-                { label: "Team efficiency report", subId: "analytics-team-efficiency", icon: null },
-                { label: "Performance benchmarks", subId: "analytics-benchmarks", icon: null },
+                { label: t("sidebar.taskCompletionMetrics"), subId: "analytics-task-metrics", icon: null },
+                { label: t("sidebar.timeTrackingAnalysis"), subId: "analytics-time-tracking", icon: null },
+                { label: t("sidebar.teamEfficiencyReport"), subId: "analytics-team-efficiency", icon: null },
+                { label: t("sidebar.performanceBenchmarks"), subId: "analytics-benchmarks", icon: null },
               ],
             },
             {
               icon: <Report size={16} className="text-neutral-50" />,
-              label: "Top performers",
+              label: t("sidebar.topPerformers"),
               subId: "top-performers",
             },
           ],
@@ -907,46 +911,46 @@ function getSidebarContent(
       ],
     },
     files: {
-      title: "Files",
+      title: t("sidebar.files"),
       sections: [
         {
-          title: "Quick Actions",
+          title: t("sidebar.quickActionsFiles"),
           items: [
             {
               icon: <CloudUpload size={16} className="text-neutral-50" />,
-              label: "Upload file",
+              label: t("sidebar.uploadFile"),
               subId: "upload",
             },
             {
               icon: <AddLarge size={16} className="text-neutral-50" />,
-              label: "New folder",
+              label: t("sidebar.newFolder"),
               subId: "new-folder",
             },
           ],
         },
         {
-          title: "Browse",
+          title: t("sidebar.browse"),
           items: [
             {
               icon: <DocumentAdd size={16} className="text-neutral-50" />,
-              label: "Recent documents",
+              label: t("sidebar.recentDocuments"),
               subId: "recent",
               hasDropdown: true,
               children: fileChildren,
             },
             {
               icon: <Share size={16} className="text-neutral-50" />,
-              label: "Shared with me",
+              label: t("sidebar.sharedWithMe"),
               subId: "shared",
             },
             {
               icon: <Folder size={16} className="text-neutral-50" />,
-              label: "All folders",
+              label: t("sidebar.allFolders"),
               subId: "folders",
             },
             {
               icon: <Archive size={16} className="text-neutral-50" />,
-              label: "Archived files",
+              label: t("sidebar.archivedFiles"),
               subId: "archived",
             },
           ],
@@ -954,19 +958,19 @@ function getSidebarContent(
       ],
     },
     billing: {
-      title: "Billing",
+      title: t("sidebar.billing"),
       sections: [
         {
-          title: "Subscription",
+          title: t("sidebar.subscription"),
           items: [
             {
               icon: <Report size={16} className="text-neutral-50" />,
-              label: "Plan & subscription",
+              label: t("sidebar.planSubscription"),
               subId: "plan",
             },
             {
               icon: <Time size={16} className="text-neutral-50" />,
-              label: "Payment history",
+              label: t("sidebar.paymentHistory"),
               subId: "history",
             },
           ],
@@ -974,19 +978,19 @@ function getSidebarContent(
       ],
     },
     profile: {
-      title: "My Profile",
+      title: t("sidebar.myProfile"),
       sections: [
         {
-          title: "Account",
+          title: t("sidebar.account"),
           items: [
             {
               icon: <User size={16} className="text-neutral-50" />,
-              label: "Profile details",
+              label: t("sidebar.profileDetails"),
               subId: "details",
             },
             {
               icon: <Security size={16} className="text-neutral-50" />,
-              label: "Security",
+              label: t("sidebar.security"),
               subId: "security",
             },
           ],
@@ -994,80 +998,80 @@ function getSidebarContent(
       ],
     },
     settings: {
-      title: "Settings",
+      title: t("sidebar.settings"),
       sections: [
         {
-          title: "Account",
+          title: t("sidebar.accountSettings"),
           items: [
             {
               icon: <User size={16} className="text-neutral-50" />,
-              label: "Profile settings",
+              label: t("sidebar.profileSettings"),
               subId: "profile",
             },
             {
               icon: <Security size={16} className="text-neutral-50" />,
-              label: "Security",
+              label: t("sidebar.security"),
               subId: "security",
             },
             {
               icon: <Notification size={16} className="text-neutral-50" />,
-              label: "Notifications",
+              label: t("sidebar.notifications"),
               subId: "notifications",
             },
           ],
         },
         {
-          title: "Workspace",
+          title: t("sidebar.workspace"),
           items: [
             {
               icon: <Settings size={16} className="text-neutral-50" />,
-              label: "Preferences",
+              label: t("sidebar.preferences"),
               subId: "workspace",
               hasDropdown: true,
               children: [
-                { label: "Theme & Appearance", subId: "settings-theme", icon: null },
-                { label: "Time zone & Date", subId: "settings-timezone", icon: null },
-                { label: "Default notifications", subId: "settings-notif-defaults", icon: null },
+                { label: t("sidebar.themeAppearance"), subId: "settings-theme", icon: null },
+                { label: t("sidebar.timezoneDate"), subId: "settings-timezone", icon: null },
+                { label: t("sidebar.defaultNotifications"), subId: "settings-notif-defaults", icon: null },
               ],
             },
             {
               icon: <UserMultiple size={16} className="text-neutral-50" />,
-              label: "Members & Permissions",
+              label: t("sidebar.membersPermissions"),
               subId: "settings-members",
             },
             {
               icon: <Report size={16} className="text-neutral-50" />,
-              label: "Billing & Plan",
+              label: t("sidebar.billingPlan"),
               subId: "settings-billing",
             },
             {
               icon: <Integration size={16} className="text-neutral-50" />,
-              label: "Integrations",
+              label: t("sidebar.integrations"),
               subId: "integrations",
             },
           ],
         },
         {
-          title: "Advanced",
+          title: t("sidebar.advanced"),
           items: [
             {
               icon: <ChartBar size={16} className="text-neutral-50" />,
-              label: "API & Webhooks",
+              label: t("sidebar.apiWebhooks"),
               subId: "settings-api",
             },
             {
               icon: <View size={16} className="text-neutral-50" />,
-              label: "Audit Log",
+              label: t("sidebar.auditLog"),
               subId: "settings-audit",
             },
             {
               icon: <Archive size={16} className="text-neutral-50" />,
-              label: "Data & Export",
+              label: t("sidebar.dataExport"),
               subId: "settings-data",
             },
             {
               icon: <Flag size={16} className="text-neutral-50" />,
-              label: "Danger Zone",
+              label: t("sidebar.dangerZone"),
               subId: "settings-danger",
             },
           ],
@@ -1116,38 +1120,39 @@ function IconNavigation({
   onAvatarClick: () => void;
   showProfile: boolean;
 }) {
+  const { t } = useLang();
 
   const navItems = [
     {
       id: "dashboard",
       icon: <Dashboard size={16} />,
-      label: "Dashboard",
+      label: t("sidebar.dashboard"),
     },
-    { id: "tasks", icon: <Task size={16} />, label: "Tasks" },
+    { id: "tasks", icon: <Task size={16} />, label: t("sidebar.tasks") },
     {
       id: "projects",
       icon: <Folder size={16} />,
-      label: "Projects",
+      label: t("sidebar.projects"),
     },
     {
       id: "calendar",
       icon: <Calendar size={16} />,
-      label: "Calendar",
+      label: t("sidebar.calendar"),
     },
     {
       id: "teams",
       icon: <UserMultiple size={16} />,
-      label: "Teams",
+      label: t("sidebar.teams"),
     },
     {
       id: "analytics",
       icon: <Analytics size={16} />,
-      label: "Analytics",
+      label: t("sidebar.analytics"),
     },
     {
       id: "files",
       icon: <DocumentAdd size={16} />,
-      label: "Files",
+      label: t("sidebar.files"),
     },
   ];
 
@@ -1278,6 +1283,7 @@ function DetailSidebar({
   activeSection: string;
 }) {
   const { navigate } = useNavigation();
+  const { t } = useLang();
   const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set());
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [teams, setTeams] = useState<api.Team[]>([]);
@@ -1296,7 +1302,7 @@ function DetailSidebar({
     api.getFiles().then(({ files }) => setRecentFiles(files.filter((f) => !f.archived).slice(0, 3))).catch(() => {});
   }, []);
 
-  const content = getSidebarContent(activeSection, teams, tasks, todayEvents, recentFiles);
+  const content = getSidebarContent(t, activeSection, teams, tasks, todayEvents, recentFiles);
 
   const toggleExpanded = (itemKey: string) => {
     const newExpanded = new Set(expandedItems);
@@ -1415,6 +1421,7 @@ export function Frame760({
   activeSection: string;
   onSectionChange: (section: string) => void;
 }) {
+  const { t } = useLang();
   return (
     <TwoLevelSidebar
       activeSection={activeSection}

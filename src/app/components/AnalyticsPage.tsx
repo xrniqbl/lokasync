@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { toast } from "sonner";
 import { useNavigation } from "./NavigationContext";
+import { useLang } from "../i18n";
 import * as api from "../utils/api";
 import type { AnalyticsMetrics } from "../utils/api";
 import {
@@ -38,19 +39,8 @@ type AnalyticsView =
   | "analytics-team-efficiency"
   | "analytics-benchmarks";
 
-const viewLabels: Record<AnalyticsView, string> = {
-  performance: "Performance Report",
-  "task-completion": "Task Completion",
-  productivity: "Team Productivity",
-  "key-metrics": "Key Metrics",
-  "top-performers": "Top Performers",
-  "analytics-task-metrics": "Task Completion Metrics",
-  "analytics-time-tracking": "Time Tracking Analysis",
-  "analytics-team-efficiency": "Team Efficiency Report",
-  "analytics-benchmarks": "Performance Benchmarks",
-};
-
 export function AnalyticsPage() {
+  const { t } = useLang();
   const { subSection } = useNavigation();
   const [period, setPeriod] = useState("Last 8 weeks");
   const [activeView, setActiveView] = useState<AnalyticsView>("performance");
@@ -58,6 +48,19 @@ export function AnalyticsPage() {
   const [livePerformers, setLivePerformers] = useState<{ name: string; initials: string; tasks: number; rate: number }[]>([]);
   const [liveMetrics, setLiveMetrics] = useState<{ total: number; completed: number; inProgress: number; todo: number } | null>(null);
   const [analyticsMetrics, setAnalyticsMetrics] = useState<AnalyticsMetrics | null>(null);
+
+  const viewLabels: Record<AnalyticsView, string> = {
+    performance: t("analytics.performance"),
+    "task-completion": t("analytics.taskCompletion"),
+    productivity: t("analytics.productivity"),
+    "key-metrics": t("analytics.keyMetrics"),
+    "top-performers": t("analytics.topPerformers"),
+    "analytics-task-metrics": t("analytics.taskMetricsTitle"),
+    "analytics-time-tracking": t("analytics.timeTracking"),
+    "analytics-team-efficiency": t("analytics.teamEfficiency"),
+    "analytics-benchmarks": t("analytics.benchmarks"),
+  };
+
   const periodKey = period === "Last 8 weeks" ? "8w" : period === "Last 3 months" ? "3m" : "qtr";
   const now = new Date();
   const q = Math.floor(now.getMonth() / 3) + 1;
@@ -291,7 +294,7 @@ export function AnalyticsPage() {
         <div className="flex items-center justify-between gap-3 flex-wrap">
           <div>
             <h1 className="text-neutral-50 font-['Lexend:SemiBold',_sans-serif] text-[18px] lg:text-[22px] leading-tight mb-1">{viewLabels[activeView]}</h1>
-            <p className="text-neutral-500 text-[12px] lg:text-[13px]">Performance overview · Q{q} {now.getFullYear()}</p>
+            <p className="text-neutral-500 text-[12px] lg:text-[13px]">{t("analytics.performanceOverview")} · Q{q} {now.getFullYear()}</p>
           </div>
           <div className="flex items-center gap-2">
             <select
@@ -299,11 +302,11 @@ export function AnalyticsPage() {
               onChange={(e) => setPeriod(e.target.value)}
               className="bg-neutral-800 border border-neutral-700 text-neutral-300 text-[12px] lg:text-[13px] px-2 lg:px-3 py-2 rounded-lg appearance-none cursor-pointer outline-none"
             >
-              <option>Last 8 weeks</option>
-              <option>Last 3 months</option>
-              <option>This quarter</option>
+              <option value="Last 8 weeks">{t("analytics.last8Weeks")}</option>
+              <option value="Last 3 months">{t("analytics.last3Months")}</option>
+              <option value="This quarter">{t("analytics.thisQuarter")}</option>
             </select>
-            <button onClick={handleExport} className="border border-neutral-800 hover:bg-neutral-800 text-neutral-400 hover:text-neutral-200 text-[12px] lg:text-[13px] px-3 py-2 rounded-lg transition-colors">Export</button>
+            <button onClick={handleExport} className="border border-neutral-800 hover:bg-neutral-800 text-neutral-400 hover:text-neutral-200 text-[12px] lg:text-[13px] px-3 py-2 rounded-lg transition-colors">{t("analytics.export")}</button>
           </div>
         </div>
 
@@ -323,24 +326,24 @@ export function AnalyticsPage() {
             {liveMetrics ? (
               <>
                 <div className="bg-[#141414] border border-neutral-800/60 rounded-xl p-4 lg:p-5">
-                  <div className="text-neutral-400 text-[11px] lg:text-[12px] mb-3">Total Tasks</div>
+                  <div className="text-neutral-400 text-[11px] lg:text-[12px] mb-3">{t("analytics.totalTasks")}</div>
                   <div className="text-neutral-50 text-[20px] lg:text-[24px] font-['Lexend:SemiBold',_sans-serif] leading-none mb-1.5">{liveMetrics.total}</div>
-                  <span className="text-[11px] text-emerald-400">{liveMetrics.inProgress} active</span>
+                  <span className="text-[11px] text-emerald-400">{liveMetrics.inProgress} {t("analytics.active")}</span>
                 </div>
                 <div className="bg-[#141414] border border-neutral-800/60 rounded-xl p-4 lg:p-5">
-                  <div className="text-neutral-400 text-[11px] lg:text-[12px] mb-3">Completion Rate</div>
+                  <div className="text-neutral-400 text-[11px] lg:text-[12px] mb-3">{t("analytics.completionRate")}</div>
                   <div className="text-neutral-50 text-[20px] lg:text-[24px] font-['Lexend:SemiBold',_sans-serif] leading-none mb-1.5">{liveMetrics.total > 0 ? Math.round((liveMetrics.completed / liveMetrics.total) * 100) : 0}%</div>
-                  <span className="text-[11px] text-emerald-400">{liveMetrics.completed} completed</span>
+                  <span className="text-[11px] text-emerald-400">{liveMetrics.completed} {t("analytics.completed")}</span>
                 </div>
                 <div className="bg-[#141414] border border-neutral-800/60 rounded-xl p-4 lg:p-5">
-                  <div className="text-neutral-400 text-[11px] lg:text-[12px] mb-3">In Progress</div>
+                  <div className="text-neutral-400 text-[11px] lg:text-[12px] mb-3">{t("analytics.inProgress")}</div>
                   <div className="text-neutral-50 text-[20px] lg:text-[24px] font-['Lexend:SemiBold',_sans-serif] leading-none mb-1.5">{liveMetrics.inProgress}</div>
-                  <span className="text-[11px] text-neutral-500">{liveMetrics.todo} still todo</span>
+                  <span className="text-[11px] text-neutral-500">{liveMetrics.todo} {t("analytics.todo")}</span>
                 </div>
                 <div className="bg-[#141414] border border-neutral-800/60 rounded-xl p-4 lg:p-5">
-                  <div className="text-neutral-400 text-[11px] lg:text-[12px] mb-3">Projects</div>
+                  <div className="text-neutral-400 text-[11px] lg:text-[12px] mb-3">{t("analytics.projects")}</div>
                   <div className="text-neutral-50 text-[20px] lg:text-[24px] font-['Lexend:SemiBold',_sans-serif] leading-none mb-1.5">{liveDistribution.length}</div>
-                  <span className="text-[11px] text-neutral-500">active projects</span>
+                  <span className="text-[11px] text-neutral-500">{t("analytics.active")} {t("analytics.projects").toLowerCase()}</span>
                 </div>
               </>
             ) : [0, 1, 2, 3].map((i) => (
@@ -355,12 +358,12 @@ export function AnalyticsPage() {
             <div className="lg:col-span-2 bg-[#141414] border border-neutral-800/60 rounded-xl p-4 lg:p-5">
               <div className="flex items-center justify-between mb-4 lg:mb-5 flex-wrap gap-2">
                 <div>
-                  <div className="text-neutral-50 text-[13px] lg:text-[14px] font-['Lexend:SemiBold',_sans-serif]">Task Completion</div>
-                  <div className="text-neutral-500 text-[11px] lg:text-[12px] mt-0.5">Actual vs. target · {period}</div>
+                  <div className="text-neutral-50 text-[13px] lg:text-[14px] font-['Lexend:SemiBold',_sans-serif]">{t("analytics.taskCompletion")}</div>
+                  <div className="text-neutral-500 text-[11px] lg:text-[12px] mt-0.5">{t("analytics.actualVsTarget")} · {period === "Last 8 weeks" ? t("analytics.last8Weeks") : period === "Last 3 months" ? t("analytics.last3Months") : t("analytics.thisQuarter")}</div>
                 </div>
                 <div className="flex items-center gap-3 lg:gap-4">
-                  <div className="flex items-center gap-1.5"><div className="w-2 h-2 rounded-full bg-indigo-400" /><span className="text-neutral-500 text-[11px]">Actual</span></div>
-                  <div className="flex items-center gap-1.5"><div className="w-2 h-[2px] bg-neutral-600" /><span className="text-neutral-500 text-[11px]">Target</span></div>
+                  <div className="flex items-center gap-1.5"><div className="w-2 h-2 rounded-full bg-indigo-400" /><span className="text-neutral-500 text-[11px]">{t("analytics.actual")}</span></div>
+                  <div className="flex items-center gap-1.5"><div className="w-2 h-[2px] bg-neutral-600" /><span className="text-neutral-500 text-[11px]">{t("analytics.target")}</span></div>
                 </div>
               </div>
               <ResponsiveContainer width="100%" height={180}>
@@ -369,15 +372,15 @@ export function AnalyticsPage() {
                   <XAxis dataKey="week" tick={{ fill: "#525252", fontSize: 10 }} axisLine={false} tickLine={false} />
                   <YAxis tick={{ fill: "#525252", fontSize: 10 }} axisLine={false} tickLine={false} width={24} />
                   <Tooltip content={<CustomTooltip />} />
-                  <Bar dataKey="completed" name="Actual" fill="#818cf8" radius={[3, 3, 0, 0]} />
-                  <Bar dataKey="target" name="Target" fill="#262626" radius={[3, 3, 0, 0]} />
+                  <Bar dataKey="completed" name={t("analytics.actual")} fill="#818cf8" radius={[3, 3, 0, 0]} />
+                  <Bar dataKey="target" name={t("analytics.target")} fill="#262626" radius={[3, 3, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             </div>
             <div className="bg-[#141414] border border-neutral-800/60 rounded-xl p-4 lg:p-5">
               <div className="mb-4">
-                <div className="text-neutral-50 text-[13px] lg:text-[14px] font-['Lexend:SemiBold',_sans-serif]">Task Distribution</div>
-                <div className="text-neutral-500 text-[11px] lg:text-[12px] mt-0.5">By team</div>
+                <div className="text-neutral-50 text-[13px] lg:text-[14px] font-['Lexend:SemiBold',_sans-serif]">{t("analytics.taskDistribution")}</div>
+                <div className="text-neutral-500 text-[11px] lg:text-[12px] mt-0.5">{t("analytics.byTeam")}</div>
               </div>
               <div className="flex justify-center mb-3">
                 <ResponsiveContainer width={130} height={130}>
@@ -409,11 +412,11 @@ export function AnalyticsPage() {
             <div className="lg:col-span-2 bg-[#141414] border border-neutral-800/60 rounded-xl p-4 lg:p-5">
               <div className="flex items-center justify-between mb-4 lg:mb-5 flex-wrap gap-2">
                 <div>
-                  <div className="text-neutral-50 text-[13px] lg:text-[14px] font-['Lexend:SemiBold',_sans-serif]">Team Productivity</div>
-                  <div className="text-neutral-500 text-[11px] lg:text-[12px] mt-0.5">Efficiency score · {period}</div>
+                  <div className="text-neutral-50 text-[13px] lg:text-[14px] font-['Lexend:SemiBold',_sans-serif]">{t("analytics.productivity")}</div>
+                  <div className="text-neutral-500 text-[11px] lg:text-[12px] mt-0.5">{t("analytics.efficiencyScore")} · {period === "Last 8 weeks" ? t("analytics.last8Weeks") : period === "Last 3 months" ? t("analytics.last3Months") : t("analytics.thisQuarter")}</div>
                 </div>
                 <div className="flex items-center gap-3">
-                  {[{ color: "#818cf8", label: "Dev" }, { color: "#a78bfa", label: "Design" }, { color: "#34d399", label: "QA" }].map((l) => (
+                  {[{ color: "#818cf8", label: t("analytics.dev") }, { color: "#a78bfa", label: t("analytics.design") }, { color: "#34d399", label: t("analytics.qa") }].map((l) => (
                     <div key={l.label} className="flex items-center gap-1.5">
                       <div className="w-2 h-2 rounded-full" style={{ backgroundColor: l.color }} />
                       <span className="text-neutral-500 text-[11px]">{l.label}</span>
@@ -427,14 +430,14 @@ export function AnalyticsPage() {
                   <XAxis dataKey="month" tick={{ fill: "#525252", fontSize: 10 }} axisLine={false} tickLine={false} />
                   <YAxis domain={[0, 100]} tick={{ fill: "#525252", fontSize: 10 }} axisLine={false} tickLine={false} width={24} />
                   <Tooltip content={<CustomTooltip />} />
-                  <Line type="monotone" dataKey="dev" name="Dev" stroke="#818cf8" strokeWidth={2} dot={false} activeDot={{ r: 3 }} />
-                  <Line type="monotone" dataKey="design" name="Design" stroke="#a78bfa" strokeWidth={2} dot={false} activeDot={{ r: 3 }} />
-                  <Line type="monotone" dataKey="qa" name="QA" stroke="#34d399" strokeWidth={2} dot={false} activeDot={{ r: 3 }} />
+                  <Line type="monotone" dataKey="dev" name={t("analytics.dev")} stroke="#818cf8" strokeWidth={2} dot={false} activeDot={{ r: 3 }} />
+                  <Line type="monotone" dataKey="design" name={t("analytics.design")} stroke="#a78bfa" strokeWidth={2} dot={false} activeDot={{ r: 3 }} />
+                  <Line type="monotone" dataKey="qa" name={t("analytics.qa")} stroke="#34d399" strokeWidth={2} dot={false} activeDot={{ r: 3 }} />
                 </LineChart>
               </ResponsiveContainer>
             </div>
             <div className="bg-[#141414] border border-neutral-800/60 rounded-xl p-4 lg:p-5">
-              <div className="text-neutral-50 text-[13px] lg:text-[14px] font-['Lexend:SemiBold',_sans-serif] mb-4">Efficiency Scores</div>
+              <div className="text-neutral-50 text-[13px] lg:text-[14px] font-['Lexend:SemiBold',_sans-serif] mb-4">{t("analytics.efficiencyScores")}</div>
               <div className="space-y-3">
                 {(analyticsMetrics?.efficiencyScores ?? []).map((t) => (
                   <div key={t.team}>
@@ -456,7 +459,7 @@ export function AnalyticsPage() {
         {(activeView === "performance" || activeView === "top-performers") && (
           <div className={activeView === "top-performers" ? "" : "grid grid-cols-1 lg:grid-cols-3 gap-4"}>
             <div className={`bg-[#141414] border border-neutral-800/60 rounded-xl p-4 lg:p-5 ${activeView === "top-performers" ? "" : ""}`}>
-              <div className="text-neutral-50 text-[13px] lg:text-[14px] font-['Lexend:SemiBold',_sans-serif] mb-4">Top Performers</div>
+              <div className="text-neutral-50 text-[13px] lg:text-[14px] font-['Lexend:SemiBold',_sans-serif] mb-4">{t("analytics.topPerformers")}</div>
               <div className="space-y-3">
                 {livePerformers.map((p, i) => (
                   <div key={p.initials} className="flex items-center gap-3">
@@ -487,16 +490,16 @@ export function AnalyticsPage() {
             completed: i === arr.length - 1 && completed > 0 ? Math.min(completed, 40) : d.completed,
           }));
           const taskMetricCards = [
-            { label: "Completion Rate", value: `${completionRate}%`, change: analyticsMetrics?.taskMetrics?.completionChange ?? "", note: "vs last period" },
-            { label: "Avg. Cycle Time", value: analyticsMetrics?.taskMetrics?.avgCycleTime ?? "—", change: analyticsMetrics?.taskMetrics?.cycleChange ?? "", note: "vs last period" },
-            { label: "Tasks Closed", value: `${completed}`, change: "", note: "this quarter" },
-            { label: "Overdue Tasks", value: `${todo}`, change: analyticsMetrics?.taskMetrics?.overdueChange ?? "", note: "vs last period" },
+            { label: t("analytics.completionRate"), value: `${completionRate}%`, change: analyticsMetrics?.taskMetrics?.completionChange ?? "", note: t("analytics.vsLastPeriod") },
+            { label: t("analytics.avgCycleTime"), value: analyticsMetrics?.taskMetrics?.avgCycleTime ?? "—", change: analyticsMetrics?.taskMetrics?.cycleChange ?? "", note: t("analytics.vsLastPeriod") },
+            { label: t("analytics.tasksClosed"), value: `${completed}`, change: "", note: t("analytics.thisQuarterLabel") },
+            { label: t("analytics.overdueTasks"), value: `${todo}`, change: analyticsMetrics?.taskMetrics?.overdueChange ?? "", note: t("analytics.vsLastPeriod") },
           ];
           const statusRows = [
-            { label: "Completed", count: completed, pct: total > 0 ? Math.round((completed / total) * 100) : 0 },
-            { label: "In Progress", count: inProgress, pct: total > 0 ? Math.round((inProgress / total) * 100) : 0 },
-            { label: "In Review", count: review, pct: total > 0 ? Math.round((review / total) * 100) : 0 },
-            { label: "Backlog", count: todo, pct: total > 0 ? Math.round((todo / total) * 100) : 0 },
+            { label: t("analytics.completed"), count: completed, pct: total > 0 ? Math.round((completed / total) * 100) : 0 },
+            { label: t("analytics.inProgress"), count: inProgress, pct: total > 0 ? Math.round((inProgress / total) * 100) : 0 },
+            { label: t("analytics.inReview"), count: review, pct: total > 0 ? Math.round((review / total) * 100) : 0 },
+            { label: t("analytics.backlog"), count: todo, pct: total > 0 ? Math.round((todo / total) * 100) : 0 },
           ];
           return (
             <div className="space-y-4">
@@ -510,7 +513,7 @@ export function AnalyticsPage() {
                 ))}
               </div>
               <div className="bg-[#141414] border border-neutral-800/60 rounded-xl p-4 lg:p-5">
-                <div className="text-neutral-50 text-[13px] font-['Lexend:SemiBold',_sans-serif] mb-4">Weekly Completion vs Target</div>
+                <div className="text-neutral-50 text-[13px] font-['Lexend:SemiBold',_sans-serif] mb-4">{t("analytics.weeklyCompletionVsTarget")}</div>
                 <div className="flex items-end gap-2 h-36">
                   {completionData.map((d) => (
                     <div key={d.week} className="flex-1 flex flex-col items-center gap-1">
@@ -523,12 +526,12 @@ export function AnalyticsPage() {
                   ))}
                 </div>
                 <div className="flex items-center gap-4 mt-3">
-                  <div className="flex items-center gap-1.5"><div className="w-2 h-2 rounded-sm bg-indigo-400" /><span className="text-neutral-500 text-[11px]">Actual</span></div>
-                  <div className="flex items-center gap-1.5"><div className="w-2 h-2 rounded-sm bg-neutral-700" /><span className="text-neutral-500 text-[11px]">Target</span></div>
+                  <div className="flex items-center gap-1.5"><div className="w-2 h-2 rounded-sm bg-indigo-400" /><span className="text-neutral-500 text-[11px]">{t("analytics.actual")}</span></div>
+                  <div className="flex items-center gap-1.5"><div className="w-2 h-2 rounded-sm bg-neutral-700" /><span className="text-neutral-500 text-[11px]">{t("analytics.target")}</span></div>
                 </div>
               </div>
               <div className="bg-[#141414] border border-neutral-800/60 rounded-xl overflow-hidden">
-                <div className="px-4 py-3 border-b border-neutral-800/40 text-neutral-50 text-[13px] font-['Lexend:SemiBold',_sans-serif]">Task Status Breakdown</div>
+                <div className="px-4 py-3 border-b border-neutral-800/40 text-neutral-50 text-[13px] font-['Lexend:SemiBold',_sans-serif]">{t("analytics.taskStatusBreakdown")}</div>
                 <div className="divide-y divide-neutral-800/40">
                   {statusRows.map((s) => (
                     <div key={s.label} className="grid grid-cols-[1fr_60px_100px] gap-4 px-4 py-3 items-center">
@@ -553,10 +556,10 @@ export function AnalyticsPage() {
           <div className="space-y-4">
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
               {[
-                { label: "Avg. Hours/Day", value: analyticsMetrics ? `${analyticsMetrics.timeTracking.avgHoursPerDay}h` : "—", change: "", note: "per member" },
-                { label: "Billable Hours", value: analyticsMetrics ? analyticsMetrics.timeTracking.billableHours.toLocaleString() : "—", change: "", note: "this quarter" },
-                { label: "Overtime Rate", value: analyticsMetrics ? `${analyticsMetrics.timeTracking.overtimeRate}%` : "—", change: "", note: "vs last quarter" },
-                { label: "Focus Time", value: analyticsMetrics ? `${analyticsMetrics.timeTracking.focusTime}h` : "—", change: "", note: "per day avg" },
+                { label: t("analytics.avgHoursDay"), value: analyticsMetrics ? `${analyticsMetrics.timeTracking.avgHoursPerDay}h` : "—", change: "", note: t("analytics.perMember") },
+                { label: t("analytics.billableHours"), value: analyticsMetrics ? analyticsMetrics.timeTracking.billableHours.toLocaleString() : "—", change: "", note: t("analytics.thisQuarterLabel") },
+                { label: t("analytics.overtimeRate"), value: analyticsMetrics ? `${analyticsMetrics.timeTracking.overtimeRate}%` : "—", change: "", note: t("analytics.vsLastQuarter") },
+                { label: t("analytics.focusTime"), value: analyticsMetrics ? `${analyticsMetrics.timeTracking.focusTime}h` : "—", change: "", note: t("analytics.perDayAvg") },
               ].map((m) => (
                 <div key={m.label} className="bg-[#141414] border border-neutral-800/60 rounded-xl p-4">
                   <div className="text-neutral-500 text-[11px] mb-2">{m.label}</div>
@@ -567,7 +570,7 @@ export function AnalyticsPage() {
             </div>
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
               <div className="bg-[#141414] border border-neutral-800/60 rounded-xl p-4 lg:p-5">
-                <div className="text-neutral-50 text-[13px] font-['Lexend:SemiBold',_sans-serif] mb-4">Hours by Team</div>
+                <div className="text-neutral-50 text-[13px] font-['Lexend:SemiBold',_sans-serif] mb-4">{t("analytics.hoursByTeam")}</div>
                 <div className="space-y-4">
                   {(analyticsMetrics?.timeTracking.byTeam ?? []).map((t, _i, arr) => (
                     <div key={t.team}>
@@ -583,12 +586,19 @@ export function AnalyticsPage() {
                 </div>
               </div>
               <div className="bg-[#141414] border border-neutral-800/60 rounded-xl p-4 lg:p-5">
-                <div className="text-neutral-50 text-[13px] font-['Lexend:SemiBold',_sans-serif] mb-4">Time Allocation</div>
+                <div className="text-neutral-50 text-[13px] font-['Lexend:SemiBold',_sans-serif] mb-4">{t("analytics.timeAllocation")}</div>
                 <div className="space-y-3">
                   {(analyticsMetrics?.timeTracking.allocation ?? []).map((a) => (
                     <div key={a.label} className="flex items-center gap-3">
                       <div className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: a.color }} />
-                      <span className="text-neutral-400 text-[12px] flex-1">{a.label}</span>
+                      <span className="text-neutral-400 text-[12px] flex-1">
+                        {a.label === "Development" ? t("analytics.development")
+                          : a.label === "Design" ? t("analytics.design")
+                          : a.label === "QA & Testing" ? t("analytics.qaTesting")
+                          : a.label === "Meetings" ? t("analytics.meetings")
+                          : a.label === "Documentation" ? t("analytics.documentation")
+                          : a.label}
+                      </span>
                       <span className="text-neutral-300 text-[12px]">{a.pct}%</span>
                     </div>
                   ))}
@@ -603,10 +613,10 @@ export function AnalyticsPage() {
           <div className="space-y-4">
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
               {[
-                { label: "Overall Efficiency", value: analyticsMetrics ? `${analyticsMetrics.teamEfficiency.overall}%` : "—", change: "", note: "vs last quarter" },
-                { label: "Sprint Velocity", value: analyticsMetrics ? `${analyticsMetrics.teamEfficiency.sprintVelocity} pts` : "—", change: "", note: "per sprint" },
-                { label: "Blocked Time", value: analyticsMetrics ? `${analyticsMetrics.teamEfficiency.blockedTime}%` : "—", change: "", note: "reduction" },
-                { label: "Rework Rate", value: analyticsMetrics ? `${analyticsMetrics.teamEfficiency.reworkRate}%` : "—", change: "", note: "improvement" },
+                { label: t("analytics.overallEfficiency"), value: analyticsMetrics ? `${analyticsMetrics.teamEfficiency.overall}%` : "—", change: "", note: t("analytics.vsLastQuarter") },
+                { label: t("analytics.sprintVelocity"), value: analyticsMetrics ? `${analyticsMetrics.teamEfficiency.sprintVelocity} pts` : "—", change: "", note: t("analytics.perSprint") },
+                { label: t("analytics.blockedTime"), value: analyticsMetrics ? `${analyticsMetrics.teamEfficiency.blockedTime}%` : "—", change: "", note: t("analytics.reduction") },
+                { label: t("analytics.reworkRate"), value: analyticsMetrics ? `${analyticsMetrics.teamEfficiency.reworkRate}%` : "—", change: "", note: t("analytics.improvement") },
               ].map((m) => (
                 <div key={m.label} className="bg-[#141414] border border-neutral-800/60 rounded-xl p-4">
                   <div className="text-neutral-500 text-[11px] mb-2">{m.label}</div>
@@ -616,15 +626,15 @@ export function AnalyticsPage() {
               ))}
             </div>
             <div className="bg-[#141414] border border-neutral-800/60 rounded-xl p-4 lg:p-5">
-              <div className="text-neutral-50 text-[13px] font-['Lexend:SemiBold',_sans-serif] mb-5">Team Efficiency Scores</div>
+              <div className="text-neutral-50 text-[13px] font-['Lexend:SemiBold',_sans-serif] mb-5">{t("analytics.teamEfficiencyScores")}</div>
               <div className="space-y-5">
                 {(analyticsMetrics?.teamEfficiency.byTeam ?? []).map((t) => (
                   <div key={t.team}>
                     <div className="flex items-center justify-between mb-2">
                       <span className="text-neutral-300 text-[13px]">{t.team}</span>
                       <div className="flex items-center gap-4 text-[11px]">
-                        <span className="text-neutral-600">Velocity: <span className="text-neutral-400">{t.velocity} pts</span></span>
-                        <span className="text-neutral-600">Blocked: <span className="text-neutral-400">{t.blocked}%</span></span>
+                        <span className="text-neutral-600">{t("analytics.velocity")}: <span className="text-neutral-400">{t.velocity} pts</span></span>
+                        <span className="text-neutral-600">{t("analytics.blocked")}: <span className="text-neutral-400">{t.blocked}%</span></span>
                         <span style={{ color: t.color }} className="font-['Lexend:SemiBold',_sans-serif]">{t.score}%</span>
                       </div>
                     </div>
@@ -636,14 +646,14 @@ export function AnalyticsPage() {
               </div>
             </div>
             <div className="bg-[#141414] border border-neutral-800/60 rounded-xl overflow-hidden">
-              <div className="px-4 py-3 border-b border-neutral-800/40 text-neutral-50 text-[13px] font-['Lexend:SemiBold',_sans-serif]">Sprint Performance History</div>
+              <div className="px-4 py-3 border-b border-neutral-800/40 text-neutral-50 text-[13px] font-['Lexend:SemiBold',_sans-serif]">{t("analytics.sprintPerformanceHistory")}</div>
               <div className="divide-y divide-neutral-800/40">
                 {(analyticsMetrics?.teamEfficiency.sprintHistory ?? []).map((s) => (
                   <div key={s.sprint} className="grid grid-cols-[1fr_80px_80px_80px] gap-4 px-4 py-3 text-[12px]">
                     <span className="text-neutral-300">{s.sprint}</span>
                     <span className="text-neutral-50">{s.velocity} pts</span>
                     <span className="text-neutral-500">{s.done}/{s.goal}</span>
-                    <span className={s.hit ? "text-emerald-400" : "text-red-400"}>{s.hit ? "Goal met" : "Missed"}</span>
+                    <span className={s.hit ? "text-emerald-400" : "text-red-400"}>{s.hit ? t("analytics.goalMet") : t("analytics.missed")}</span>
                   </div>
                 ))}
               </div>
@@ -656,10 +666,10 @@ export function AnalyticsPage() {
           <div className="space-y-4">
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
               {[
-                { label: "Industry Rank", value: analyticsMetrics?.benchmarks.industryRank ?? "—", change: "", note: "this quarter" },
-                { label: "On-time Delivery", value: analyticsMetrics ? `${analyticsMetrics.benchmarks.onTimeDelivery}%` : "—", change: "", note: "vs baseline" },
-                { label: "Quality Score", value: analyticsMetrics ? `${analyticsMetrics.benchmarks.qualityScore}/10` : "—", change: "", note: "vs last quarter" },
-                { label: "Customer NPS", value: analyticsMetrics ? `${analyticsMetrics.benchmarks.nps}` : "—", change: "", note: "vs last quarter" },
+                { label: t("analytics.industryRank"), value: analyticsMetrics?.benchmarks.industryRank ?? "—", change: "", note: t("analytics.thisQuarterLabel") },
+                { label: t("analytics.onTimeDelivery"), value: analyticsMetrics ? `${analyticsMetrics.benchmarks.onTimeDelivery}%` : "—", change: "", note: t("analytics.vsBaseline") },
+                { label: t("analytics.qualityScoreLabel"), value: analyticsMetrics ? `${analyticsMetrics.benchmarks.qualityScore}/10` : "—", change: "", note: t("analytics.vsLastQuarter") },
+                { label: t("analytics.customerNps"), value: analyticsMetrics ? `${analyticsMetrics.benchmarks.nps}` : "—", change: "", note: t("analytics.vsLastQuarter") },
               ].map((m) => (
                 <div key={m.label} className="bg-[#141414] border border-neutral-800/60 rounded-xl p-4">
                   <div className="text-neutral-500 text-[11px] mb-2">{m.label}</div>
@@ -669,8 +679,8 @@ export function AnalyticsPage() {
               ))}
             </div>
             <div className="bg-[#141414] border border-neutral-800/60 rounded-xl p-4 lg:p-5">
-              <div className="text-neutral-50 text-[13px] font-['Lexend:SemiBold',_sans-serif] mb-2">Team vs. Industry Benchmark</div>
-              <div className="text-neutral-500 text-[12px] mb-5">Comparison against industry average across key metrics</div>
+              <div className="text-neutral-50 text-[13px] font-['Lexend:SemiBold',_sans-serif] mb-2">{t("analytics.teamVsIndustryBenchmark")}</div>
+              <div className="text-neutral-500 text-[12px] mb-5">{t("analytics.comparisonAgainstIndustry")}</div>
               <div className="space-y-5">
                 {(analyticsMetrics?.benchmarks.comparison ?? []).map((b) => (
                   <div key={b.label}>
@@ -678,7 +688,7 @@ export function AnalyticsPage() {
                       <span className="text-neutral-400">{b.label}</span>
                       <div className="flex items-center gap-3">
                         <span className="text-indigo-400">{b.team}%</span>
-                        <span className="text-neutral-600">{b.industry}% avg</span>
+                        <span className="text-neutral-600">{b.industry}% {t("analytics.industryAvg")}</span>
                       </div>
                     </div>
                     <div className="relative h-2 bg-neutral-800 rounded-full overflow-hidden">
@@ -689,12 +699,12 @@ export function AnalyticsPage() {
                 ))}
               </div>
               <div className="flex items-center gap-4 mt-4">
-                <div className="flex items-center gap-1.5"><div className="w-3 h-1.5 rounded-full bg-indigo-500" /><span className="text-neutral-500 text-[11px]">Your team</span></div>
-                <div className="flex items-center gap-1.5"><div className="w-3 h-1.5 rounded-full bg-neutral-700" /><span className="text-neutral-500 text-[11px]">Industry avg</span></div>
+                <div className="flex items-center gap-1.5"><div className="w-3 h-1.5 rounded-full bg-indigo-500" /><span className="text-neutral-500 text-[11px]">{t("analytics.yourTeam")}</span></div>
+                <div className="flex items-center gap-1.5"><div className="w-3 h-1.5 rounded-full bg-neutral-700" /><span className="text-neutral-500 text-[11px]">{t("analytics.industryAvg")}</span></div>
               </div>
             </div>
             <div className="bg-[#141414] border border-neutral-800/60 rounded-xl overflow-hidden">
-              <div className="px-4 py-3 border-b border-neutral-800/40 text-neutral-50 text-[13px] font-['Lexend:SemiBold',_sans-serif]">Quarterly Benchmark History</div>
+              <div className="px-4 py-3 border-b border-neutral-800/40 text-neutral-50 text-[13px] font-['Lexend:SemiBold',_sans-serif]">{t("analytics.quarterlyBenchmarkHistory")}</div>
               <div className="divide-y divide-neutral-800/40">
                 {(analyticsMetrics?.benchmarks.history ?? []).map((q) => (
                   <div key={q.quarter} className="grid grid-cols-[1fr_80px_90px_80px] gap-4 px-4 py-3 text-[12px]">
@@ -713,29 +723,29 @@ export function AnalyticsPage() {
         {activeView === "key-metrics" && (
           <div className="bg-[#141414] border border-neutral-800/60 rounded-xl overflow-hidden">
             <div className="px-4 lg:px-5 py-3 lg:py-4 border-b border-neutral-800/40">
-              <div className="text-neutral-50 text-[13px] lg:text-[14px] font-['Lexend:SemiBold',_sans-serif]">Detailed Metrics</div>
+              <div className="text-neutral-50 text-[13px] lg:text-[14px] font-['Lexend:SemiBold',_sans-serif]">{t("analytics.detailedMetrics")}</div>
             </div>
             <div className="divide-y divide-neutral-800/40">
               {(() => {
                 const rows: { label: string; value: string; prev: string; change: string; up: boolean }[] = [
                   ...(liveMetrics ? [
-                    { label: "Task Completion Rate", value: `${liveMetrics.total > 0 ? Math.round((liveMetrics.completed / liveMetrics.total) * 100) : 0}%`, prev: "—", change: "", up: true },
-                    { label: "Tasks Completed", value: `${liveMetrics.completed}`, prev: "—", change: "", up: true },
-                    { label: "Tasks In Progress", value: `${liveMetrics.inProgress}`, prev: "—", change: "", up: true },
+                    { label: t("analytics.taskCompletionRate"), value: `${liveMetrics.total > 0 ? Math.round((liveMetrics.completed / liveMetrics.total) * 100) : 0}%`, prev: "—", change: "", up: true },
+                    { label: t("analytics.tasksCompleted"), value: `${liveMetrics.completed}`, prev: "—", change: "", up: true },
+                    { label: t("analytics.tasksInProgress"), value: `${liveMetrics.inProgress}`, prev: "—", change: "", up: true },
                   ] : []),
                   ...(analyticsMetrics?.taskMetrics ? [
-                    { label: "Average Cycle Time", value: analyticsMetrics.taskMetrics.avgCycleTime, prev: "—", change: analyticsMetrics.taskMetrics.cycleChange, up: true },
+                    { label: t("analytics.averageCycleTime"), value: analyticsMetrics.taskMetrics.avgCycleTime, prev: "—", change: analyticsMetrics.taskMetrics.cycleChange, up: true },
                   ] : []),
                   ...(analyticsMetrics ? [
-                    { label: "Sprint Velocity", value: `${analyticsMetrics.teamEfficiency.sprintVelocity} pts`, prev: "—", change: "", up: true },
-                    { label: "On-time Delivery", value: `${analyticsMetrics.benchmarks.onTimeDelivery}%`, prev: "—", change: "", up: true },
-                    { label: "Rework Rate", value: `${analyticsMetrics.teamEfficiency.reworkRate}%`, prev: "—", change: "", up: true },
-                    { label: "Quality Score", value: `${analyticsMetrics.benchmarks.qualityScore}/10`, prev: "—", change: "", up: true },
+                    { label: t("analytics.sprintVelocity"), value: `${analyticsMetrics.teamEfficiency.sprintVelocity} pts`, prev: "—", change: "", up: true },
+                    { label: t("analytics.onTimeDeliveryLabel"), value: `${analyticsMetrics.benchmarks.onTimeDelivery}%`, prev: "—", change: "", up: true },
+                    { label: t("analytics.reworkRate"), value: `${analyticsMetrics.teamEfficiency.reworkRate}%`, prev: "—", change: "", up: true },
+                    { label: t("analytics.qualityScoreLabel"), value: `${analyticsMetrics.benchmarks.qualityScore}/10`, prev: "—", change: "", up: true },
                   ] : []),
                 ];
                 if (rows.length === 0) {
                   return (
-                    <div className="px-4 lg:px-5 py-3 text-[12px] lg:text-[13px] text-neutral-500">No data yet</div>
+                    <div className="px-4 lg:px-5 py-3 text-[12px] lg:text-[13px] text-neutral-500">{t("analytics.noDataYet")}</div>
                   );
                 }
                 return rows.map((m) => (

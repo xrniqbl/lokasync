@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import { useNavigation } from "./NavigationContext";
 import { InviteMemberModal } from "./modals/InviteMemberModal";
+import { useLang, LangToggle } from "../i18n";
 import * as api from "../utils/api";
 
 // ─── Primitives ────────────────────────────────────────────────────────────────
@@ -105,7 +106,7 @@ const accentColors = [
 
 const navGroups = [
   { label: "Account", items: ["Profile", "Security", "Notifications"] },
-  { label: "Workspace", items: ["Workspace", "Appearance", "Timezone", "Default Notifications", "Members", "Billing", "Integrations"] },
+  { label: "Workspace", items: ["Workspace", "Appearance", "Language", "Timezone", "Default Notifications", "Members", "Billing", "Integrations"] },
   { label: "Advanced", items: ["API Keys", "Audit Log", "Data & Export", "Danger Zone"] },
 ];
 
@@ -115,6 +116,7 @@ const subSectionMap: Record<string, string> = {
   notifications: "Notifications",
   workspace: "Workspace",
   "settings-theme": "Appearance",
+  "settings-language": "Language",
   "settings-timezone": "Timezone",
   "settings-notif-defaults": "Default Notifications",
   "settings-members": "Members",
@@ -130,6 +132,7 @@ const subSectionMap: Record<string, string> = {
 
 export function SettingsPage() {
   const { subSection } = useNavigation();
+  const { lang, setLang, t } = useLang();
   const [activeNav, setActiveNav] = useState("Profile");
   const [integrations, setIntegrations] = useState<any[]>([]);
   const [sessions, setSessions] = useState<{ device: string; location: string; ip: string; lastActive: string; current: boolean }[]>([]);
@@ -423,20 +426,40 @@ export function SettingsPage() {
     <div className="flex flex-col lg:flex-row h-full font-['Lexend:Regular',_sans-serif]">
       {/* Left nav */}
       <div className="w-full lg:w-56 shrink-0 px-4 lg:px-6 pt-6 lg:pt-8 pb-2 lg:pb-8 border-b lg:border-b-0 lg:border-r border-neutral-800/40 overflow-x-auto lg:overflow-y-auto">
-        <div className="hidden lg:block text-neutral-50 text-[13px] lg:text-[14px] font-['Lexend:SemiBold',_sans-serif] mb-4">Settings</div>
+        <div className="hidden lg:block text-neutral-50 text-[13px] lg:text-[14px] font-['Lexend:SemiBold',_sans-serif] mb-4">{t("sidebar.settingsNav")}</div>
         <nav className="flex lg:flex-col gap-x-1 lg:gap-x-0 overflow-x-auto lg:overflow-x-visible">
           {navGroups.map((group) => (
             <div key={group.label} className="flex lg:flex-col gap-x-1 lg:gap-x-0 lg:mb-4 last:mb-0">
-              <div className="hidden lg:block text-neutral-600 text-[10px] uppercase tracking-wider px-3 mb-1">{group.label}</div>
-              {group.items.map((item) => (
-                <button
-                  key={item}
-                  onClick={() => setActiveNav(item)}
-                  className={`shrink-0 lg:w-full text-left px-3 py-2 rounded-lg text-[12px] lg:text-[13px] transition-colors whitespace-nowrap ${activeNav === item ? "bg-neutral-800 text-neutral-50" : "text-neutral-500 hover:text-neutral-300 hover:bg-neutral-800/30"}`}
-                >
-                  {item}
-                </button>
-              ))}
+              <div className="hidden lg:block text-neutral-600 text-[10px] uppercase tracking-wider px-3 mb-1">
+                {group.label === "Account" ? t("settings.account") : group.label === "Workspace" ? t("settings.workspace") : t("settings.advanced")}
+              </div>
+              {group.items.map((item) => {
+                const labelKey = item === "Profile" ? "sidebar.profileNav"
+                  : item === "Security" ? "sidebar.securityNav"
+                  : item === "Notifications" ? "sidebar.notificationsNav"
+                  : item === "Workspace" ? "sidebar.workspaceNav"
+                  : item === "Appearance" ? "sidebar.appearanceNav"
+                  : item === "Language" ? "sidebar.languageNav"
+                  : item === "Timezone" ? "sidebar.timezoneNav"
+                  : item === "Default Notifications" ? "sidebar.defaultNotificationsNav"
+                  : item === "Members" ? "sidebar.membersNav"
+                  : item === "Billing" ? "sidebar.billingNav"
+                  : item === "Integrations" ? "sidebar.integrationsNav"
+                  : item === "API Keys" ? "sidebar.apiKeysNav"
+                  : item === "Audit Log" ? "sidebar.auditLogNav"
+                  : item === "Data & Export" ? "sidebar.dataExportNav"
+                  : item === "Danger Zone" ? "sidebar.dangerZoneNav"
+                  : item;
+                return (
+                  <button
+                    key={item}
+                    onClick={() => setActiveNav(item)}
+                    className={`shrink-0 lg:w-full text-left px-3 py-2 rounded-lg text-[12px] lg:text-[13px] transition-colors whitespace-nowrap ${activeNav === item ? "bg-neutral-800 text-neutral-50" : "text-neutral-500 hover:text-neutral-300 hover:bg-neutral-800/30"}`}
+                  >
+                    {t(labelKey as any)}
+                  </button>
+                );
+              })}
             </div>
           ))}
         </nav>
@@ -449,7 +472,7 @@ export function SettingsPage() {
           {/* ── Profile ── */}
           {activeNav === "Profile" && (
             <>
-              <Section title="Profile" description="Manage your personal information and avatar.">
+              <Section title={t("settings.profile")} description={t("settings.managePersonalInfo")}>
                 <div className="flex items-center gap-4 mb-6">
                   <div
                     className="w-16 h-16 rounded-full flex items-center justify-center overflow-hidden shrink-0 cursor-pointer ring-2 ring-neutral-800 hover:ring-indigo-600/40 transition-all"
@@ -463,22 +486,22 @@ export function SettingsPage() {
                   </div>
                   <div className="flex flex-col gap-1.5">
                     <button onClick={() => fileInputRef.current?.click()} className="border border-neutral-800 hover:bg-neutral-800 text-neutral-300 text-[12px] lg:text-[13px] px-3 py-1.5 rounded-lg transition-colors w-fit">
-                      Change photo
+                      {t("settings.changePhoto")}
                     </button>
-                    <span className="text-neutral-600 text-[11px]">JPG or PNG · Max 2 MB</span>
+                    <span className="text-neutral-600 text-[11px]">{t("settings.jpgOrPng")}</span>
                     <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handlePhotoChange} />
                   </div>
                 </div>
                 <div className="space-y-4">
                   <div className="grid grid-cols-2 gap-3 lg:gap-4">
-                    <InputField label="First name" value={profileData.firstName ?? ""} onChange={(v) => setProfileData((p: any) => ({ ...p, firstName: v }))} />
-                    <InputField label="Last name" value={profileData.lastName ?? ""} onChange={(v) => setProfileData((p: any) => ({ ...p, lastName: v }))} />
+                    <InputField label={t("settings.firstName")} value={profileData.firstName ?? ""} onChange={(v) => setProfileData((p: any) => ({ ...p, firstName: v }))} />
+                    <InputField label={t("settings.lastName")} value={profileData.lastName ?? ""} onChange={(v) => setProfileData((p: any) => ({ ...p, lastName: v }))} />
                   </div>
-                  <InputField label="Email" value={profileData.email ?? ""} onChange={(v) => setProfileData((p: any) => ({ ...p, email: v }))} type="email" hint="Changing your email requires re-verification." />
-                  <InputField label="Phone number" value={profileData.phone ?? ""} onChange={(v) => setProfileData((p: any) => ({ ...p, phone: v }))} type="tel" />
-                  <InputField label="Job title" value={profileData.title ?? ""} onChange={(v) => setProfileData((p: any) => ({ ...p, title: v }))} />
+                  <InputField label={t("settings.email")} value={profileData.email ?? ""} onChange={(v) => setProfileData((p: any) => ({ ...p, email: v }))} type="email" hint={t("settings.emailVerificationHint")} />
+                  <InputField label={t("settings.phoneNumber")} value={profileData.phone ?? ""} onChange={(v) => setProfileData((p: any) => ({ ...p, phone: v }))} type="tel" />
+                  <InputField label={t("settings.jobTitle")} value={profileData.title ?? ""} onChange={(v) => setProfileData((p: any) => ({ ...p, title: v }))} />
                   <div>
-                    <label className="block text-neutral-300 text-[13px] mb-1.5">Department</label>
+                    <label className="block text-neutral-300 text-[13px] mb-1.5">{t("settings.department")}</label>
                     <select
                       value={profileData.department ?? "Engineering"}
                       onChange={(e) => setProfileData((p: any) => ({ ...p, department: e.target.value }))}
@@ -495,34 +518,34 @@ export function SettingsPage() {
                     </select>
                   </div>
                   <div>
-                    <label className="block text-neutral-300 text-[13px] mb-1.5">Bio</label>
+                    <label className="block text-neutral-300 text-[13px] mb-1.5">{t("settings.bio")}</label>
                     <textarea
                       rows={3}
                       value={profileData.bio ?? ""}
                       onChange={(e) => setProfileData((p: any) => ({ ...p, bio: e.target.value }))}
                       className="w-full bg-[#0f0f0f] border border-neutral-800 hover:border-neutral-700 focus:border-indigo-600/60 rounded-lg px-3 py-2.5 text-neutral-200 text-[13px] outline-none transition-colors resize-none placeholder:text-neutral-600 font-['Lexend:Regular',_sans-serif]"
                     />
-                    <p className="text-neutral-600 text-[11px] mt-1">Visible to teammates on your profile card.</p>
+                    <p className="text-neutral-600 text-[11px] mt-1">{t("settings.visibleToTeammates")}</p>
                   </div>
                 </div>
               </Section>
-              <Section title="Social Links" description="Optional links shown on your profile.">
+              <Section title={t("settings.socialLinks")} description={t("settings.socialLinksDesc")}>
                 <div className="space-y-3">
                   <InputField label="GitHub" value={profileData.github ?? ""} onChange={(v) => setProfileData((p: any) => ({ ...p, github: v }))} placeholder="https://github.com/username" />
                   <InputField label="LinkedIn" value={profileData.linkedin ?? ""} onChange={(v) => setProfileData((p: any) => ({ ...p, linkedin: v }))} placeholder="https://linkedin.com/in/username" />
                 </div>
               </Section>
-              <SaveRow onSave={saveProfile} />
+              <SaveRow onSave={saveProfile} label={t("settings.saveChanges")} />
             </>
           )}
 
           {/* ── Security ── */}
           {activeNav === "Security" && (
             <>
-              <Section title="Change Password" description="Use a strong password of at least 12 characters.">
+              <Section title={t("settings.changePasswordSection")} description={t("settings.changePasswordDesc")}>
                 <div className="space-y-4">
                   <div>
-                    <label className="block text-neutral-300 text-[13px] mb-1.5">Current password</label>
+                    <label className="block text-neutral-300 text-[13px] mb-1.5">{t("settings.currentPassword")}</label>
                     <div className="relative">
                       <input
                         type={showCurrent ? "text" : "password"}
@@ -536,7 +559,7 @@ export function SettingsPage() {
                     </div>
                   </div>
                   <div>
-                    <label className="block text-neutral-300 text-[13px] mb-1.5">New password</label>
+                    <label className="block text-neutral-300 text-[13px] mb-1.5">{t("settings.newPasswordField")}</label>
                     <div className="relative">
                       <input
                         type={showNext ? "text" : "password"}
@@ -553,10 +576,10 @@ export function SettingsPage() {
                         <div key={i} className={`flex-1 h-1 rounded-full transition-colors ${pw.next.length >= i * 3 ? (pw.next.length >= 12 ? "bg-emerald-500" : "bg-amber-500") : "bg-neutral-800"}`} />
                       ))}
                     </div>
-                    <p className="text-neutral-600 text-[11px] mt-1">Min. 12 characters · uppercase · numbers · symbols</p>
+                    <p className="text-neutral-600 text-[11px] mt-1">{t("settings.min12Chars")}</p>
                   </div>
                   <div>
-                    <label className="block text-neutral-300 text-[13px] mb-1.5">Confirm new password</label>
+                    <label className="block text-neutral-300 text-[13px] mb-1.5">{t("settings.confirmNewPassword")}</label>
                     <input
                       type="password"
                       value={pw.confirm}
@@ -564,28 +587,28 @@ export function SettingsPage() {
                       className="w-full bg-[#0f0f0f] border border-neutral-800 focus:border-indigo-600/60 rounded-lg px-3 py-2.5 text-neutral-200 text-[13px] outline-none transition-colors font-['Lexend:Regular',_sans-serif]"
                     />
                     {pw.confirm && pw.next !== pw.confirm && (
-                      <p className="text-red-400 text-[11px] mt-1">Passwords do not match</p>
+                      <p className="text-red-400 text-[11px] mt-1">{t("settings.passwordsDoNotMatch")}</p>
                     )}
                   </div>
                   <div className="flex justify-end">
-                    <button onClick={updatePassword} className="bg-indigo-600 hover:bg-indigo-500 text-white text-[13px] px-5 py-2 rounded-lg transition-colors">Update password</button>
+                    <button onClick={updatePassword} className="bg-indigo-600 hover:bg-indigo-500 text-white text-[13px] px-5 py-2 rounded-lg transition-colors">{t("settings.updatePassword")}</button>
                   </div>
                 </div>
               </Section>
 
-              <Section title="Two-Factor Authentication" description="Add an extra layer of security to your account.">
+              <Section title={t("settings.twoFactorAuth")} description={t("settings.twoFactorAuthDesc")}>
                 <div className="flex items-center justify-between gap-4 mb-3">
                   <div className="flex items-center gap-3">
                     <div className="w-8 h-8 rounded-lg bg-neutral-800 flex items-center justify-center text-neutral-400 shrink-0">
                       <Shield size={15} />
                     </div>
                     <div>
-                      <div className="text-neutral-200 text-[13px]">Authenticator app</div>
-                      <div className="text-neutral-600 text-[12px]">Use Google Authenticator or Authy</div>
+                      <div className="text-neutral-200 text-[13px]">{t("settings.authenticatorApp")}</div>
+                      <div className="text-neutral-600 text-[12px]">{t("settings.authenticatorAppDesc")}</div>
                     </div>
                   </div>
                   <button onClick={() => setShow2FA(!show2FA)} className="border border-neutral-800 hover:bg-neutral-800 text-neutral-300 text-[12px] px-3 py-1.5 rounded-lg transition-colors shrink-0">
-                    {show2FA ? "Cancel" : "Set up 2FA"}
+                    {show2FA ? t("common.cancel") : t("settings.setup2FA")}
                   </button>
                 </div>
                 {show2FA && (
@@ -599,29 +622,29 @@ export function SettingsPage() {
                         </div>
                       </div>
                     </div>
-                    <p className="text-neutral-400 text-[12px] text-center">Scan with your authenticator app, then enter the 6-digit code.</p>
+                    <p className="text-neutral-400 text-[12px] text-center">{t("settings.scanAuthenticator")}</p>
                     <div className="flex gap-2">
                       <input
                         type="text" maxLength={6} placeholder="000000" value={twoFACode}
                         onChange={(e) => setTwoFACode(e.target.value.replace(/\D/g, ""))}
                         className="flex-1 bg-[#0f0f0f] border border-neutral-800 focus:border-indigo-600/60 rounded-lg px-3 py-2.5 text-neutral-200 text-[14px] text-center tracking-widest outline-none transition-colors font-['Lexend:Regular',_sans-serif]"
                       />
-                      <button onClick={verify2FA} className="bg-indigo-600 hover:bg-indigo-500 text-white text-[13px] px-4 py-2 rounded-lg transition-colors">Verify</button>
+                      <button onClick={verify2FA} className="bg-indigo-600 hover:bg-indigo-500 text-white text-[13px] px-4 py-2 rounded-lg transition-colors">{t("settings.verify")}</button>
                     </div>
                   </div>
                 )}
               </Section>
 
-              <Section title="Active Sessions" description="Devices currently signed into your account.">
+              <Section title={t("settings.activeSessions")} description={t("settings.activeSessionsDesc")}>
                 <div className="space-y-2">
                   {(sessions.length > 0 ? sessions : [
-                    { device: "Loading sessions...", location: "", ip: "", lastActive: "", current: true },
+                    { device: t("settings.loadingSessions"), location: "", ip: "", lastActive: "", current: true },
                   ]).map((s) => (
                     <div key={s.device} className="flex items-center justify-between p-3 bg-[#141414] border border-neutral-800/60 rounded-xl gap-3">
                       <div className="min-w-0">
                         <div className="flex items-center gap-2 flex-wrap">
                           <span className="text-neutral-200 text-[13px]">{s.device}</span>
-                          {s.current && <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-emerald-900/40 text-emerald-400">Current</span>}
+                          {s.current && <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-emerald-900/40 text-emerald-400">{t("settings.current")}</span>}
                         </div>
                         <div className="text-neutral-600 text-[11px] mt-0.5">{s.location}{s.ip ? ` · ${s.ip}` : ""}{s.lastActive ? ` · ${s.lastActive}` : ""}</div>
                       </div>
@@ -630,14 +653,14 @@ export function SettingsPage() {
                           setSessions(prev => prev.filter(x => x.device !== s.device));
                           toast.success(`Session revoked: ${s.device}`);
                           try { await api.revokeSession(s.device); } catch (e) { console.log("Revoke failed:", e); }
-                        }} className="text-red-400 hover:text-red-300 text-[12px] px-2.5 py-1 rounded-lg border border-red-900/40 hover:bg-red-950/30 transition-colors shrink-0">Revoke</button>
+                        }} className="text-red-400 hover:text-red-300 text-[12px] px-2.5 py-1 rounded-lg border border-red-900/40 hover:bg-red-950/30 transition-colors shrink-0">{t("settings.revoke")}</button>
                       )}
                     </div>
                   ))}
                 </div>
               </Section>
 
-              <Section title="Login History" description="Recent sign-in attempts.">
+              <Section title={t("settings.loginHistory")} description={t("settings.loginHistoryDesc")}>
                 <div className="bg-[#141414] border border-neutral-800/60 rounded-xl overflow-hidden">
                   <div className="divide-y divide-neutral-800/40">
                     {loginHistory.map((l, i) => (
@@ -647,7 +670,7 @@ export function SettingsPage() {
                           <div className="text-neutral-600 text-[11px] mt-0.5">{l.ip} · {l.date}</div>
                         </div>
                         <span className={`text-[11px] px-2 py-0.5 rounded-full ${l.status === "success" ? "bg-emerald-900/40 text-emerald-400" : "bg-red-900/40 text-red-400"}`}>
-                          {l.status === "success" ? "Success" : "Failed"}
+                          {l.status === "success" ? t("settings.success") : t("settings.failed")}
                         </span>
                       </div>
                     ))}
@@ -655,11 +678,11 @@ export function SettingsPage() {
                 </div>
               </Section>
 
-              <Section title="Security Preferences">
+              <Section title={t("settings.securityPreferences")}>
                 <div className="divide-y divide-neutral-800/40">
-                  <ToggleRow label="Trusted devices" description="Skip 2FA on devices you've used before" defaultChecked />
-                  <ToggleRow label="Login notifications" description="Email me when a new device signs in" defaultChecked />
-                  <ToggleRow label="Session timeout" description="Auto sign-out after 30 minutes of inactivity" />
+                  <ToggleRow label={t("settings.trustedDevices")} description={t("settings.trustedDevicesDesc")} defaultChecked />
+                  <ToggleRow label={t("settings.loginNotifications")} description={t("settings.loginNotificationsDesc")} defaultChecked />
+                  <ToggleRow label={t("settings.sessionTimeout")} description={t("settings.sessionTimeoutDesc")} />
                 </div>
               </Section>
             </>
@@ -870,6 +893,11 @@ export function SettingsPage() {
                       {p}
                     </button>
                   ))}
+                </div>
+              </Section>
+              <Section title={t("settings.language")} description={t("settings.chooseLanguage")}>
+                <div className="flex items-center gap-4">
+                  <LangToggle lang={lang} onChange={setLang} />
                 </div>
               </Section>
               <SaveRow onSave={saveAppearance} />
