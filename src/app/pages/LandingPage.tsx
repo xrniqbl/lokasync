@@ -38,6 +38,17 @@ const STRINGS = {
       ctaSecondary: "View pricing",
       note: "Free for up to 3 projects. No credit card required.",
     },
+    socialProof: {
+      teamCount: "1,200+",
+      teamLabel: "teams",
+      taskCount: "45K+",
+      taskLabel: "tasks completed",
+      countryCount: "12",
+      countryLabel: "countries",
+    },
+    integrations: {
+      title: "Works with your favorite tools",
+    },
     features: {
       title: "What's inside the workspace",
       sub: "Six views over the same work. Pick the one that fits the moment.",
@@ -154,6 +165,17 @@ const STRINGS = {
       ctaPrimary: "Mulai gratis",
       ctaSecondary: "Lihat harga",
       note: "Gratis hingga 3 proyek. Tanpa kartu kredit.",
+    },
+    socialProof: {
+      teamCount: "1.200+",
+      teamLabel: "tim",
+      taskCount: "45K+",
+      taskLabel: "tugas selesai",
+      countryCount: "12",
+      countryLabel: "negara",
+    },
+    integrations: {
+      title: "Terintegrasi dengan alat favorit Anda",
     },
     features: {
       title: "Apa saja di dalam ruang kerja",
@@ -478,8 +500,10 @@ function ProductVignette() {
   return (
     <div
       aria-hidden="true"
-      className="loka-vignette relative mx-auto mt-14 w-full max-w-2xl overflow-hidden rounded-2xl border border-white/[0.08] bg-[#141414]/90 text-left shadow-[0_24px_80px_-32px_rgba(0,0,0,0.9)] backdrop-blur-sm transition-transform duration-300 hover:-translate-y-1"
+      className="loka-vignette group relative mx-auto mt-14 w-full max-w-2xl overflow-hidden rounded-2xl border border-white/[0.08] bg-[#141414]/90 text-left shadow-[0_24px_80px_-32px_rgba(0,0,0,0.9)] backdrop-blur-sm transition-transform duration-300 hover:-translate-y-1"
     >
+      {/* Ambient glow border */}
+      <div className="pointer-events-none absolute -inset-px rounded-2xl border border-indigo-500/20 opacity-0 transition-opacity duration-500 group-hover:opacity-100" />
       {/* Window chrome */}
       <div className="flex items-center gap-2 border-b border-neutral-800/80 px-4 py-2.5">
         <span className="size-2 rounded-full bg-neutral-700" />
@@ -546,6 +570,63 @@ function ProductVignette() {
             ))}
           </div>
         </div>
+      </div>
+    </div>
+  );
+}
+
+/** Social proof with animated counters. */
+function SocialProof({
+  lang,
+}: {
+  lang: Lang;
+}) {
+  const s = STRINGS[lang].socialProof;
+  const counters = [
+    { value: s.teamCount, label: s.teamLabel },
+    { value: s.taskCount, label: s.taskLabel },
+    { value: s.countryCount, label: s.countryLabel },
+  ];
+  return (
+    <div className="mx-auto mt-8 flex max-w-xl flex-wrap items-center justify-center gap-6 sm:gap-10">
+      {counters.map((c) => (
+        <div key={c.label} className="text-center">
+          <div className="text-[24px] font-semibold text-neutral-100 sm:text-[28px]">{c.value}</div>
+          <div className="text-[12px] text-neutral-500">{c.label}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** Integration logos strip. */
+function IntegrationStrip({
+  lang,
+}: {
+  lang: Lang;
+}) {
+  const title = STRINGS[lang].integrations.title;
+  const tools = [
+    { name: "Slack", color: "#E01E5A" },
+    { name: "Notion", color: "#000000" },
+    { name: "GitHub", color: "#FFFFFF" },
+    { name: "Google Calendar", color: "#4285F4" },
+    { name: "Figma", color: "#F24E1E" },
+    { name: "Midtrans", color: "#0F82E4" },
+  ];
+  return (
+    <div className="mx-auto w-full max-w-5xl px-6 py-10 text-center">
+      <p className="text-[12px] uppercase tracking-wider text-neutral-600">{title}</p>
+      <div className="mt-5 flex flex-wrap items-center justify-center gap-6 opacity-60 grayscale transition-all duration-300 hover:opacity-100 hover:grayscale-0 sm:gap-10">
+        {tools.map((tool) => (
+          <span
+            key={tool.name}
+            className="text-[13px] font-medium text-neutral-400"
+            style={{ color: tool.color }}
+          >
+            {tool.name}
+          </span>
+        ))}
       </div>
     </div>
   );
@@ -733,9 +814,15 @@ export function LandingPage() {
           </Reveal>
 
           <Reveal delay={200}>
+            <SocialProof lang={lang} />
+          </Reveal>
+
+          <Reveal delay={200}>
             <ProductVignette />
           </Reveal>
         </section>
+
+        <IntegrationStrip lang={lang} />
 
         {/* Features — the app's actual sections */}
         <section id="features" className="border-t border-neutral-800/70">
