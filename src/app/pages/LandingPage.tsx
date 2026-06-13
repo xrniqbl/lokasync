@@ -645,51 +645,11 @@ function IntegrationStrip({
   );
 }
 
-/** Sticky top bar that appears after scrolling past the hero. */
-function StickyTopBar({
-  user,
-  lang,
-  onLangChange,
-  visible,
-}: {
-  user: ReturnType<typeof useAuth>["user"];
-  lang: Lang;
-  onLangChange: (lang: Lang) => void;
-  visible: boolean;
-}) {
-  const t = STRINGS[lang].nav;
-  return (
-    <div
-      className={`fixed inset-x-0 top-0 z-50 border-b border-white/[0.08] bg-[#0f0f0f]/95 backdrop-blur-xl transition-transform duration-300 ${
-        visible ? "translate-y-0" : "-translate-y-full"
-      }`}
-    >
-      <div className="mx-auto flex h-12 max-w-5xl items-center justify-between px-4 sm:px-6">
-        <Link to="/" aria-label="LokaSync home" className="flex items-center">
-          <img src="/lokasynclogo.png" alt="LokaSync" className="h-5 w-auto" style={{ objectFit: "contain" }} />
-        </Link>
-        <div className="flex items-center gap-2">
-          <LangToggle lang={lang} onChange={onLangChange} />
-          {user ? (
-            <Button size="sm" render={<Link to="/app/dashboard" />}>
-              {t.openDashboard}
-            </Button>
-          ) : (
-            <Button size="sm" render={<Link to="/register" />}>
-              {t.getStarted}
-            </Button>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
 export function LandingPage() {
   const { user } = useAuth();
   const [plans, setPlans] = useState<Plan[] | null>(null);
   const [lang, setLang] = useState<Lang>(detectLang);
-  const [showSticky, setShowSticky] = useState(false);
+
   const t = STRINGS[lang];
 
   const changeLang = (next: Lang) => {
@@ -701,14 +661,7 @@ export function LandingPage() {
     document.documentElement.lang = lang;
   }, [lang]);
 
-  /* Show sticky top bar after scrolling past hero */
-  useEffect(() => {
-    const onScroll = () => {
-      setShowSticky(window.scrollY > 400);
-    };
-    window.addEventListener("scroll", onScroll, { passive: true });
-    return () => window.removeEventListener("scroll", onScroll);
-  }, []);
+
 
   // Prices live server-side in KV `plans`; never hardcode amounts here.
   useEffect(() => {
@@ -821,7 +774,7 @@ export function LandingPage() {
       </div>
 
       <Navbar user={user} lang={lang} onLangChange={changeLang} />
-      <StickyTopBar user={user} lang={lang} onLangChange={changeLang} visible={showSticky} />
+
 
       <main className="relative">
         {/* Hero — pt offsets the floating navbar */}
@@ -1152,14 +1105,14 @@ export function LandingPage() {
         <div className="mx-auto w-full max-w-5xl px-6 pb-8 pt-14">
           {/* Newsletter */}
           <Reveal>
-            <div className="mb-12 rounded-2xl border border-white/[0.06] bg-white/[0.02] p-6 sm:p-8">
-              <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="mb-12 rounded-xl border border-white/[0.04] bg-[#1a1a1e] p-7 sm:p-9">
+              <div className="flex flex-col items-start gap-5 sm:flex-row sm:items-center sm:justify-between">
                 <div>
-                  <h3 className="text-[16px] text-neutral-100">{t.newsletter?.title ?? "Stay in the loop"}</h3>
-                  <p className="mt-1 text-[13px] text-neutral-500">{t.newsletter?.sub ?? "Get product updates and tips — no spam."}</p>
+                  <h3 className="text-[17px] font-medium text-white">{t.newsletter?.title ?? "Stay in the loop"}</h3>
+                  <p className="mt-1 text-[14px] text-neutral-400">{t.newsletter?.sub ?? "Get product updates and tips — no spam."}</p>
                 </div>
                 <form
-                  className="flex w-full gap-2 sm:w-auto"
+                  className="flex w-full items-stretch gap-2.5 sm:w-auto"
                   onSubmit={(e) => {
                     e.preventDefault();
                     const input = e.currentTarget.querySelector("input");
@@ -1173,7 +1126,7 @@ export function LandingPage() {
                     type="email"
                     placeholder={t.newsletter?.placeholder ?? "your@email.com"}
                     required
-                    className="min-w-0 flex-1 rounded-lg border border-neutral-800 bg-[#0f0f0f] px-3 py-2 text-[13px] text-neutral-200 outline-none transition-colors placeholder:text-neutral-600 focus:border-indigo-600/60 sm:w-64"
+                    className="min-w-0 flex-1 rounded-lg border border-neutral-800 bg-[#0f0f0f] px-3.5 h-9 text-[13px] text-neutral-200 outline-none transition-colors placeholder:text-neutral-600 focus:border-indigo-600/60 sm:w-64"
                   />
                   <Button
                     type="submit"
