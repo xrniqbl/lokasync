@@ -45,7 +45,8 @@ app.use("*", async (c, next) => {
   ) {
     return next();
   }
-  const mt = await kv.get("maintenance");
+  const { data } = await sql.getDbClient().from("system_config").select("value").eq("key", "maintenance").maybeSingle();
+  const mt = data?.value ?? { enabled: false, message: "" };
   if (!mt?.enabled) return next();
   const user = await getAuthedUser(c);
   if (user && isAdminUser(user)) return next();
@@ -443,18 +444,17 @@ const PLAN_RANK: Record<string, number> = { free: 0, pro: 1, business: 2 };
 const FREE_MAX_PROJECTS = 3;
 
 async function getEffectivePlanId(userId: string): Promise<string> {
-  let subscription = await kv.get(`subscription:${userId}`);
+  const { data: subscription } = await sql.getDbClient().from("subscriptions").select("*").eq("user_id", userId).maybeSingle();
   if (
     subscription?.status === "active" &&
     subscription.current_period_end &&
     new Date(subscription.current_period_end) < new Date()
   ) {
-    subscription = {
-      ...subscription,
+    await sql.getDbClient().from("subscriptions").update({
       status: "expired",
       updated_at: new Date().toISOString(),
-    };
-    await kv.set(`subscription:${userId}`, subscription);
+    }).eq("user_id", userId);
+    return "free";
   }
   return subscription?.status === "active" ? subscription.plan_id : "free";
 }
@@ -532,7 +532,7 @@ const PLAN_STORAGE_LIMITS: Record<string, number> = {
 async function getStorageUsage(c: any): Promise<{ used: number; limit: number }> {
   const user = c.get("user");
   const workspace = c.get("workspace");
-  const sub = await kv.get(`subscription:${user.id}`);
+  const { data: sub } = await sql.getDbClient().from("subscriptions").select("plan_id").eq("user_id", user.id).maybeSingle();
   const planId = sub?.plan_id ?? "free";
   const limit = PLAN_STORAGE_LIMITS[planId] ?? PLAN_STORAGE_LIMITS.free;
   if (!workspace) return { used: 0, limit };
@@ -568,7 +568,8 @@ async function requireAdmin(c: any) {
 // Public service status — the client uses this to render the maintenance screen
 app.get("/status", async (c) => {
   try {
-    const mt = await kv.get("maintenance");
+    const { data } = await sql.getDbClient().from("system_config").select("value").eq("key", "maintenance").maybeSingle();
+    const mt = data?.value ?? { enabled: false, message: "" };
     return c.json({
       maintenance: {
         enabled: !!mt?.enabled,
@@ -585,12 +586,12 @@ app.get("/profile", async (c) => {
   try {
     const user = await getAuthedUser(c);
     if (!user) return c.json({ error: "Unauthorized" }, 401);
-    let profile = await kv.get(`profile:${user.id}`);
+    const { data: profile } = await sql.getDbClient().from("profiles").select("*").eq("user_id", user.id).maybeSingle();
     // Lazy migration: accounts registered before phase 3 only have user_metadata
     if (!profile && user.user_metadata?.full_name) {
       const meta = user.user_metadata;
       const now = new Date().toISOString();
-      profile = {
+      const newProfile = {
         user_id: user.id,
         email: user.email ?? "",
         full_name: meta.full_name,
@@ -600,9 +601,10 @@ app.get("/profile", async (c) => {
         created_at: now,
         updated_at: now,
       };
-      await kv.set(`profile:${user.id}`, profile);
+      await sql.getDbClient().from("profiles").insert(newProfile);
+      return c.json({ profile: { ...newProfile } });
     }
-    return c.json({ profile: profile ?? null });
+    return c.json({ profile });
   } catch (e) {
     console.log("GET /profile error:", e);
     return c.json({ error: String(e) }, 500);
@@ -679,8 +681,30 @@ async function getPlansFromKv(): Promise<any[]> {
 
 app.get("/plans", async (c) => {
   try {
-    const plans = await getPlansFromKv();
-    return c.json(plans);
+    const { data: plans } = await sql.getDbClient().from("plans").select("*").eq("active", true).order("sort_order", { ascending: true });
+    if (!plans?.length) {
+      // Seed plans into SQL
+      const now = new Date().toISOString();
+      for (const p of SEED_PLANS) {
+        await sql.getDbClient().from("plans").insert({
+          plan_id: p.id,
+          name: p.name,
+          description: p.description,
+          price: p.monthly,
+          features: JSON.stringify(p.features),
+          storage_limit: PLAN_STORAGE_LIMITS[p.id] ?? 0,
+          max_projects: p.id === "free" ? 3 : p.id === "pro" ? 100 : 999,
+          max_members: p.id === "free" ? 1 : p.id === "pro" ? 50 : 500,
+          active: true,
+          sort_order: p.id === "free" ? 1 : p.id === "pro" ? 2 : 3,
+          created_at: now,
+          updated_at: now,
+        });
+      }
+      const { data: seeded } = await sql.getDbClient().from("plans").select("*").eq("active", true).order("sort_order", { ascending: true });
+      return c.json(seeded.map((p: any) => ({ ...p, id: p.plan_id })));
+    }
+    return c.json(plans.map((p: any) => ({ ...p, id: p.plan_id })));
   } catch (e) {
     console.log("GET /plans error:", e);
     return c.json({ error: String(e) }, 500);
@@ -725,21 +749,14 @@ app.post("/vouchers/validate", async (c) => {
     const interval = body.interval === "yearly" ? "yearly" : "monthly";
     if (!code) return c.json({ valid: false, reason: "Enter a voucher code" });
 
-    const plans = await getPlansFromKv();
-    const plan = plans.find((p: any) => p.id === planId);
-    if (!plan || plan.monthly === 0) {
+    const { data: plans } = await sql.getDbClient().from("plans").select("*").eq("active", true).order("sort_order", { ascending: true });
+    const plan = plans?.find((p: any) => p.plan_id === planId);
+    if (!plan || plan.price === 0) {
       return c.json({ valid: false, reason: "Invalid plan" });
     }
-    const base = interval === "yearly" ? plan.yearly : plan.monthly;
+    const base = interval === "yearly" ? (plan.price * 12) : plan.price;
 
-    let voucher = await kv.get(`voucher:${code}`);
-    if (!voucher) {
-      const seed = SEED_VOUCHERS.find((v) => v.code === code);
-      if (seed) {
-        voucher = seed;
-        await kv.set(`voucher:${code}`, seed);
-      }
-    }
+    const { data: voucher } = await sql.getDbClient().from("vouchers").select("*").eq("code", code).maybeSingle();
 
     if (!voucher || !voucher.active) {
       return c.json({ valid: false, reason: "This voucher code is not valid" });
@@ -750,7 +767,7 @@ app.post("/vouchers/validate", async (c) => {
     if (voucher.max_uses != null && voucher.used_count >= voucher.max_uses) {
       return c.json({ valid: false, reason: "This voucher has reached its usage limit" });
     }
-    if (voucher.applies_to && !voucher.applies_to.includes(plan.id)) {
+    if (voucher.applies_to && !voucher.applies_to.includes(planId)) {
       return c.json({ valid: false, reason: `This voucher does not apply to the ${plan.name} plan` });
     }
 
@@ -831,13 +848,19 @@ async function applyTransactionStatus(tx: any, midtransData: any) {
     transaction_time: midtransData.transaction_time ?? null,
   };
   tx.updated_at = now;
-  await kv.set(`transaction:${tx.order_id}`, tx);
+
+  // Update transaction in SQL
+  await sql.getDbClient().from("transactions").update({
+    status: tx.status,
+    midtrans: tx.midtrans,
+    updated_at: now,
+  }).eq("order_id", tx.order_id);
 
   if (status === "paid" && !alreadyPaid) {
     const started = new Date();
     // Renewing the SAME plan while still active extends the remaining period;
     // anything else (new plan, expired sub) starts a fresh period from now.
-    const existing = await kv.get(`subscription:${tx.user_id}`);
+    const { data: existing } = await sql.getDbClient().from("subscriptions").select("*").eq("user_id", tx.user_id).maybeSingle();
     const extendsExisting =
       existing?.status === "active" &&
       existing.plan_id === tx.plan_id &&
@@ -846,7 +869,9 @@ async function applyTransactionStatus(tx: any, midtransData: any) {
     const periodBase = extendsExisting
       ? new Date(existing.current_period_end)
       : started;
-    await kv.set(`subscription:${tx.user_id}`, {
+
+    // Upsert subscription in SQL
+    await sql.getDbClient().from("subscriptions").upsert({
       user_id: tx.user_id,
       plan_id: tx.plan_id,
       interval: tx.interval,
@@ -855,29 +880,24 @@ async function applyTransactionStatus(tx: any, midtransData: any) {
       started_at: extendsExisting ? existing.started_at : started.toISOString(),
       current_period_end: periodEnd(tx.interval, periodBase),
       updated_at: now,
-    });
+    }, { onConflict: "user_id" });
 
     // Sync workspace plans so invited members inherit the owner's subscription
     await ws.syncWorkspacePlans(tx.user_id, tx.plan_id);
 
     if (tx.voucher_code) {
-      const voucher = await kv.get(`voucher:${tx.voucher_code}`);
+      const { data: voucher } = await sql.getDbClient().from("vouchers").select("*").eq("code", tx.voucher_code).maybeSingle();
       if (voucher) {
-        voucher.used_count = (voucher.used_count ?? 0) + 1;
-        await kv.set(`voucher:${tx.voucher_code}`, voucher);
+        await sql.getDbClient().from("vouchers").update({
+          used_count: (voucher.used_count ?? 0) + 1,
+          updated_at: now,
+        }).eq("code", tx.voucher_code);
       }
-    }
-
-    // ── Track in active subscriptions list (Fase 13.3) ────────────────────
-    const activeList = (await kv.get("subscriptions:active")) ?? [];
-    if (!activeList.includes(tx.user_id)) {
-      activeList.push(tx.user_id);
-      await kv.set("subscriptions:active", activeList);
     }
 
     // ── Send payment receipt email (Fase 13.2) ─────────────────────────────
     try {
-      const profile = await kv.get(`profile:${tx.user_id}`);
+      const { data: profile } = await sql.getDbClient().from("profiles").select("*").eq("user_id", tx.user_id).maybeSingle();
       const userEmail = profile?.email;
       const userName = profile?.full_name || userEmail?.split("@")[0] || "User";
       const subscription = await kv.get(`subscription:${tx.user_id}`);
@@ -950,7 +970,7 @@ app.post("/payments/checkout", async (c) => {
     // Recompute the voucher server-side — never trust client totals
     let discount = 0;
     if (voucherCode) {
-      const voucher = await kv.get(`voucher:${voucherCode}`);
+      const { data: voucher } = await sql.getDbClient().from("vouchers").select("*").eq("code", voucherCode).maybeSingle();
       const usable =
         voucher &&
         voucher.active &&
@@ -1021,7 +1041,7 @@ app.post("/payments/checkout", async (c) => {
     const snap = await snapRes.json();
 
     const now = new Date().toISOString();
-    await kv.set(`transaction:${orderId}`, {
+    await sql.getDbClient().from("transactions").insert({
       order_id: orderId,
       user_id: user.id,
       plan_id: plan.id,
@@ -1032,7 +1052,7 @@ app.post("/payments/checkout", async (c) => {
       voucher_code: voucherCode,
       gross_amount: total,
       status: "pending",
-      snap_token: snap.token,
+      midtrans: { snap_token: snap.token },
       created_at: now,
       updated_at: now,
     });
@@ -1073,7 +1093,7 @@ app.post("/payments/webhook", async (c) => {
       return c.json({ error: "Invalid signature" }, 403);
     }
 
-    const tx = await kv.get(`transaction:${order_id}`);
+    const { data: tx } = await sql.getDbClient().from("transactions").select("*").eq("order_id", order_id).maybeSingle();
     if (!tx) return c.json({ error: "Unknown order" }, 404);
 
     await applyTransactionStatus(tx, body);
@@ -1090,7 +1110,7 @@ app.get("/payments/status/:orderId", async (c) => {
     if (!user) return c.json({ error: "Unauthorized" }, 401);
 
     const orderId = c.req.param("orderId");
-    let tx = await kv.get(`transaction:${orderId}`);
+    let { data: tx } = await sql.getDbClient().from("transactions").select("*").eq("order_id", orderId).maybeSingle();
     if (!tx || tx.user_id !== user.id) {
       return c.json({ error: "Order not found" }, 404);
     }
@@ -1113,7 +1133,7 @@ app.get("/payments/status/:orderId", async (c) => {
       }
     }
 
-    const subscription = await kv.get(`subscription:${user.id}`);
+    const { data: subscription } = await sql.getDbClient().from("subscriptions").select("*").eq("user_id", user.id).maybeSingle();
     return c.json({
       order_id: tx.order_id,
       status: tx.status,
@@ -1122,7 +1142,7 @@ app.get("/payments/status/:orderId", async (c) => {
       interval: tx.interval,
       gross_amount: tx.gross_amount,
       payment_type: tx.midtrans?.payment_type ?? null,
-      subscription: subscription ?? null,
+      subscription,
     });
   } catch (e) {
     console.log("GET /payments/status error:", e);
@@ -1139,7 +1159,7 @@ app.get("/subscription", async (c) => {
     const user = await getAuthedUser(c);
     if (!user) return c.json({ error: "Unauthorized" }, 401);
 
-    let subscription = await kv.get(`subscription:${user.id}`);
+    let { data: subscription } = await sql.getDbClient().from("subscriptions").select("*").eq("user_id", user.id).maybeSingle();
     if (
       subscription?.status === "active" &&
       subscription.current_period_end &&
@@ -1150,39 +1170,30 @@ app.get("/subscription", async (c) => {
         status: "expired",
         updated_at: new Date().toISOString(),
       };
-      await kv.set(`subscription:${user.id}`, subscription);
+      await sql.getDbClient().from("subscriptions").update({ status: "expired", updated_at: subscription.updated_at }).eq("user_id", user.id);
     }
 
-    const planId =
-      subscription?.status === "active" ? subscription.plan_id : "free";
-    const plans = await getPlansFromKv();
-    const plan =
-      plans.find((p: any) => p.id === planId) ??
-      plans.find((p: any) => p.id === "free");
+    const planId = subscription?.status === "active" ? subscription.plan_id : "free";
+    const { data: plans } = await sql.getDbClient().from("plans").select("*").eq("active", true).order("sort_order", { ascending: true });
+    const plan = plans?.find((p: any) => p.plan_id === planId) ?? plans?.find((p: any) => p.plan_id === "free");
 
-    const all = await kv.getByPrefix("transaction:");
-    const transactions = all
-      .filter((t: any) => t?.user_id === user.id)
-      .sort((a: any, b: any) =>
-        String(a.created_at) < String(b.created_at) ? 1 : -1,
-      )
-      .slice(0, 20)
-      .map((t: any) => ({
-        order_id: t.order_id,
-        plan_id: t.plan_id,
-        plan_name: t.plan_name,
-        interval: t.interval,
-        gross_amount: t.gross_amount,
-        discount: t.discount ?? 0,
-        voucher_code: t.voucher_code ?? null,
-        status: t.status,
-        payment_type: t.midtrans?.payment_type ?? null,
-        created_at: t.created_at,
-      }));
+    const { data: txRows } = await sql.getDbClient().from("transactions").select("*").eq("user_id", user.id).order("created_at", { ascending: false }).limit(20);
+    const transactions = (txRows ?? []).map((t: any) => ({
+      order_id: t.order_id,
+      plan_id: t.plan_id,
+      plan_name: t.plan_name,
+      interval: t.interval,
+      gross_amount: t.gross_amount,
+      discount: t.discount ?? 0,
+      voucher_code: t.voucher_code ?? null,
+      status: t.status,
+      payment_type: t.midtrans?.payment_type ?? null,
+      created_at: t.created_at,
+    }));
 
     return c.json({
-      subscription: subscription ?? null,
-      effective_plan: plan,
+      subscription,
+      effective_plan: plan ? { ...plan, id: plan.plan_id } : null,
       transactions,
       is_admin: isAdminUser(user),
     });
@@ -1203,7 +1214,7 @@ app.put("/profile", async (c) => {
     if (!/^\+62\d{7,13}$/.test(phone)) {
       return c.json({ error: "Phone must be a +62 number with 7-13 digits" }, 400);
     }
-    const existing = await kv.get(`profile:${user.id}`);
+    const { data: existing } = await sql.getDbClient().from("profiles").select("id, created_at").eq("user_id", user.id).maybeSingle();
     const now = new Date().toISOString();
     const profile = {
       user_id: user.id,
@@ -1215,7 +1226,11 @@ app.put("/profile", async (c) => {
       created_at: existing?.created_at ?? now,
       updated_at: now,
     };
-    await kv.set(`profile:${user.id}`, profile);
+    if (existing) {
+      await sql.getDbClient().from("profiles").update(profile).eq("id", existing.id);
+    } else {
+      await sql.getDbClient().from("profiles").insert(profile);
+    }
     return c.json({ profile });
   } catch (e) {
     console.log("PUT /profile error:", e);
@@ -1236,27 +1251,27 @@ app.get("/admin/overview", async (c) => {
     });
     const totalUsers = usersPage?.users?.length ?? 0;
 
+    const { data: allSubs } = await sql.getDbClient().from("subscriptions").select("*");
     const now = new Date();
-    const subs = await kv.getByPrefix("subscription:");
     const activeByPlan: Record<string, number> = {};
     let expiredCount = 0;
-    for (const s of subs) {
+    for (const s of (allSubs ?? [])) {
       const stillActive =
         s?.status === "active" &&
         s.current_period_end &&
         new Date(s.current_period_end) > now;
       if (stillActive) {
         activeByPlan[s.plan_id] = (activeByPlan[s.plan_id] ?? 0) + 1;
-      } else if (s) {
+      } else {
         expiredCount++;
       }
     }
 
-    const txs = await kv.getByPrefix("transaction:");
+    const { data: allTxs } = await sql.getDbClient().from("transactions").select("*");
     let revenueTotal = 0;
     let paidCount = 0;
     let pendingCount = 0;
-    for (const t of txs) {
+    for (const t of (allTxs ?? [])) {
       if (t?.status === "paid") {
         revenueTotal += t.gross_amount ?? 0;
         paidCount++;
@@ -1265,8 +1280,9 @@ app.get("/admin/overview", async (c) => {
       }
     }
 
-    const vouchers = await kv.getByPrefix("voucher:");
-    const mt = await kv.get("maintenance");
+    const { data: vouchers } = await sql.getDbClient().from("vouchers").select("code");
+    const { data: mtData } = await sql.getDbClient().from("system_config").select("value").eq("key", "maintenance").maybeSingle();
+    const mt = mtData?.value ?? { enabled: false, message: "" };
 
     return c.json({
       total_users: totalUsers,
@@ -1275,7 +1291,7 @@ app.get("/admin/overview", async (c) => {
       revenue_total: revenueTotal,
       paid_transactions: paidCount,
       pending_transactions: pendingCount,
-      voucher_count: vouchers.filter(Boolean).length,
+      voucher_count: vouchers?.length ?? 0,
       maintenance: { enabled: !!mt?.enabled, message: mt?.message ?? "" },
     });
   } catch (e) {
@@ -1401,9 +1417,8 @@ app.get("/admin/vouchers", async (c) => {
   try {
     const gate = await requireAdmin(c);
     if (!gate.user) return gate.response;
-    const vouchers = (await kv.getByPrefix("voucher:")).filter(Boolean);
-    vouchers.sort((a: any, b: any) => String(a.code).localeCompare(String(b.code)));
-    return c.json(vouchers);
+    const { data: vouchers } = await sql.getDbClient().from("vouchers").select("*").order("code");
+    return c.json(vouchers ?? []);
   } catch (e) {
     console.log("GET /admin/vouchers error:", e);
     return c.json({ error: String(e) }, 500);
@@ -1454,10 +1469,11 @@ app.post("/admin/vouchers", async (c) => {
     if (!gate.user) return gate.response;
     const parsed = parseVoucherInput(await c.req.json());
     if (parsed.error) return c.json({ error: parsed.error }, 400);
-    const existing = await kv.get(`voucher:${parsed.voucher.code}`);
+    const { data: existing } = await sql.getDbClient().from("vouchers").select("code").eq("code", parsed.voucher.code).maybeSingle();
     if (existing) return c.json({ error: "A voucher with this code already exists" }, 409);
-    const voucher = { ...parsed.voucher, used_count: 0, created_at: new Date().toISOString() };
-    await kv.set(`voucher:${voucher.code}`, voucher);
+    const now = new Date().toISOString();
+    const voucher = { ...parsed.voucher, used_count: 0, created_at: now, updated_at: now };
+    await sql.getDbClient().from("vouchers").insert(voucher);
     return c.json(voucher, 201);
   } catch (e) {
     console.log("POST /admin/vouchers error:", e);
@@ -1470,17 +1486,18 @@ app.put("/admin/vouchers/:code", async (c) => {
     const gate = await requireAdmin(c);
     if (!gate.user) return gate.response;
     const code = c.req.param("code").toUpperCase();
-    const existing = await kv.get(`voucher:${code}`);
+    const { data: existing } = await sql.getDbClient().from("vouchers").select("*").eq("code", code).maybeSingle();
     if (!existing) return c.json({ error: "Voucher not found" }, 404);
     const parsed = parseVoucherInput({ ...existing, ...(await c.req.json()), code });
     if (parsed.error) return c.json({ error: parsed.error }, 400);
+    const now = new Date().toISOString();
     const voucher = {
       ...parsed.voucher,
       used_count: existing.used_count ?? 0,
-      created_at: existing.created_at ?? null,
-      updated_at: new Date().toISOString(),
+      created_at: existing.created_at ?? now,
+      updated_at: now,
     };
-    await kv.set(`voucher:${code}`, voucher);
+    await sql.getDbClient().from("vouchers").update(voucher).eq("code", code);
     return c.json(voucher);
   } catch (e) {
     console.log("PUT /admin/vouchers error:", e);
@@ -1493,9 +1510,9 @@ app.delete("/admin/vouchers/:code", async (c) => {
     const gate = await requireAdmin(c);
     if (!gate.user) return gate.response;
     const code = c.req.param("code").toUpperCase();
-    const existing = await kv.get(`voucher:${code}`);
+    const { data: existing } = await sql.getDbClient().from("vouchers").select("code").eq("code", code).maybeSingle();
     if (!existing) return c.json({ error: "Voucher not found" }, 404);
-    await kv.del(`voucher:${code}`);
+    await sql.getDbClient().from("vouchers").delete().eq("code", code);
     return c.json({ ok: true });
   } catch (e) {
     console.log("DELETE /admin/vouchers error:", e);
@@ -1509,30 +1526,28 @@ app.get("/admin/subscribers", async (c) => {
     const gate = await requireAdmin(c);
     if (!gate.user) return gate.response;
     const now = new Date();
-    const subs = (await kv.getByPrefix("subscription:")).filter(Boolean);
-    const rows = await Promise.all(
-      subs.map(async (s: any) => {
-        const profile = await kv.get(`profile:${s.user_id}`);
-        const lapsed =
-          s.status === "active" &&
-          s.current_period_end &&
-          new Date(s.current_period_end) < now;
-        return {
-          user_id: s.user_id,
-          email: profile?.email ?? "(no profile)",
-          full_name: profile?.full_name ?? "",
-          company: profile?.company ?? "",
-          plan_id: s.plan_id,
-          interval: s.interval,
-          status: lapsed ? "expired" : s.status,
-          started_at: s.started_at,
-          current_period_end: s.current_period_end,
-        };
-      }),
-    );
-    rows.sort((a, b) =>
-      String(a.current_period_end) < String(b.current_period_end) ? 1 : -1,
-    );
+    const { data: subs } = await sql.getDbClient().from("subscriptions").select("*");
+    const { data: profiles } = await sql.getDbClient().from("profiles").select("*");
+    const profileMap: Record<string, any> = {};
+    for (const p of (profiles ?? [])) {
+      profileMap[p.user_id] = p;
+    }
+    const rows = (subs ?? []).map((s: any) => {
+      const profile = profileMap[s.user_id];
+      const lapsed = s.status === "active" && s.current_period_end && new Date(s.current_period_end) < now;
+      return {
+        user_id: s.user_id,
+        email: profile?.email ?? "(no profile)",
+        full_name: profile?.full_name ?? "",
+        company: profile?.company ?? "",
+        plan_id: s.plan_id,
+        interval: s.interval,
+        status: lapsed ? "expired" : s.status,
+        started_at: s.started_at,
+        current_period_end: s.current_period_end,
+      };
+    });
+    rows.sort((a, b) => String(a.current_period_end) < String(b.current_period_end) ? 1 : -1);
     return c.json(rows);
   } catch (e) {
     console.log("GET /admin/subscribers error:", e);
@@ -1546,13 +1561,17 @@ app.put("/admin/maintenance", async (c) => {
     const gate = await requireAdmin(c);
     if (!gate.user) return gate.response;
     const body = await c.req.json();
+    const now = new Date().toISOString();
     const maintenance = {
       enabled: body.enabled === true,
       message: String(body.message ?? "").slice(0, 500),
-      updated_at: new Date().toISOString(),
+      updated_at: now,
       updated_by: gate.user.email,
     };
-    await kv.set("maintenance", maintenance);
+    await sql.getDbClient().from("system_config").upsert(
+      { key: "maintenance", value: maintenance, updated_at: now },
+      { onConflict: "key" }
+    );
     return c.json({ maintenance });
   } catch (e) {
     console.log("PUT /admin/maintenance error:", e);
@@ -1629,16 +1648,21 @@ app.post("/admin/send-reminders", async (c) => {
     const now = Date.now();
     const cutoff = now + daysAhead * 24 * 60 * 60 * 1000;
 
-    const activeList: string[] = (await kv.get("subscriptions:active")) ?? [];
+    const { data: activeSubs } = await sql.getDbClient().from("subscriptions").select("*").eq("status", "active");
+    const { data: profiles } = await sql.getDbClient().from("profiles").select("*");
+    const profileMap: Record<string, any> = {};
+    for (const p of (profiles ?? [])) {
+      profileMap[p.user_id] = p;
+    }
+
     let sent = 0;
     let skipped = 0;
 
-    for (const userId of activeList) {
-      const sub = await kv.get(`subscription:${userId}`);
-      if (!sub || sub.status !== "active" || !sub.current_period_end) { skipped++; continue; }
+    for (const sub of (activeSubs ?? [])) {
+      if (!sub.current_period_end) { skipped++; continue; }
       const end = new Date(sub.current_period_end).getTime();
       if (end > now && end <= cutoff) {
-        const profile = await kv.get(`profile:${userId}`);
+        const profile = profileMap[sub.user_id];
         const email = profile?.email;
         const name = profile?.full_name || email?.split("@")[0] || "User";
         const daysLeft = Math.ceil((end - now) / (24 * 60 * 60 * 1000));
