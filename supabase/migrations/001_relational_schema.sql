@@ -155,18 +155,22 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+DROP TRIGGER IF EXISTS set_timestamp_workspaces ON workspaces;
 CREATE TRIGGER set_timestamp_workspaces
   BEFORE UPDATE ON workspaces
   FOR EACH ROW EXECUTE FUNCTION trigger_set_timestamp();
 
+DROP TRIGGER IF EXISTS set_timestamp_projects ON projects;
 CREATE TRIGGER set_timestamp_projects
   BEFORE UPDATE ON projects
   FOR EACH ROW EXECUTE FUNCTION trigger_set_timestamp();
 
+DROP TRIGGER IF EXISTS set_timestamp_tasks ON tasks;
 CREATE TRIGGER set_timestamp_tasks
   BEFORE UPDATE ON tasks
   FOR EACH ROW EXECUTE FUNCTION trigger_set_timestamp();
 
+DROP TRIGGER IF EXISTS set_timestamp_calendar_events ON calendar_events;
 CREATE TRIGGER set_timestamp_calendar_events
   BEFORE UPDATE ON calendar_events
   FOR EACH ROW EXECUTE FUNCTION trigger_set_timestamp();
