@@ -978,7 +978,6 @@ CREATE TRIGGER set_timestamp_calendar_events
 -- ── workspaces ────────────────────────────────────────────────────────────────
 ALTER TABLE workspaces ENABLE ROW LEVEL SECURITY;
 
-DROP POLICY IF EXISTS workspaces_select ON workspaces;
 CREATE POLICY workspaces_select ON workspaces
   FOR SELECT TO authenticated
   USING (
@@ -990,13 +989,11 @@ CREATE POLICY workspaces_select ON workspaces
     )
   );
 
-DROP POLICY IF EXISTS workspaces_update ON workspaces;
 CREATE POLICY workspaces_update ON workspaces
   FOR UPDATE TO authenticated
   USING (owner_id = auth.uid())
   WITH CHECK (owner_id = auth.uid());
 
-DROP POLICY IF EXISTS workspaces_delete ON workspaces;
 CREATE POLICY workspaces_delete ON workspaces
   FOR DELETE TO authenticated
   USING (owner_id = auth.uid());
@@ -1005,7 +1002,6 @@ CREATE POLICY workspaces_delete ON workspaces
 ALTER TABLE workspace_members ENABLE ROW LEVEL SECURITY;
 
 -- Members can see other members of workspaces they belong to.
-DROP POLICY IF EXISTS workspace_members_select ON workspace_members;
 CREATE POLICY workspace_members_select ON workspace_members
   FOR SELECT TO authenticated
   USING (
@@ -1018,7 +1014,6 @@ CREATE POLICY workspace_members_select ON workspace_members
   );
 
 -- Only workspace owners can add or remove members.
-DROP POLICY IF EXISTS workspace_members_insert ON workspace_members;
 CREATE POLICY workspace_members_insert ON workspace_members
   FOR INSERT TO authenticated
   WITH CHECK (
@@ -1030,7 +1025,6 @@ CREATE POLICY workspace_members_insert ON workspace_members
     )
   );
 
-DROP POLICY IF EXISTS workspace_members_delete ON workspace_members;
 CREATE POLICY workspace_members_delete ON workspace_members
   FOR DELETE TO authenticated
   USING (
@@ -1046,7 +1040,6 @@ CREATE POLICY workspace_members_delete ON workspace_members
 -- ── projects ──────────────────────────────────────────────────────────────────
 ALTER TABLE projects ENABLE ROW LEVEL SECURITY;
 
-DROP POLICY IF EXISTS projects_select ON projects;
 CREATE POLICY projects_select ON projects
   FOR SELECT TO authenticated
   USING (
@@ -1057,7 +1050,6 @@ CREATE POLICY projects_select ON projects
     )
   );
 
-DROP POLICY IF EXISTS projects_insert ON projects;
 CREATE POLICY projects_insert ON projects
   FOR INSERT TO authenticated
   WITH CHECK (
@@ -1068,7 +1060,6 @@ CREATE POLICY projects_insert ON projects
     )
   );
 
-DROP POLICY IF EXISTS projects_update ON projects;
 CREATE POLICY projects_update ON projects
   FOR UPDATE TO authenticated
   USING (
@@ -1086,7 +1077,6 @@ CREATE POLICY projects_update ON projects
     )
   );
 
-DROP POLICY IF EXISTS projects_delete ON projects;
 CREATE POLICY projects_delete ON projects
   FOR DELETE TO authenticated
   USING (
@@ -1101,7 +1091,6 @@ CREATE POLICY projects_delete ON projects
 -- ── tasks ─────────────────────────────────────────────────────────────────────
 ALTER TABLE tasks ENABLE ROW LEVEL SECURITY;
 
-DROP POLICY IF EXISTS tasks_select ON tasks;
 CREATE POLICY tasks_select ON tasks
   FOR SELECT TO authenticated
   USING (
@@ -1112,7 +1101,6 @@ CREATE POLICY tasks_select ON tasks
     )
   );
 
-DROP POLICY IF EXISTS tasks_insert ON tasks;
 CREATE POLICY tasks_insert ON tasks
   FOR INSERT TO authenticated
   WITH CHECK (
@@ -1123,7 +1111,6 @@ CREATE POLICY tasks_insert ON tasks
     )
   );
 
-DROP POLICY IF EXISTS tasks_update ON tasks;
 CREATE POLICY tasks_update ON tasks
   FOR UPDATE TO authenticated
   USING (
@@ -1141,7 +1128,6 @@ CREATE POLICY tasks_update ON tasks
     )
   );
 
-DROP POLICY IF EXISTS tasks_delete ON tasks;
 CREATE POLICY tasks_delete ON tasks
   FOR DELETE TO authenticated
   USING (
@@ -1156,7 +1142,6 @@ CREATE POLICY tasks_delete ON tasks
 -- ── calendar_events ───────────────────────────────────────────────────────────
 ALTER TABLE calendar_events ENABLE ROW LEVEL SECURITY;
 
-DROP POLICY IF EXISTS calendar_events_select ON calendar_events;
 CREATE POLICY calendar_events_select ON calendar_events
   FOR SELECT TO authenticated
   USING (
@@ -1167,7 +1152,6 @@ CREATE POLICY calendar_events_select ON calendar_events
     )
   );
 
-DROP POLICY IF EXISTS calendar_events_insert ON calendar_events;
 CREATE POLICY calendar_events_insert ON calendar_events
   FOR INSERT TO authenticated
   WITH CHECK (
@@ -1178,7 +1162,6 @@ CREATE POLICY calendar_events_insert ON calendar_events
     )
   );
 
-DROP POLICY IF EXISTS calendar_events_update ON calendar_events;
 CREATE POLICY calendar_events_update ON calendar_events
   FOR UPDATE TO authenticated
   USING (
@@ -1189,7 +1172,6 @@ CREATE POLICY calendar_events_update ON calendar_events
     )
   );
 
-DROP POLICY IF EXISTS calendar_events_delete ON calendar_events;
 CREATE POLICY calendar_events_delete ON calendar_events
   FOR DELETE TO authenticated
   USING (
@@ -1203,7 +1185,6 @@ CREATE POLICY calendar_events_delete ON calendar_events
 -- ── mentions ──────────────────────────────────────────────────────────────────
 ALTER TABLE mentions ENABLE ROW LEVEL SECURITY;
 
-DROP POLICY IF EXISTS mentions_select ON mentions;
 CREATE POLICY mentions_select ON mentions
   FOR SELECT TO authenticated
   USING (
@@ -1214,7 +1195,6 @@ CREATE POLICY mentions_select ON mentions
     )
   );
 
-DROP POLICY IF EXISTS mentions_insert ON mentions;
 CREATE POLICY mentions_insert ON mentions
   FOR INSERT TO authenticated
   WITH CHECK (
@@ -1225,7 +1205,6 @@ CREATE POLICY mentions_insert ON mentions
     )
   );
 
-DROP POLICY IF EXISTS mentions_update ON mentions;
 CREATE POLICY mentions_update ON mentions
   FOR UPDATE TO authenticated
   USING (
@@ -1236,7 +1215,6 @@ CREATE POLICY mentions_update ON mentions
     )
   );
 
-DROP POLICY IF EXISTS mentions_delete ON mentions;
 CREATE POLICY mentions_delete ON mentions
   FOR DELETE TO authenticated
   USING (
@@ -1250,7 +1228,6 @@ CREATE POLICY mentions_delete ON mentions
 -- ── team_activity ─────────────────────────────────────────────────────────────
 ALTER TABLE team_activity ENABLE ROW LEVEL SECURITY;
 
-DROP POLICY IF EXISTS team_activity_select ON team_activity;
 CREATE POLICY team_activity_select ON team_activity
   FOR SELECT TO authenticated
   USING (
@@ -1261,7 +1238,6 @@ CREATE POLICY team_activity_select ON team_activity
     )
   );
 
-DROP POLICY IF EXISTS team_activity_insert ON team_activity;
 CREATE POLICY team_activity_insert ON team_activity
   FOR INSERT TO authenticated
   WITH CHECK (
@@ -1272,7 +1248,6 @@ CREATE POLICY team_activity_insert ON team_activity
     )
   );
 
-DROP POLICY IF EXISTS team_activity_delete ON team_activity;
 CREATE POLICY team_activity_delete ON team_activity
   FOR DELETE TO authenticated
   USING (
@@ -1287,7 +1262,6 @@ CREATE POLICY team_activity_delete ON team_activity
 -- ── file_folders ──────────────────────────────────────────────────────────────
 ALTER TABLE file_folders ENABLE ROW LEVEL SECURITY;
 
-DROP POLICY IF EXISTS file_folders_select ON file_folders;
 CREATE POLICY file_folders_select ON file_folders
   FOR SELECT TO authenticated
   USING (
@@ -1298,7 +1272,6 @@ CREATE POLICY file_folders_select ON file_folders
     )
   );
 
-DROP POLICY IF EXISTS file_folders_insert ON file_folders;
 CREATE POLICY file_folders_insert ON file_folders
   FOR INSERT TO authenticated
   WITH CHECK (
@@ -1309,7 +1282,6 @@ CREATE POLICY file_folders_insert ON file_folders
     )
   );
 
-DROP POLICY IF EXISTS file_folders_delete ON file_folders;
 CREATE POLICY file_folders_delete ON file_folders
   FOR DELETE TO authenticated
   USING (
@@ -1323,7 +1295,6 @@ CREATE POLICY file_folders_delete ON file_folders
 -- ── files ─────────────────────────────────────────────────────────────────────
 ALTER TABLE files ENABLE ROW LEVEL SECURITY;
 
-DROP POLICY IF EXISTS files_select ON files;
 CREATE POLICY files_select ON files
   FOR SELECT TO authenticated
   USING (
@@ -1334,7 +1305,6 @@ CREATE POLICY files_select ON files
     )
   );
 
-DROP POLICY IF EXISTS files_insert ON files;
 CREATE POLICY files_insert ON files
   FOR INSERT TO authenticated
   WITH CHECK (
@@ -1345,7 +1315,6 @@ CREATE POLICY files_insert ON files
     )
   );
 
-DROP POLICY IF EXISTS files_delete ON files;
 CREATE POLICY files_delete ON files
   FOR DELETE TO authenticated
   USING (
@@ -2016,7 +1985,7 @@ BEGIN
     SELECT 1 FROM pg_publication_tables 
     WHERE pubname = 'supabase_realtime' AND tablename = 'teams'
   ) THEN
-    DO $$BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE teams; EXCEPTION WHEN duplicate_object THEN NULL; END$$;
+    ALTER PUBLICATION supabase_realtime ADD TABLE teams;
   END IF;
   ALTER TABLE teams REPLICA IDENTITY FULL;
 
@@ -2025,7 +1994,7 @@ BEGIN
     SELECT 1 FROM pg_publication_tables 
     WHERE pubname = 'supabase_realtime' AND tablename = 'team_members'
   ) THEN
-    DO $$BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE team_members; EXCEPTION WHEN duplicate_object THEN NULL; END$$;
+    ALTER PUBLICATION supabase_realtime ADD TABLE team_members;
   END IF;
   ALTER TABLE team_members REPLICA IDENTITY FULL;
 
@@ -2034,7 +2003,7 @@ BEGIN
     SELECT 1 FROM pg_publication_tables 
     WHERE pubname = 'supabase_realtime' AND tablename = 'workspace_settings'
   ) THEN
-    DO $$BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE workspace_settings; EXCEPTION WHEN duplicate_object THEN NULL; END$$;
+    ALTER PUBLICATION supabase_realtime ADD TABLE workspace_settings;
   END IF;
   ALTER TABLE workspace_settings REPLICA IDENTITY FULL;
 
@@ -2043,7 +2012,7 @@ BEGIN
     SELECT 1 FROM pg_publication_tables 
     WHERE pubname = 'supabase_realtime' AND tablename = 'workspace_financial'
   ) THEN
-    DO $$BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE workspace_financial; EXCEPTION WHEN duplicate_object THEN NULL; END$$;
+    ALTER PUBLICATION supabase_realtime ADD TABLE workspace_financial;
   END IF;
   ALTER TABLE workspace_financial REPLICA IDENTITY FULL;
 
@@ -2052,7 +2021,7 @@ BEGIN
     SELECT 1 FROM pg_publication_tables 
     WHERE pubname = 'supabase_realtime' AND tablename = 'workspace_integrations'
   ) THEN
-    DO $$BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE workspace_integrations; EXCEPTION WHEN duplicate_object THEN NULL; END$$;
+    ALTER PUBLICATION supabase_realtime ADD TABLE workspace_integrations;
   END IF;
   ALTER TABLE workspace_integrations REPLICA IDENTITY FULL;
 
@@ -2061,7 +2030,7 @@ BEGIN
     SELECT 1 FROM pg_publication_tables 
     WHERE pubname = 'supabase_realtime' AND tablename = 'workspace_sessions'
   ) THEN
-    DO $$BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE workspace_sessions; EXCEPTION WHEN duplicate_object THEN NULL; END$$;
+    ALTER PUBLICATION supabase_realtime ADD TABLE workspace_sessions;
   END IF;
   ALTER TABLE workspace_sessions REPLICA IDENTITY FULL;
 
@@ -2070,7 +2039,7 @@ BEGIN
     SELECT 1 FROM pg_publication_tables 
     WHERE pubname = 'supabase_realtime' AND tablename = 'workspace_dashboard'
   ) THEN
-    DO $$BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE workspace_dashboard; EXCEPTION WHEN duplicate_object THEN NULL; END$$;
+    ALTER PUBLICATION supabase_realtime ADD TABLE workspace_dashboard;
   END IF;
   ALTER TABLE workspace_dashboard REPLICA IDENTITY FULL;
 
@@ -2079,7 +2048,7 @@ BEGIN
     SELECT 1 FROM pg_publication_tables 
     WHERE pubname = 'supabase_realtime' AND tablename = 'workspace_analytics'
   ) THEN
-    DO $$BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE workspace_analytics; EXCEPTION WHEN duplicate_object THEN NULL; END$$;
+    ALTER PUBLICATION supabase_realtime ADD TABLE workspace_analytics;
   END IF;
   ALTER TABLE workspace_analytics REPLICA IDENTITY FULL;
 END $$;
@@ -2213,26 +2182,22 @@ CREATE INDEX IF NOT EXISTS idx_milestones_workspace ON workspace_milestones(work
 
 ALTER TABLE workspace_milestones ENABLE ROW LEVEL SECURITY;
 
-DROP POLICY IF EXISTS milestones_select ON workspace_milestones;
 CREATE POLICY milestones_select ON workspace_milestones FOR SELECT TO authenticated
   USING (EXISTS (SELECT 1 FROM workspace_members m WHERE m.workspace_id = workspace_milestones.workspace_id AND m.user_id = auth.uid()));
 
-DROP POLICY IF EXISTS milestones_insert ON workspace_milestones;
 CREATE POLICY milestones_insert ON workspace_milestones FOR INSERT TO authenticated
   WITH CHECK (EXISTS (SELECT 1 FROM workspace_members m WHERE m.workspace_id = workspace_milestones.workspace_id AND m.user_id = auth.uid()));
 
-DROP POLICY IF EXISTS milestones_update ON workspace_milestones;
 CREATE POLICY milestones_update ON workspace_milestones FOR UPDATE TO authenticated
   USING (EXISTS (SELECT 1 FROM workspace_members m WHERE m.workspace_id = workspace_milestones.workspace_id AND m.user_id = auth.uid()));
 
-DROP POLICY IF EXISTS milestones_delete ON workspace_milestones;
 CREATE POLICY milestones_delete ON workspace_milestones FOR DELETE TO authenticated
   USING (EXISTS (SELECT 1 FROM workspace_members m WHERE m.workspace_id = workspace_milestones.workspace_id AND m.user_id = auth.uid()));
 
 DO $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_publication_tables WHERE pubname = 'supabase_realtime' AND tablename = 'workspace_milestones') THEN
-    DO $$BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE workspace_milestones; EXCEPTION WHEN duplicate_object THEN NULL; END$$;
+    ALTER PUBLICATION supabase_realtime ADD TABLE workspace_milestones;
   END IF;
   ALTER TABLE workspace_milestones REPLICA IDENTITY FULL;
 END $$;
@@ -2470,37 +2435,37 @@ BEGIN
 
   -- Profiles
   IF NOT EXISTS (SELECT 1 FROM pg_publication_tables WHERE pubname = 'supabase_realtime' AND tablename = 'profiles') THEN
-    DO $$BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE profiles; EXCEPTION WHEN duplicate_object THEN NULL; END$$;
+    ALTER PUBLICATION supabase_realtime ADD TABLE profiles;
   END IF;
   ALTER TABLE profiles REPLICA IDENTITY FULL;
 
   -- Plans
   IF NOT EXISTS (SELECT 1 FROM pg_publication_tables WHERE pubname = 'supabase_realtime' AND tablename = 'plans') THEN
-    DO $$BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE plans; EXCEPTION WHEN duplicate_object THEN NULL; END$$;
+    ALTER PUBLICATION supabase_realtime ADD TABLE plans;
   END IF;
   ALTER TABLE plans REPLICA IDENTITY FULL;
 
   -- Subscriptions
   IF NOT EXISTS (SELECT 1 FROM pg_publication_tables WHERE pubname = 'supabase_realtime' AND tablename = 'subscriptions') THEN
-    DO $$BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE subscriptions; EXCEPTION WHEN duplicate_object THEN NULL; END$$;
+    ALTER PUBLICATION supabase_realtime ADD TABLE subscriptions;
   END IF;
   ALTER TABLE subscriptions REPLICA IDENTITY FULL;
 
   -- Vouchers
   IF NOT EXISTS (SELECT 1 FROM pg_publication_tables WHERE pubname = 'supabase_realtime' AND tablename = 'vouchers') THEN
-    DO $$BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE vouchers; EXCEPTION WHEN duplicate_object THEN NULL; END$$;
+    ALTER PUBLICATION supabase_realtime ADD TABLE vouchers;
   END IF;
   ALTER TABLE vouchers REPLICA IDENTITY FULL;
 
   -- Transactions
   IF NOT EXISTS (SELECT 1 FROM pg_publication_tables WHERE pubname = 'supabase_realtime' AND tablename = 'transactions') THEN
-    DO $$BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE transactions; EXCEPTION WHEN duplicate_object THEN NULL; END$$;
+    ALTER PUBLICATION supabase_realtime ADD TABLE transactions;
   END IF;
   ALTER TABLE transactions REPLICA IDENTITY FULL;
 
   -- System Config
   IF NOT EXISTS (SELECT 1 FROM pg_publication_tables WHERE pubname = 'supabase_realtime' AND tablename = 'system_config') THEN
-    DO $$BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE system_config; EXCEPTION WHEN duplicate_object THEN NULL; END$$;
+    ALTER PUBLICATION supabase_realtime ADD TABLE system_config;
   END IF;
   ALTER TABLE system_config REPLICA IDENTITY FULL;
 END $$;
@@ -2655,19 +2620,19 @@ BEGIN
 
   -- Notifications
   IF NOT EXISTS (SELECT 1 FROM pg_publication_tables WHERE pubname = 'supabase_realtime' AND tablename = 'notifications') THEN
-    DO $$BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE notifications; EXCEPTION WHEN duplicate_object THEN NULL; END$$;
+    ALTER PUBLICATION supabase_realtime ADD TABLE notifications;
   END IF;
   ALTER TABLE notifications REPLICA IDENTITY FULL;
 
   -- Notification Reads
   IF NOT EXISTS (SELECT 1 FROM pg_publication_tables WHERE pubname = 'supabase_realtime' AND tablename = 'notification_reads') THEN
-    DO $$BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE notification_reads; EXCEPTION WHEN duplicate_object THEN NULL; END$$;
+    ALTER PUBLICATION supabase_realtime ADD TABLE notification_reads;
   END IF;
   ALTER TABLE notification_reads REPLICA IDENTITY FULL;
 
   -- Workspace Invitations
   IF NOT EXISTS (SELECT 1 FROM pg_publication_tables WHERE pubname = 'supabase_realtime' AND tablename = 'workspace_invitations') THEN
-    DO $$BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE workspace_invitations; EXCEPTION WHEN duplicate_object THEN NULL; END$$;
+    ALTER PUBLICATION supabase_realtime ADD TABLE workspace_invitations;
   END IF;
   ALTER TABLE workspace_invitations REPLICA IDENTITY FULL;
 END $$;

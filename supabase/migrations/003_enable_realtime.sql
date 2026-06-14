@@ -11,15 +11,15 @@
 -- or enable Realtime in the Supabase Dashboard (Database → Replication).
 
 -- ── Add tables to Realtime publication ────────────────────────────────────────
-DO $$BEGIN DO $$BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE workspaces; EXCEPTION WHEN duplicate_object THEN NULL; END$$; EXCEPTION WHEN duplicate_object THEN NULL; END$$;
-DO $$BEGIN DO $$BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE workspace_members; EXCEPTION WHEN duplicate_object THEN NULL; END$$; EXCEPTION WHEN duplicate_object THEN NULL; END$$;
-DO $$BEGIN DO $$BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE projects; EXCEPTION WHEN duplicate_object THEN NULL; END$$; EXCEPTION WHEN duplicate_object THEN NULL; END$$;
-DO $$BEGIN DO $$BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE tasks; EXCEPTION WHEN duplicate_object THEN NULL; END$$; EXCEPTION WHEN duplicate_object THEN NULL; END$$;
-DO $$BEGIN DO $$BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE calendar_events; EXCEPTION WHEN duplicate_object THEN NULL; END$$; EXCEPTION WHEN duplicate_object THEN NULL; END$$;
-DO $$BEGIN DO $$BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE mentions; EXCEPTION WHEN duplicate_object THEN NULL; END$$; EXCEPTION WHEN duplicate_object THEN NULL; END$$;
-DO $$BEGIN DO $$BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE team_activity; EXCEPTION WHEN duplicate_object THEN NULL; END$$; EXCEPTION WHEN duplicate_object THEN NULL; END$$;
-DO $$BEGIN DO $$BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE file_folders; EXCEPTION WHEN duplicate_object THEN NULL; END$$; EXCEPTION WHEN duplicate_object THEN NULL; END$$;
-DO $$BEGIN DO $$BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE files; EXCEPTION WHEN duplicate_object THEN NULL; END$$; EXCEPTION WHEN duplicate_object THEN NULL; END$$;
+DO $$BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE workspaces; EXCEPTION WHEN duplicate_object THEN NULL; END$$;
+DO $$BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE workspace_members; EXCEPTION WHEN duplicate_object THEN NULL; END$$;
+DO $$BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE projects; EXCEPTION WHEN duplicate_object THEN NULL; END$$;
+DO $$BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE tasks; EXCEPTION WHEN duplicate_object THEN NULL; END$$;
+DO $$BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE calendar_events; EXCEPTION WHEN duplicate_object THEN NULL; END$$;
+DO $$BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE mentions; EXCEPTION WHEN duplicate_object THEN NULL; END$$;
+DO $$BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE team_activity; EXCEPTION WHEN duplicate_object THEN NULL; END$$;
+DO $$BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE file_folders; EXCEPTION WHEN duplicate_object THEN NULL; END$$;
+DO $$BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE files; EXCEPTION WHEN duplicate_object THEN NULL; END$$;
 
 -- ── Replica Identity FULL ─────────────────────────────────────────────────────
 -- Without FULL, Postgres only sends the primary key on UPDATE/DELETE.

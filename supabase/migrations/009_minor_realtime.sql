@@ -12,7 +12,7 @@ BEGIN
     SELECT 1 FROM pg_publication_tables 
     WHERE pubname = 'supabase_realtime' AND tablename = 'teams'
   ) THEN
-    DO $$BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE teams; EXCEPTION WHEN duplicate_object THEN NULL; END$$;
+    ALTER PUBLICATION supabase_realtime ADD TABLE teams;
   END IF;
   ALTER TABLE teams REPLICA IDENTITY FULL;
 
@@ -21,7 +21,7 @@ BEGIN
     SELECT 1 FROM pg_publication_tables 
     WHERE pubname = 'supabase_realtime' AND tablename = 'team_members'
   ) THEN
-    DO $$BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE team_members; EXCEPTION WHEN duplicate_object THEN NULL; END$$;
+    ALTER PUBLICATION supabase_realtime ADD TABLE team_members;
   END IF;
   ALTER TABLE team_members REPLICA IDENTITY FULL;
 
@@ -30,7 +30,7 @@ BEGIN
     SELECT 1 FROM pg_publication_tables 
     WHERE pubname = 'supabase_realtime' AND tablename = 'workspace_settings'
   ) THEN
-    DO $$BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE workspace_settings; EXCEPTION WHEN duplicate_object THEN NULL; END$$;
+    ALTER PUBLICATION supabase_realtime ADD TABLE workspace_settings;
   END IF;
   ALTER TABLE workspace_settings REPLICA IDENTITY FULL;
 
@@ -39,7 +39,7 @@ BEGIN
     SELECT 1 FROM pg_publication_tables 
     WHERE pubname = 'supabase_realtime' AND tablename = 'workspace_financial'
   ) THEN
-    DO $$BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE workspace_financial; EXCEPTION WHEN duplicate_object THEN NULL; END$$;
+    ALTER PUBLICATION supabase_realtime ADD TABLE workspace_financial;
   END IF;
   ALTER TABLE workspace_financial REPLICA IDENTITY FULL;
 
@@ -48,7 +48,7 @@ BEGIN
     SELECT 1 FROM pg_publication_tables 
     WHERE pubname = 'supabase_realtime' AND tablename = 'workspace_integrations'
   ) THEN
-    DO $$BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE workspace_integrations; EXCEPTION WHEN duplicate_object THEN NULL; END$$;
+    ALTER PUBLICATION supabase_realtime ADD TABLE workspace_integrations;
   END IF;
   ALTER TABLE workspace_integrations REPLICA IDENTITY FULL;
 
@@ -57,7 +57,7 @@ BEGIN
     SELECT 1 FROM pg_publication_tables 
     WHERE pubname = 'supabase_realtime' AND tablename = 'workspace_sessions'
   ) THEN
-    DO $$BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE workspace_sessions; EXCEPTION WHEN duplicate_object THEN NULL; END$$;
+    ALTER PUBLICATION supabase_realtime ADD TABLE workspace_sessions;
   END IF;
   ALTER TABLE workspace_sessions REPLICA IDENTITY FULL;
 
@@ -66,7 +66,7 @@ BEGIN
     SELECT 1 FROM pg_publication_tables 
     WHERE pubname = 'supabase_realtime' AND tablename = 'workspace_dashboard'
   ) THEN
-    DO $$BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE workspace_dashboard; EXCEPTION WHEN duplicate_object THEN NULL; END$$;
+    ALTER PUBLICATION supabase_realtime ADD TABLE workspace_dashboard;
   END IF;
   ALTER TABLE workspace_dashboard REPLICA IDENTITY FULL;
 
@@ -75,7 +75,7 @@ BEGIN
     SELECT 1 FROM pg_publication_tables 
     WHERE pubname = 'supabase_realtime' AND tablename = 'workspace_analytics'
   ) THEN
-    DO $$BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE workspace_analytics; EXCEPTION WHEN duplicate_object THEN NULL; END$$;
+    ALTER PUBLICATION supabase_realtime ADD TABLE workspace_analytics;
   END IF;
   ALTER TABLE workspace_analytics REPLICA IDENTITY FULL;
 END $$;
