@@ -12,6 +12,7 @@
 -- ── workspaces ────────────────────────────────────────────────────────────────
 ALTER TABLE workspaces ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS workspaces_select ON workspaces;
 CREATE POLICY workspaces_select ON workspaces
   FOR SELECT TO authenticated
   USING (
@@ -23,11 +24,13 @@ CREATE POLICY workspaces_select ON workspaces
     )
   );
 
+DROP POLICY IF EXISTS workspaces_update ON workspaces;
 CREATE POLICY workspaces_update ON workspaces
   FOR UPDATE TO authenticated
   USING (owner_id = auth.uid())
   WITH CHECK (owner_id = auth.uid());
 
+DROP POLICY IF EXISTS workspaces_delete ON workspaces;
 CREATE POLICY workspaces_delete ON workspaces
   FOR DELETE TO authenticated
   USING (owner_id = auth.uid());
@@ -36,6 +39,7 @@ CREATE POLICY workspaces_delete ON workspaces
 ALTER TABLE workspace_members ENABLE ROW LEVEL SECURITY;
 
 -- Members can see other members of workspaces they belong to.
+DROP POLICY IF EXISTS workspace_members_select ON workspace_members;
 CREATE POLICY workspace_members_select ON workspace_members
   FOR SELECT TO authenticated
   USING (
@@ -48,6 +52,7 @@ CREATE POLICY workspace_members_select ON workspace_members
   );
 
 -- Only workspace owners can add or remove members.
+DROP POLICY IF EXISTS workspace_members_insert ON workspace_members;
 CREATE POLICY workspace_members_insert ON workspace_members
   FOR INSERT TO authenticated
   WITH CHECK (
@@ -59,6 +64,7 @@ CREATE POLICY workspace_members_insert ON workspace_members
     )
   );
 
+DROP POLICY IF EXISTS workspace_members_delete ON workspace_members;
 CREATE POLICY workspace_members_delete ON workspace_members
   FOR DELETE TO authenticated
   USING (
@@ -74,6 +80,7 @@ CREATE POLICY workspace_members_delete ON workspace_members
 -- ── projects ──────────────────────────────────────────────────────────────────
 ALTER TABLE projects ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS projects_select ON projects;
 CREATE POLICY projects_select ON projects
   FOR SELECT TO authenticated
   USING (
@@ -84,6 +91,7 @@ CREATE POLICY projects_select ON projects
     )
   );
 
+DROP POLICY IF EXISTS projects_insert ON projects;
 CREATE POLICY projects_insert ON projects
   FOR INSERT TO authenticated
   WITH CHECK (
@@ -94,6 +102,7 @@ CREATE POLICY projects_insert ON projects
     )
   );
 
+DROP POLICY IF EXISTS projects_update ON projects;
 CREATE POLICY projects_update ON projects
   FOR UPDATE TO authenticated
   USING (
@@ -111,6 +120,7 @@ CREATE POLICY projects_update ON projects
     )
   );
 
+DROP POLICY IF EXISTS projects_delete ON projects;
 CREATE POLICY projects_delete ON projects
   FOR DELETE TO authenticated
   USING (
@@ -125,6 +135,7 @@ CREATE POLICY projects_delete ON projects
 -- ── tasks ─────────────────────────────────────────────────────────────────────
 ALTER TABLE tasks ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS tasks_select ON tasks;
 CREATE POLICY tasks_select ON tasks
   FOR SELECT TO authenticated
   USING (
@@ -135,6 +146,7 @@ CREATE POLICY tasks_select ON tasks
     )
   );
 
+DROP POLICY IF EXISTS tasks_insert ON tasks;
 CREATE POLICY tasks_insert ON tasks
   FOR INSERT TO authenticated
   WITH CHECK (
@@ -145,6 +157,7 @@ CREATE POLICY tasks_insert ON tasks
     )
   );
 
+DROP POLICY IF EXISTS tasks_update ON tasks;
 CREATE POLICY tasks_update ON tasks
   FOR UPDATE TO authenticated
   USING (
@@ -162,6 +175,7 @@ CREATE POLICY tasks_update ON tasks
     )
   );
 
+DROP POLICY IF EXISTS tasks_delete ON tasks;
 CREATE POLICY tasks_delete ON tasks
   FOR DELETE TO authenticated
   USING (
@@ -176,6 +190,7 @@ CREATE POLICY tasks_delete ON tasks
 -- ── calendar_events ───────────────────────────────────────────────────────────
 ALTER TABLE calendar_events ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS calendar_events_select ON calendar_events;
 CREATE POLICY calendar_events_select ON calendar_events
   FOR SELECT TO authenticated
   USING (
@@ -186,6 +201,7 @@ CREATE POLICY calendar_events_select ON calendar_events
     )
   );
 
+DROP POLICY IF EXISTS calendar_events_insert ON calendar_events;
 CREATE POLICY calendar_events_insert ON calendar_events
   FOR INSERT TO authenticated
   WITH CHECK (
@@ -196,6 +212,7 @@ CREATE POLICY calendar_events_insert ON calendar_events
     )
   );
 
+DROP POLICY IF EXISTS calendar_events_update ON calendar_events;
 CREATE POLICY calendar_events_update ON calendar_events
   FOR UPDATE TO authenticated
   USING (
@@ -206,6 +223,7 @@ CREATE POLICY calendar_events_update ON calendar_events
     )
   );
 
+DROP POLICY IF EXISTS calendar_events_delete ON calendar_events;
 CREATE POLICY calendar_events_delete ON calendar_events
   FOR DELETE TO authenticated
   USING (
@@ -219,6 +237,7 @@ CREATE POLICY calendar_events_delete ON calendar_events
 -- ── mentions ──────────────────────────────────────────────────────────────────
 ALTER TABLE mentions ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS mentions_select ON mentions;
 CREATE POLICY mentions_select ON mentions
   FOR SELECT TO authenticated
   USING (
@@ -229,6 +248,7 @@ CREATE POLICY mentions_select ON mentions
     )
   );
 
+DROP POLICY IF EXISTS mentions_insert ON mentions;
 CREATE POLICY mentions_insert ON mentions
   FOR INSERT TO authenticated
   WITH CHECK (
@@ -239,6 +259,7 @@ CREATE POLICY mentions_insert ON mentions
     )
   );
 
+DROP POLICY IF EXISTS mentions_update ON mentions;
 CREATE POLICY mentions_update ON mentions
   FOR UPDATE TO authenticated
   USING (
@@ -249,6 +270,7 @@ CREATE POLICY mentions_update ON mentions
     )
   );
 
+DROP POLICY IF EXISTS mentions_delete ON mentions;
 CREATE POLICY mentions_delete ON mentions
   FOR DELETE TO authenticated
   USING (
@@ -262,6 +284,7 @@ CREATE POLICY mentions_delete ON mentions
 -- ── team_activity ─────────────────────────────────────────────────────────────
 ALTER TABLE team_activity ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS team_activity_select ON team_activity;
 CREATE POLICY team_activity_select ON team_activity
   FOR SELECT TO authenticated
   USING (
@@ -272,6 +295,7 @@ CREATE POLICY team_activity_select ON team_activity
     )
   );
 
+DROP POLICY IF EXISTS team_activity_insert ON team_activity;
 CREATE POLICY team_activity_insert ON team_activity
   FOR INSERT TO authenticated
   WITH CHECK (
@@ -282,6 +306,7 @@ CREATE POLICY team_activity_insert ON team_activity
     )
   );
 
+DROP POLICY IF EXISTS team_activity_delete ON team_activity;
 CREATE POLICY team_activity_delete ON team_activity
   FOR DELETE TO authenticated
   USING (
@@ -296,6 +321,7 @@ CREATE POLICY team_activity_delete ON team_activity
 -- ── file_folders ──────────────────────────────────────────────────────────────
 ALTER TABLE file_folders ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS file_folders_select ON file_folders;
 CREATE POLICY file_folders_select ON file_folders
   FOR SELECT TO authenticated
   USING (
@@ -306,6 +332,7 @@ CREATE POLICY file_folders_select ON file_folders
     )
   );
 
+DROP POLICY IF EXISTS file_folders_insert ON file_folders;
 CREATE POLICY file_folders_insert ON file_folders
   FOR INSERT TO authenticated
   WITH CHECK (
@@ -316,6 +343,7 @@ CREATE POLICY file_folders_insert ON file_folders
     )
   );
 
+DROP POLICY IF EXISTS file_folders_delete ON file_folders;
 CREATE POLICY file_folders_delete ON file_folders
   FOR DELETE TO authenticated
   USING (
@@ -329,6 +357,7 @@ CREATE POLICY file_folders_delete ON file_folders
 -- ── files ─────────────────────────────────────────────────────────────────────
 ALTER TABLE files ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS files_select ON files;
 CREATE POLICY files_select ON files
   FOR SELECT TO authenticated
   USING (
@@ -339,6 +368,7 @@ CREATE POLICY files_select ON files
     )
   );
 
+DROP POLICY IF EXISTS files_insert ON files;
 CREATE POLICY files_insert ON files
   FOR INSERT TO authenticated
   WITH CHECK (
@@ -349,6 +379,7 @@ CREATE POLICY files_insert ON files
     )
   );
 
+DROP POLICY IF EXISTS files_delete ON files;
 CREATE POLICY files_delete ON files
   FOR DELETE TO authenticated
   USING (
