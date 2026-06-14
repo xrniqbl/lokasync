@@ -618,7 +618,7 @@ SELECT
   elem->>'description',
   COALESCE(elem->>'status', 'active'),
   COALESCE((elem->>'progress')::INTEGER, 0),
-  elem->>'due' as due_date,  -- stored as text in KV; may need manual cleanup
+  (elem->>'due')::date as due_date,  -- stored as text in KV; may need manual cleanup
   COALESCE(
     (SELECT array_agg(x::text) FROM jsonb_array_elements_text(elem->'tags') as x),
     ARRAY[]::TEXT[]
@@ -645,7 +645,7 @@ SELECT
   COALESCE(elem->>'status', 'todo'),
   COALESCE(elem->>'priority', 'medium'),
   elem->>'assignee',
-  elem->>'due' as due_date,
+  (elem->>'due')::date as due_date,
   now(),
   now()
 FROM kv_store_827698a1 t
@@ -1370,7 +1370,7 @@ SELECT
   elem->>'description',
   COALESCE(elem->>'status', 'active'),
   COALESCE((elem->>'progress')::INTEGER, 0),
-  elem->>'due' as due_date,  -- stored as text in KV; may need manual cleanup
+  (elem->>'due')::date as due_date,  -- stored as text in KV; may need manual cleanup
   COALESCE(
     (SELECT array_agg(x::text) FROM jsonb_array_elements_text(elem->'tags') as x),
     ARRAY[]::TEXT[]
@@ -1397,7 +1397,7 @@ SELECT
   COALESCE(elem->>'status', 'todo'),
   COALESCE(elem->>'priority', 'medium'),
   elem->>'assignee',
-  elem->>'due' as due_date,
+  (elem->>'due')::date as due_date,
   now(),
   now()
 FROM kv_store_827698a1 t
