@@ -1,6 +1,8 @@
 import { projectId, publicAnonKey } from "/utils/supabase/info";
 
-const BASE = `https://${projectId}.supabase.co/functions/v1/server`;
+const BASE = import.meta.env.DEV
+  ? "/api"
+  : `https://${projectId}.supabase.co/functions/v1/server`;
 
 // When a user is signed in, every request carries their JWT so the server can
 // enforce plan entitlements. AuthContext keeps this in sync with the session.
