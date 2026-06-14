@@ -2442,8 +2442,6 @@ app.delete("/projects/:id", async (c) => {
 
 app.get("/teams", async (c) => {
   try {
-    const gate = await requirePlan(c, "pro");
-    if (!gate.user) return gate.response;
     const workspace = c.get("workspace");
     const teams = await sql.sqlQueryByWorkspace("teams", workspace.id, "id, name, description");
     let members: any[] = [];
