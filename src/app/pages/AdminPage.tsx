@@ -57,6 +57,7 @@ const TABS: { id: Tab; label: string; icon: typeof LayoutDashboard }[] = [
   { id: "subscribers", label: "Subscribers", icon: Users },
   { id: "maintenance", label: "Maintenance", icon: Wrench },
   { id: "notifications", label: "Notifications", icon: BellRing },
+  { id: "reminders", label: "Reminders", icon: MailWarning },
   { id: "migration", label: "Migration", icon: Database },
 ];
 
@@ -120,7 +121,7 @@ function OverviewTab() {
           {t("admin.maintenanceModeOn")}
         </div>
       )}
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         <StatCard label={t("admin.registeredUsers")} value={String(data.total_users)} />
         <StatCard
           label={t("admin.activeSubscriptions")}
