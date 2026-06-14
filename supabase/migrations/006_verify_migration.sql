@@ -4,7 +4,7 @@
 -- ═══════════════════════════════════════════════════════════════════════════════
 
 -- 1. Row counts per table (compare with your KV data)
-SELECT 'workspaces' as table, count(*) as rows FROM workspaces
+SELECT 'workspaces' as "table", count(*) as rows FROM workspaces
 UNION ALL SELECT 'workspace_members', count(*) FROM workspace_members
 UNION ALL SELECT 'projects', count(*) FROM projects
 UNION ALL SELECT 'tasks', count(*) FROM tasks
@@ -13,7 +13,7 @@ UNION ALL SELECT 'mentions', count(*) FROM mentions
 UNION ALL SELECT 'team_activity', count(*) FROM team_activity
 UNION ALL SELECT 'file_folders', count(*) FROM file_folders
 UNION ALL SELECT 'files', count(*) FROM files
-ORDER BY table;
+ORDER BY "table";
 
 -- 2. Verify tasks have valid project linkage (should be >0 for most workspaces)
 SELECT t.workspace_id, count(*) as tasks_with_project
