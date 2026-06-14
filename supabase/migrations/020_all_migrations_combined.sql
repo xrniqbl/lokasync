@@ -8,7 +8,7 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
 -- ── Workspaces ────────────────────────────────────────────────────────────────
 -- Source of truth for every workspace.
-CREATE TABLE workspaces (
+CREATE TABLE IF NOT EXISTS workspaces (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   name TEXT NOT NULL,
   owner_id UUID NOT NULL,                  -- references auth.users(id)
@@ -17,12 +17,12 @@ CREATE TABLE workspaces (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE INDEX idx_workspaces_owner ON workspaces(owner_id);
-CREATE INDEX idx_workspaces_plan ON workspaces(plan_id);
+CREATE INDEX IF NOT EXISTS idx_workspaces_owner ON workspaces(owner_id);
+CREATE INDEX IF NOT EXISTS idx_workspaces_plan ON workspaces(plan_id);
 
 -- ── Workspace Members ─────────────────────────────────────────────────────────
 -- Many-to-many: users belonging to workspaces with role.
-CREATE TABLE workspace_members (
+CREATE TABLE IF NOT EXISTS workspace_members (
   workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
   user_id UUID NOT NULL,                    -- references auth.users(id)
   role TEXT NOT NULL CHECK (role IN ('owner','member')),
@@ -30,10 +30,10 @@ CREATE TABLE workspace_members (
   PRIMARY KEY (workspace_id, user_id)
 );
 
-CREATE INDEX idx_workspace_members_user ON workspace_members(user_id);
+CREATE INDEX IF NOT EXISTS idx_workspace_members_user ON workspace_members(user_id);
 
 -- ── Projects ──────────────────────────────────────────────────────────────────
-CREATE TABLE projects (
+CREATE TABLE IF NOT EXISTS projects (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   legacy_id INTEGER,                      -- maps to KV integer id during migration
   workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
@@ -47,11 +47,11 @@ CREATE TABLE projects (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE INDEX idx_projects_workspace ON projects(workspace_id);
-CREATE INDEX idx_projects_status ON projects(status);
+CREATE INDEX IF NOT EXISTS idx_projects_workspace ON projects(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_projects_status ON projects(status);
 
 -- ── Tasks ─────────────────────────────────────────────────────────────────────
-CREATE TABLE tasks (
+CREATE TABLE IF NOT EXISTS tasks (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   legacy_id INTEGER,                      -- maps to KV integer id during migration
   workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
@@ -66,15 +66,15 @@ CREATE TABLE tasks (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE INDEX idx_tasks_workspace ON tasks(workspace_id);
-CREATE INDEX idx_tasks_project ON tasks(project_id);
-CREATE INDEX idx_tasks_assignee ON tasks(assignee);
-CREATE INDEX idx_tasks_status ON tasks(status);
-CREATE INDEX idx_tasks_priority ON tasks(priority);
-CREATE INDEX idx_tasks_legacy_id ON tasks(legacy_id);
+CREATE INDEX IF NOT EXISTS idx_tasks_workspace ON tasks(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_tasks_project ON tasks(project_id);
+CREATE INDEX IF NOT EXISTS idx_tasks_assignee ON tasks(assignee);
+CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
+CREATE INDEX IF NOT EXISTS idx_tasks_priority ON tasks(priority);
+CREATE INDEX IF NOT EXISTS idx_tasks_legacy_id ON tasks(legacy_id);
 
 -- ── Calendar Events ───────────────────────────────────────────────────────────
-CREATE TABLE calendar_events (
+CREATE TABLE IF NOT EXISTS calendar_events (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
   title TEXT NOT NULL,
@@ -85,11 +85,11 @@ CREATE TABLE calendar_events (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE INDEX idx_calendar_events_workspace ON calendar_events(workspace_id);
-CREATE INDEX idx_calendar_events_start ON calendar_events(start_time);
+CREATE INDEX IF NOT EXISTS idx_calendar_events_workspace ON calendar_events(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_calendar_events_start ON calendar_events(start_time);
 
 -- ── Mentions ──────────────────────────────────────────────────────────────────
-CREATE TABLE mentions (
+CREATE TABLE IF NOT EXISTS mentions (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
   type TEXT NOT NULL DEFAULT 'mention' CHECK (type IN ('mention','assignment')),
@@ -100,12 +100,12 @@ CREATE TABLE mentions (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE INDEX idx_mentions_workspace ON mentions(workspace_id);
-CREATE INDEX idx_mentions_mentionee ON mentions(mentionee);
-CREATE INDEX idx_mentions_read ON mentions(read);
+CREATE INDEX IF NOT EXISTS idx_mentions_workspace ON mentions(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_mentions_mentionee ON mentions(mentionee);
+CREATE INDEX IF NOT EXISTS idx_mentions_read ON mentions(read);
 
 -- ── Team Activity ─────────────────────────────────────────────────────────────
-CREATE TABLE team_activity (
+CREATE TABLE IF NOT EXISTS team_activity (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
   actor TEXT NOT NULL,
@@ -115,11 +115,11 @@ CREATE TABLE team_activity (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE INDEX idx_team_activity_workspace ON team_activity(workspace_id);
-CREATE INDEX idx_team_activity_created ON team_activity(created_at);
+CREATE INDEX IF NOT EXISTS idx_team_activity_workspace ON team_activity(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_team_activity_created ON team_activity(created_at);
 
 -- ── File Folders ──────────────────────────────────────────────────────────────
-CREATE TABLE file_folders (
+CREATE TABLE IF NOT EXISTS file_folders (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
   name TEXT NOT NULL,
@@ -127,10 +127,10 @@ CREATE TABLE file_folders (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE INDEX idx_file_folders_workspace ON file_folders(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_file_folders_workspace ON file_folders(workspace_id);
 
 -- ── Files ─────────────────────────────────────────────────────────────────────
-CREATE TABLE files (
+CREATE TABLE IF NOT EXISTS files (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
   folder_id UUID REFERENCES file_folders(id) ON DELETE SET NULL,
@@ -143,8 +143,8 @@ CREATE TABLE files (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE INDEX idx_files_workspace ON files(workspace_id);
-CREATE INDEX idx_files_folder ON files(folder_id);
+CREATE INDEX IF NOT EXISTS idx_files_workspace ON files(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_files_folder ON files(folder_id);
 
 -- ── Triggers: auto-update updated_at ──────────────────────────────────────────
 CREATE OR REPLACE FUNCTION trigger_set_timestamp()
@@ -763,7 +763,7 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
 -- ── Workspaces ────────────────────────────────────────────────────────────────
 -- Source of truth for every workspace.
-CREATE TABLE workspaces (
+CREATE TABLE IF NOT EXISTS workspaces (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   name TEXT NOT NULL,
   owner_id UUID NOT NULL,                  -- references auth.users(id)
@@ -772,12 +772,12 @@ CREATE TABLE workspaces (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE INDEX idx_workspaces_owner ON workspaces(owner_id);
-CREATE INDEX idx_workspaces_plan ON workspaces(plan_id);
+CREATE INDEX IF NOT EXISTS idx_workspaces_owner ON workspaces(owner_id);
+CREATE INDEX IF NOT EXISTS idx_workspaces_plan ON workspaces(plan_id);
 
 -- ── Workspace Members ─────────────────────────────────────────────────────────
 -- Many-to-many: users belonging to workspaces with role.
-CREATE TABLE workspace_members (
+CREATE TABLE IF NOT EXISTS workspace_members (
   workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
   user_id UUID NOT NULL,                    -- references auth.users(id)
   role TEXT NOT NULL CHECK (role IN ('owner','member')),
@@ -785,10 +785,10 @@ CREATE TABLE workspace_members (
   PRIMARY KEY (workspace_id, user_id)
 );
 
-CREATE INDEX idx_workspace_members_user ON workspace_members(user_id);
+CREATE INDEX IF NOT EXISTS idx_workspace_members_user ON workspace_members(user_id);
 
 -- ── Projects ──────────────────────────────────────────────────────────────────
-CREATE TABLE projects (
+CREATE TABLE IF NOT EXISTS projects (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   legacy_id INTEGER,                      -- maps to KV integer id during migration
   workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
@@ -802,11 +802,11 @@ CREATE TABLE projects (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE INDEX idx_projects_workspace ON projects(workspace_id);
-CREATE INDEX idx_projects_status ON projects(status);
+CREATE INDEX IF NOT EXISTS idx_projects_workspace ON projects(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_projects_status ON projects(status);
 
 -- ── Tasks ─────────────────────────────────────────────────────────────────────
-CREATE TABLE tasks (
+CREATE TABLE IF NOT EXISTS tasks (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   legacy_id INTEGER,                      -- maps to KV integer id during migration
   workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
@@ -821,15 +821,15 @@ CREATE TABLE tasks (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE INDEX idx_tasks_workspace ON tasks(workspace_id);
-CREATE INDEX idx_tasks_project ON tasks(project_id);
-CREATE INDEX idx_tasks_assignee ON tasks(assignee);
-CREATE INDEX idx_tasks_status ON tasks(status);
-CREATE INDEX idx_tasks_priority ON tasks(priority);
-CREATE INDEX idx_tasks_legacy_id ON tasks(legacy_id);
+CREATE INDEX IF NOT EXISTS idx_tasks_workspace ON tasks(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_tasks_project ON tasks(project_id);
+CREATE INDEX IF NOT EXISTS idx_tasks_assignee ON tasks(assignee);
+CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
+CREATE INDEX IF NOT EXISTS idx_tasks_priority ON tasks(priority);
+CREATE INDEX IF NOT EXISTS idx_tasks_legacy_id ON tasks(legacy_id);
 
 -- ── Calendar Events ───────────────────────────────────────────────────────────
-CREATE TABLE calendar_events (
+CREATE TABLE IF NOT EXISTS calendar_events (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
   title TEXT NOT NULL,
@@ -840,11 +840,11 @@ CREATE TABLE calendar_events (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE INDEX idx_calendar_events_workspace ON calendar_events(workspace_id);
-CREATE INDEX idx_calendar_events_start ON calendar_events(start_time);
+CREATE INDEX IF NOT EXISTS idx_calendar_events_workspace ON calendar_events(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_calendar_events_start ON calendar_events(start_time);
 
 -- ── Mentions ──────────────────────────────────────────────────────────────────
-CREATE TABLE mentions (
+CREATE TABLE IF NOT EXISTS mentions (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
   type TEXT NOT NULL DEFAULT 'mention' CHECK (type IN ('mention','assignment')),
@@ -855,12 +855,12 @@ CREATE TABLE mentions (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE INDEX idx_mentions_workspace ON mentions(workspace_id);
-CREATE INDEX idx_mentions_mentionee ON mentions(mentionee);
-CREATE INDEX idx_mentions_read ON mentions(read);
+CREATE INDEX IF NOT EXISTS idx_mentions_workspace ON mentions(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_mentions_mentionee ON mentions(mentionee);
+CREATE INDEX IF NOT EXISTS idx_mentions_read ON mentions(read);
 
 -- ── Team Activity ─────────────────────────────────────────────────────────────
-CREATE TABLE team_activity (
+CREATE TABLE IF NOT EXISTS team_activity (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
   actor TEXT NOT NULL,
@@ -870,11 +870,11 @@ CREATE TABLE team_activity (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE INDEX idx_team_activity_workspace ON team_activity(workspace_id);
-CREATE INDEX idx_team_activity_created ON team_activity(created_at);
+CREATE INDEX IF NOT EXISTS idx_team_activity_workspace ON team_activity(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_team_activity_created ON team_activity(created_at);
 
 -- ── File Folders ──────────────────────────────────────────────────────────────
-CREATE TABLE file_folders (
+CREATE TABLE IF NOT EXISTS file_folders (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
   name TEXT NOT NULL,
@@ -882,10 +882,10 @@ CREATE TABLE file_folders (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE INDEX idx_file_folders_workspace ON file_folders(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_file_folders_workspace ON file_folders(workspace_id);
 
 -- ── Files ─────────────────────────────────────────────────────────────────────
-CREATE TABLE files (
+CREATE TABLE IF NOT EXISTS files (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
   folder_id UUID REFERENCES file_folders(id) ON DELETE SET NULL,
@@ -898,8 +898,8 @@ CREATE TABLE files (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE INDEX idx_files_workspace ON files(workspace_id);
-CREATE INDEX idx_files_folder ON files(folder_id);
+CREATE INDEX IF NOT EXISTS idx_files_workspace ON files(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_files_folder ON files(folder_id);
 
 -- ── Triggers: auto-update updated_at ──────────────────────────────────────────
 CREATE OR REPLACE FUNCTION trigger_set_timestamp()
@@ -1511,7 +1511,7 @@ ON CONFLICT DO NOTHING;
 -- ═══════════════════════════════════════════════════════════════════════════════
 
 -- 1. Row counts per table (compare with your KV data)
-SELECT 'workspaces' as table, count(*) as rows FROM workspaces
+SELECT 'workspaces' as "table", count(*) as rows FROM workspaces
 UNION ALL SELECT 'workspace_members', count(*) FROM workspace_members
 UNION ALL SELECT 'projects', count(*) FROM projects
 UNION ALL SELECT 'tasks', count(*) FROM tasks
@@ -2541,5 +2541,4 @@ BEGIN
   END IF;
   ALTER TABLE workspace_invitations REPLICA IDENTITY FULL;
 END $$;
-
 
