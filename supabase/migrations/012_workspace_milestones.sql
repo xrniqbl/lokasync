@@ -28,7 +28,7 @@ CREATE POLICY milestones_delete ON workspace_milestones FOR DELETE TO authentica
 DO $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_publication_tables WHERE pubname = 'supabase_realtime' AND tablename = 'workspace_milestones') THEN
-    ALTER PUBLICATION supabase_realtime ADD TABLE workspace_milestones;
+    DO $$BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE workspace_milestones; EXCEPTION WHEN duplicate_object THEN NULL; END$$;
   END IF;
   ALTER TABLE workspace_milestones REPLICA IDENTITY FULL;
 END $$;

@@ -580,15 +580,15 @@ CREATE POLICY files_delete ON files
 -- or enable Realtime in the Supabase Dashboard (Database → Replication).
 
 -- ── Add tables to Realtime publication ────────────────────────────────────────
-ALTER PUBLICATION supabase_realtime ADD TABLE workspaces;
-ALTER PUBLICATION supabase_realtime ADD TABLE workspace_members;
-ALTER PUBLICATION supabase_realtime ADD TABLE projects;
-ALTER PUBLICATION supabase_realtime ADD TABLE tasks;
-ALTER PUBLICATION supabase_realtime ADD TABLE calendar_events;
-ALTER PUBLICATION supabase_realtime ADD TABLE mentions;
-ALTER PUBLICATION supabase_realtime ADD TABLE team_activity;
-ALTER PUBLICATION supabase_realtime ADD TABLE file_folders;
-ALTER PUBLICATION supabase_realtime ADD TABLE files;
+DO $$BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE workspaces; EXCEPTION WHEN duplicate_object THEN NULL; END$$;
+DO $$BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE workspace_members; EXCEPTION WHEN duplicate_object THEN NULL; END$$;
+DO $$BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE projects; EXCEPTION WHEN duplicate_object THEN NULL; END$$;
+DO $$BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE tasks; EXCEPTION WHEN duplicate_object THEN NULL; END$$;
+DO $$BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE calendar_events; EXCEPTION WHEN duplicate_object THEN NULL; END$$;
+DO $$BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE mentions; EXCEPTION WHEN duplicate_object THEN NULL; END$$;
+DO $$BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE team_activity; EXCEPTION WHEN duplicate_object THEN NULL; END$$;
+DO $$BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE file_folders; EXCEPTION WHEN duplicate_object THEN NULL; END$$;
+DO $$BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE files; EXCEPTION WHEN duplicate_object THEN NULL; END$$;
 
 -- ── Replica Identity FULL ─────────────────────────────────────────────────────
 -- Without FULL, Postgres only sends the primary key on UPDATE/DELETE.
@@ -1368,15 +1368,15 @@ CREATE POLICY files_delete ON files
 -- or enable Realtime in the Supabase Dashboard (Database → Replication).
 
 -- ── Add tables to Realtime publication ────────────────────────────────────────
-ALTER PUBLICATION supabase_realtime ADD TABLE workspaces;
-ALTER PUBLICATION supabase_realtime ADD TABLE workspace_members;
-ALTER PUBLICATION supabase_realtime ADD TABLE projects;
-ALTER PUBLICATION supabase_realtime ADD TABLE tasks;
-ALTER PUBLICATION supabase_realtime ADD TABLE calendar_events;
-ALTER PUBLICATION supabase_realtime ADD TABLE mentions;
-ALTER PUBLICATION supabase_realtime ADD TABLE team_activity;
-ALTER PUBLICATION supabase_realtime ADD TABLE file_folders;
-ALTER PUBLICATION supabase_realtime ADD TABLE files;
+DO $$BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE workspaces; EXCEPTION WHEN duplicate_object THEN NULL; END$$;
+DO $$BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE workspace_members; EXCEPTION WHEN duplicate_object THEN NULL; END$$;
+DO $$BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE projects; EXCEPTION WHEN duplicate_object THEN NULL; END$$;
+DO $$BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE tasks; EXCEPTION WHEN duplicate_object THEN NULL; END$$;
+DO $$BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE calendar_events; EXCEPTION WHEN duplicate_object THEN NULL; END$$;
+DO $$BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE mentions; EXCEPTION WHEN duplicate_object THEN NULL; END$$;
+DO $$BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE team_activity; EXCEPTION WHEN duplicate_object THEN NULL; END$$;
+DO $$BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE file_folders; EXCEPTION WHEN duplicate_object THEN NULL; END$$;
+DO $$BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE files; EXCEPTION WHEN duplicate_object THEN NULL; END$$;
 
 -- ── Replica Identity FULL ─────────────────────────────────────────────────────
 -- Without FULL, Postgres only sends the primary key on UPDATE/DELETE.
@@ -2016,7 +2016,7 @@ BEGIN
     SELECT 1 FROM pg_publication_tables 
     WHERE pubname = 'supabase_realtime' AND tablename = 'teams'
   ) THEN
-    ALTER PUBLICATION supabase_realtime ADD TABLE teams;
+    DO $$BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE teams; EXCEPTION WHEN duplicate_object THEN NULL; END$$;
   END IF;
   ALTER TABLE teams REPLICA IDENTITY FULL;
 
@@ -2025,7 +2025,7 @@ BEGIN
     SELECT 1 FROM pg_publication_tables 
     WHERE pubname = 'supabase_realtime' AND tablename = 'team_members'
   ) THEN
-    ALTER PUBLICATION supabase_realtime ADD TABLE team_members;
+    DO $$BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE team_members; EXCEPTION WHEN duplicate_object THEN NULL; END$$;
   END IF;
   ALTER TABLE team_members REPLICA IDENTITY FULL;
 
@@ -2034,7 +2034,7 @@ BEGIN
     SELECT 1 FROM pg_publication_tables 
     WHERE pubname = 'supabase_realtime' AND tablename = 'workspace_settings'
   ) THEN
-    ALTER PUBLICATION supabase_realtime ADD TABLE workspace_settings;
+    DO $$BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE workspace_settings; EXCEPTION WHEN duplicate_object THEN NULL; END$$;
   END IF;
   ALTER TABLE workspace_settings REPLICA IDENTITY FULL;
 
@@ -2043,7 +2043,7 @@ BEGIN
     SELECT 1 FROM pg_publication_tables 
     WHERE pubname = 'supabase_realtime' AND tablename = 'workspace_financial'
   ) THEN
-    ALTER PUBLICATION supabase_realtime ADD TABLE workspace_financial;
+    DO $$BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE workspace_financial; EXCEPTION WHEN duplicate_object THEN NULL; END$$;
   END IF;
   ALTER TABLE workspace_financial REPLICA IDENTITY FULL;
 
@@ -2052,7 +2052,7 @@ BEGIN
     SELECT 1 FROM pg_publication_tables 
     WHERE pubname = 'supabase_realtime' AND tablename = 'workspace_integrations'
   ) THEN
-    ALTER PUBLICATION supabase_realtime ADD TABLE workspace_integrations;
+    DO $$BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE workspace_integrations; EXCEPTION WHEN duplicate_object THEN NULL; END$$;
   END IF;
   ALTER TABLE workspace_integrations REPLICA IDENTITY FULL;
 
@@ -2061,7 +2061,7 @@ BEGIN
     SELECT 1 FROM pg_publication_tables 
     WHERE pubname = 'supabase_realtime' AND tablename = 'workspace_sessions'
   ) THEN
-    ALTER PUBLICATION supabase_realtime ADD TABLE workspace_sessions;
+    DO $$BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE workspace_sessions; EXCEPTION WHEN duplicate_object THEN NULL; END$$;
   END IF;
   ALTER TABLE workspace_sessions REPLICA IDENTITY FULL;
 
@@ -2070,7 +2070,7 @@ BEGIN
     SELECT 1 FROM pg_publication_tables 
     WHERE pubname = 'supabase_realtime' AND tablename = 'workspace_dashboard'
   ) THEN
-    ALTER PUBLICATION supabase_realtime ADD TABLE workspace_dashboard;
+    DO $$BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE workspace_dashboard; EXCEPTION WHEN duplicate_object THEN NULL; END$$;
   END IF;
   ALTER TABLE workspace_dashboard REPLICA IDENTITY FULL;
 
@@ -2079,7 +2079,7 @@ BEGIN
     SELECT 1 FROM pg_publication_tables 
     WHERE pubname = 'supabase_realtime' AND tablename = 'workspace_analytics'
   ) THEN
-    ALTER PUBLICATION supabase_realtime ADD TABLE workspace_analytics;
+    DO $$BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE workspace_analytics; EXCEPTION WHEN duplicate_object THEN NULL; END$$;
   END IF;
   ALTER TABLE workspace_analytics REPLICA IDENTITY FULL;
 END $$;
@@ -2232,7 +2232,7 @@ CREATE POLICY milestones_delete ON workspace_milestones FOR DELETE TO authentica
 DO $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_publication_tables WHERE pubname = 'supabase_realtime' AND tablename = 'workspace_milestones') THEN
-    ALTER PUBLICATION supabase_realtime ADD TABLE workspace_milestones;
+    DO $$BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE workspace_milestones; EXCEPTION WHEN duplicate_object THEN NULL; END$$;
   END IF;
   ALTER TABLE workspace_milestones REPLICA IDENTITY FULL;
 END $$;
@@ -2470,37 +2470,37 @@ BEGIN
 
   -- Profiles
   IF NOT EXISTS (SELECT 1 FROM pg_publication_tables WHERE pubname = 'supabase_realtime' AND tablename = 'profiles') THEN
-    ALTER PUBLICATION supabase_realtime ADD TABLE profiles;
+    DO $$BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE profiles; EXCEPTION WHEN duplicate_object THEN NULL; END$$;
   END IF;
   ALTER TABLE profiles REPLICA IDENTITY FULL;
 
   -- Plans
   IF NOT EXISTS (SELECT 1 FROM pg_publication_tables WHERE pubname = 'supabase_realtime' AND tablename = 'plans') THEN
-    ALTER PUBLICATION supabase_realtime ADD TABLE plans;
+    DO $$BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE plans; EXCEPTION WHEN duplicate_object THEN NULL; END$$;
   END IF;
   ALTER TABLE plans REPLICA IDENTITY FULL;
 
   -- Subscriptions
   IF NOT EXISTS (SELECT 1 FROM pg_publication_tables WHERE pubname = 'supabase_realtime' AND tablename = 'subscriptions') THEN
-    ALTER PUBLICATION supabase_realtime ADD TABLE subscriptions;
+    DO $$BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE subscriptions; EXCEPTION WHEN duplicate_object THEN NULL; END$$;
   END IF;
   ALTER TABLE subscriptions REPLICA IDENTITY FULL;
 
   -- Vouchers
   IF NOT EXISTS (SELECT 1 FROM pg_publication_tables WHERE pubname = 'supabase_realtime' AND tablename = 'vouchers') THEN
-    ALTER PUBLICATION supabase_realtime ADD TABLE vouchers;
+    DO $$BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE vouchers; EXCEPTION WHEN duplicate_object THEN NULL; END$$;
   END IF;
   ALTER TABLE vouchers REPLICA IDENTITY FULL;
 
   -- Transactions
   IF NOT EXISTS (SELECT 1 FROM pg_publication_tables WHERE pubname = 'supabase_realtime' AND tablename = 'transactions') THEN
-    ALTER PUBLICATION supabase_realtime ADD TABLE transactions;
+    DO $$BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE transactions; EXCEPTION WHEN duplicate_object THEN NULL; END$$;
   END IF;
   ALTER TABLE transactions REPLICA IDENTITY FULL;
 
   -- System Config
   IF NOT EXISTS (SELECT 1 FROM pg_publication_tables WHERE pubname = 'supabase_realtime' AND tablename = 'system_config') THEN
-    ALTER PUBLICATION supabase_realtime ADD TABLE system_config;
+    DO $$BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE system_config; EXCEPTION WHEN duplicate_object THEN NULL; END$$;
   END IF;
   ALTER TABLE system_config REPLICA IDENTITY FULL;
 END $$;
@@ -2655,19 +2655,19 @@ BEGIN
 
   -- Notifications
   IF NOT EXISTS (SELECT 1 FROM pg_publication_tables WHERE pubname = 'supabase_realtime' AND tablename = 'notifications') THEN
-    ALTER PUBLICATION supabase_realtime ADD TABLE notifications;
+    DO $$BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE notifications; EXCEPTION WHEN duplicate_object THEN NULL; END$$;
   END IF;
   ALTER TABLE notifications REPLICA IDENTITY FULL;
 
   -- Notification Reads
   IF NOT EXISTS (SELECT 1 FROM pg_publication_tables WHERE pubname = 'supabase_realtime' AND tablename = 'notification_reads') THEN
-    ALTER PUBLICATION supabase_realtime ADD TABLE notification_reads;
+    DO $$BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE notification_reads; EXCEPTION WHEN duplicate_object THEN NULL; END$$;
   END IF;
   ALTER TABLE notification_reads REPLICA IDENTITY FULL;
 
   -- Workspace Invitations
   IF NOT EXISTS (SELECT 1 FROM pg_publication_tables WHERE pubname = 'supabase_realtime' AND tablename = 'workspace_invitations') THEN
-    ALTER PUBLICATION supabase_realtime ADD TABLE workspace_invitations;
+    DO $$BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE workspace_invitations; EXCEPTION WHEN duplicate_object THEN NULL; END$$;
   END IF;
   ALTER TABLE workspace_invitations REPLICA IDENTITY FULL;
 END $$;
