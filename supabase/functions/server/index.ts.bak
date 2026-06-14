@@ -3,9 +3,6 @@ import { cors } from "npm:hono/cors";
 import { logger } from "npm:hono/logger";
 import { createClient } from "jsr:@supabase/supabase-js@2.49.8";
 import * as kv from "./kv_store.tsx";
-import * as ws from "./workspaces.tsx";
-import * as emails from "./emails.tsx";
-import * as sql from "./sql_client.tsx";
 
 // Supabase passes the full request path including the function name
 const app = new Hono().basePath("/server");
@@ -15,7 +12,7 @@ app.use(
   "/*",
   cors({
     origin: "*",
-    allowHeaders: ["Content-Type", "Authorization", "X-Workspace-Id"],
+    allowHeaders: ["Content-Type", "Authorization"],
     allowMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     exposeHeaders: ["Content-Length"],
     maxAge: 600,
@@ -45,8 +42,7 @@ app.use("*", async (c, next) => {
   ) {
     return next();
   }
-  const { data } = await sql.getDbClient().from("system_config").select("value").eq("key", "maintenance").maybeSingle();
-  const mt = data?.value ?? { enabled: false, message: "" };
+  const mt = await kv.get("maintenance");
   if (!mt?.enabled) return next();
   const user = await getAuthedUser(c);
   if (user && isAdminUser(user)) return next();
@@ -60,150 +56,6 @@ app.use("*", async (c, next) => {
     503,
   );
 });
-
-// ── Workspace gate (Fase 14) ──────────────────────────────────────────────────
-// Every project-data route requires a signed-in user AND a valid membership in
-// the active workspace. The workspace comes from the X-Workspace-Id header;
-// without it the user's default workspace is used (legacy clients keep working).
-// All queries are scoped to the membership-validated workspace id — never to a
-// raw client-supplied value (anti-IDOR).
-
-const WORKSPACE_SCOPED_PREFIXES = [
-  "/tasks",
-  "/projects",
-  "/teams",
-  "/calendar",
-  "/files",
-  "/settings",
-  "/financial",
-  "/integrations",
-  "/sessions",
-  "/analytics",
-  "/dashboard",
-  "/milestones",
-  "/workspace-data",
-  "/workspaces",
-];
-
-app.use("*", async (c, next) => {
-  if (c.req.method === "OPTIONS") return next();
-  const path = c.req.path.replace(/^\/server/, "");
-  const scoped = WORKSPACE_SCOPED_PREFIXES.some(
-    (p) => path === p || path.startsWith(p + "/"),
-  );
-  if (!scoped) return next();
-  const user = await getAuthedUser(c);
-  if (!user) return c.json({ error: "Unauthorized" }, 401);
-  const resolved = await ws.resolveWorkspace(
-    c.req.header("X-Workspace-Id") ?? null,
-    user,
-  );
-  if (!resolved) {
-    return c.json(
-      { error: "You are not a member of this workspace", code: "workspace_forbidden" },
-      403,
-    );
-  }
-  c.set("user", user);
-  c.set("workspace", resolved.workspace);
-  c.set("membership", resolved.membership);
-  return next();
-});
-
-// Workspace-scoped KV helpers — only usable inside workspace-gated routes.
-const wsKey = (c: any, key: string) => ws.wsDataKey(c.get("workspace").id, key);
-
-const isOwner = (c: any) => c.get("membership")?.role === "owner";
-
-// Reads a workspace-scoped value; on first access it lazily migrates the
-// pre-Fase-14 global key (dual-read), falling back to the seed.
-async function wsGetOrSeed(c: any, key: string, seed: any): Promise<any> {
-  const scopedKey = wsKey(c, key);
-  let data = await kv.get(scopedKey);
-  if (data === undefined || data === null) {
-    const legacy = await kv.get(key);
-    data = legacy ?? seed;
-    await kv.set(scopedKey, data);
-  }
-  return data;
-}
-
-async function logActivity(c: any, action: string, target: string) {
-  const user = c.get("user");
-  const workspace = c.get("workspace");
-  if (!user || !workspace) return;
-  const actor = user.email || user.user_metadata?.full_name || "Anonymous";
-
-  const ACTION_MAP: Record<string, string> = {
-    create: "created", created: "created", added: "created", add: "created",
-    update: "updated", updated: "updated", edit: "updated", assign: "updated", assigned: "updated",
-    delete: "deleted", deleted: "deleted", remove: "deleted", removed: "deleted",
-    complete: "completed", completed: "completed", finish: "completed", done: "completed",
-    upload: "uploaded", uploaded: "uploaded",
-    leave: "left", left: "left",
-    join: "joined", joined: "joined",
-    comment: "commented", commented: "commented",
-  };
-  const mapped = ACTION_MAP[action.split(/\s+/)[0].toLowerCase()] || "created";
-
-  const t = target.toLowerCase();
-  const a = action.toLowerCase();
-  let targetType = null;
-  if (t.includes("task") || a.includes("task")) targetType = "task";
-  else if (t.includes("project") || a.includes("project")) targetType = "project";
-  else if (t.includes("file") || a.includes("upload")) targetType = "file";
-  else if (t.includes("workspace") || a.includes("join") || a.includes("leave") || a.includes("invite")) targetType = "workspace";
-  else if (a.includes("comment")) targetType = "comment";
-
-  await sql.sqlInsert("team_activity", {
-    workspace_id: workspace.id,
-    actor,
-    action: mapped,
-    target,
-    target_type: targetType,
-    created_at: new Date().toISOString(),
-  });
-}
-
-async function addMention(c: any, mentionee: string, text: string) {
-  const user = c.get("user");
-  const workspace = c.get("workspace");
-  if (!user || !workspace) return;
-  const actor = user.email || user.user_metadata?.full_name || "Anonymous";
-  await sql.sqlInsert("mentions", {
-    workspace_id: workspace.id,
-    mentionee,
-    text,
-    actor,
-    read: false,
-  });
-}
-
-async function broadcastAfterWrite(workspaceId: string, table: string) {
-  try {
-    const client = adminClient();
-    const channel = client.channel(`workspace:${workspaceId}`);
-    await new Promise<void>((resolve) => {
-      channel.subscribe((status: string) => {
-        if (status === "SUBSCRIBED") {
-          channel
-            .send({
-              type: "broadcast",
-              event: "refresh",
-              payload: { table },
-            })
-            .catch(() => {})
-            .finally(() => {
-              client.removeChannel(channel);
-              resolve();
-            });
-        }
-      });
-    });
-  } catch (e) {
-    console.log("broadcast error:", e);
-  }
-}
 
 // ── Seed Data ─────────────────────────────────────────────────────────────────
 
@@ -286,19 +138,19 @@ const SEED_CALENDAR = {
 };
 
 const SEED_FILES = [
-  { name: "Project Proposal — Web App v2.pdf", type: "pdf", size: 2516582, sizeHuman: "2.4 MB", modified: "Jun 7, 2026", owner: "JD", shared: true, archived: false, storagePath: null, url: null, urlExpiresAt: null },
-  { name: "Design System Documentation.figma", type: "figma", size: 18981940, sizeHuman: "18.1 MB", modified: "Jun 6, 2026", owner: "SW", shared: true, archived: false, storagePath: null, url: null, urlExpiresAt: null },
-  { name: "Meeting Notes — Sprint 24.docx", type: "doc", size: 131072, sizeHuman: "128 KB", modified: "Jun 5, 2026", owner: "EM", shared: false, archived: false, storagePath: null, url: null, urlExpiresAt: null },
-  { name: "API Reference v3.pdf", type: "pdf", size: 5976883, sizeHuman: "5.7 MB", modified: "Jun 4, 2026", owner: "MJ", shared: true, archived: false, storagePath: null, url: null, urlExpiresAt: null },
-  { name: "Onboarding Checklist.sheet", type: "sheet", size: 65536, sizeHuman: "64 KB", modified: "Jun 3, 2026", owner: "JD", shared: true, archived: false, storagePath: null, url: null, urlExpiresAt: null },
-  { name: "App Screenshots — iOS.zip", type: "image", size: 35867443, sizeHuman: "34.2 MB", modified: "Jun 2, 2026", owner: "SW", shared: false, archived: false, storagePath: null, url: null, urlExpiresAt: null },
-  { name: "Infrastructure Diagram.diagram", type: "diagram", size: 1153434, sizeHuman: "1.1 MB", modified: "Jun 1, 2026", owner: "AL", shared: true, archived: false, storagePath: null, url: null, urlExpiresAt: null },
-  { name: "Q2 Budget Summary.sheet", type: "sheet", size: 524288, sizeHuman: "512 KB", modified: "May 30, 2026", owner: "EM", shared: false, archived: false, storagePath: null, url: null, urlExpiresAt: null },
-  { name: "Old Brand Guidelines.pdf", type: "pdf", size: 4299162, sizeHuman: "4.1 MB", modified: "Jan 12, 2026", owner: "SW", shared: false, archived: true, storagePath: null, url: null, urlExpiresAt: null },
-  { name: "Legacy API Docs.doc", type: "doc", size: 911360, sizeHuman: "890 KB", modified: "Feb 3, 2026", owner: "MJ", shared: false, archived: true, storagePath: null, url: null, urlExpiresAt: null },
-  { name: "2025 Roadmap.sheet", type: "sheet", size: 225280, sizeHuman: "220 KB", modified: "Dec 15, 2025", owner: "EM", shared: true, archived: true, storagePath: null, url: null, urlExpiresAt: null },
-  { name: "Old Logo Pack.zip", type: "image", size: 13004902, sizeHuman: "12.4 MB", modified: "Nov 5, 2025", owner: "SW", shared: false, archived: true, storagePath: null, url: null, urlExpiresAt: null },
-  { name: "Deprecated Auth Module.code", type: "code", size: 79872, sizeHuman: "78 KB", modified: "Oct 20, 2025", owner: "JD", shared: false, archived: true, storagePath: null, url: null, urlExpiresAt: null },
+  { name: "Project Proposal — Web App v2.pdf", type: "pdf", size: "2.4 MB", modified: "Jun 7, 2026", owner: "JD", shared: true, archived: false },
+  { name: "Design System Documentation.figma", type: "figma", size: "18.1 MB", modified: "Jun 6, 2026", owner: "SW", shared: true, archived: false },
+  { name: "Meeting Notes — Sprint 24.docx", type: "doc", size: "128 KB", modified: "Jun 5, 2026", owner: "EM", shared: false, archived: false },
+  { name: "API Reference v3.pdf", type: "pdf", size: "5.7 MB", modified: "Jun 4, 2026", owner: "MJ", shared: true, archived: false },
+  { name: "Onboarding Checklist.sheet", type: "sheet", size: "64 KB", modified: "Jun 3, 2026", owner: "JD", shared: true, archived: false },
+  { name: "App Screenshots — iOS.zip", type: "image", size: "34.2 MB", modified: "Jun 2, 2026", owner: "SW", shared: false, archived: false },
+  { name: "Infrastructure Diagram.diagram", type: "diagram", size: "1.1 MB", modified: "Jun 1, 2026", owner: "AL", shared: true, archived: false },
+  { name: "Q2 Budget Summary.sheet", type: "sheet", size: "512 KB", modified: "May 30, 2026", owner: "EM", shared: false, archived: false },
+  { name: "Old Brand Guidelines.pdf", type: "pdf", size: "4.1 MB", modified: "Jan 12, 2026", owner: "SW", shared: false, archived: true },
+  { name: "Legacy API Docs.doc", type: "doc", size: "890 KB", modified: "Feb 3, 2026", owner: "MJ", shared: false, archived: true },
+  { name: "2025 Roadmap.sheet", type: "sheet", size: "220 KB", modified: "Dec 15, 2025", owner: "EM", shared: true, archived: true },
+  { name: "Old Logo Pack.zip", type: "image", size: "12.4 MB", modified: "Nov 5, 2025", owner: "SW", shared: false, archived: true },
+  { name: "Deprecated Auth Module.code", type: "code", size: "78 KB", modified: "Oct 20, 2025", owner: "JD", shared: false, archived: true },
 ];
 
 const SEED_FOLDERS = [
@@ -415,6 +267,17 @@ const SEED_AUDIT_LOG = [
   { id: 15, actor: "JD", actorName: "John Doe", action: "Exported data", target: "All Tasks (CSV)", ip: "192.168.1.10", timestamp: "Jun 6, 2026 05:10 PM", category: "Settings" },
 ];
 
+// ── Helper ────────────────────────────────────────────────────────────────────
+
+async function getOrSeed(key: string, seed: any): Promise<any> {
+  let data = await kv.get(key);
+  if (data === undefined || data === null) {
+    await kv.set(key, seed);
+    data = seed;
+  }
+  return data;
+}
+
 // ── Health ────────────────────────────────────────────────────────────────────
 
 app.get("/health", (c) => c.json({ status: "ok" }));
@@ -445,17 +308,18 @@ const PLAN_RANK: Record<string, number> = { free: 0, pro: 1, business: 2 };
 const FREE_MAX_PROJECTS = 3;
 
 async function getEffectivePlanId(userId: string): Promise<string> {
-  const { data: subscription } = await sql.getDbClient().from("subscriptions").select("*").eq("user_id", userId).maybeSingle();
+  let subscription = await kv.get(`subscription:${userId}`);
   if (
     subscription?.status === "active" &&
     subscription.current_period_end &&
     new Date(subscription.current_period_end) < new Date()
   ) {
-    await sql.getDbClient().from("subscriptions").update({
+    subscription = {
+      ...subscription,
       status: "expired",
       updated_at: new Date().toISOString(),
-    }).eq("user_id", userId);
-    return "free";
+    };
+    await kv.set(`subscription:${userId}`, subscription);
   }
   return subscription?.status === "active" ? subscription.plan_id : "free";
 }
@@ -467,17 +331,7 @@ async function requirePlan(c: any, min: "pro" | "business") {
   if (!user) {
     return { user: null, response: c.json({ error: "Unauthorized" }, 401) };
   }
-  let planId = await getEffectivePlanId(user.id);
-  // If personal plan is insufficient, borrow the workspace owner's plan
-  if ((PLAN_RANK[planId] ?? 0) < PLAN_RANK[min]) {
-    const workspaceId = c.req.header("X-Workspace-Id");
-    if (workspaceId) {
-      const workspacePlan = await ws.getWorkspacePlan(workspaceId);
-      if ((PLAN_RANK[workspacePlan] ?? 0) >= PLAN_RANK[min]) {
-        planId = workspacePlan;
-      }
-    }
-  }
+  const planId = await getEffectivePlanId(user.id);
   if ((PLAN_RANK[planId] ?? 0) < PLAN_RANK[min]) {
     return {
       user: null,
@@ -507,54 +361,6 @@ const adminEmails = () =>
 const isAdminUser = (user: any) =>
   !!user?.email && adminEmails().includes(String(user.email).toLowerCase());
 
-// ── Storage helpers (Fase 12) ─────────────────────────────────────────────────
-
-function storageClient() {
-  const url = Deno.env.get("SUPABASE_URL");
-  const key = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-  if (!url || !key) return null;
-  return createClient(url, key, { auth: { autoRefreshToken: false, persistSession: false } });
-}
-
-function humanSize(bytes: number): string {
-  if (bytes === 0) return "0 B";
-  const k = 1024;
-  const sizes = ["B", "KB", "MB", "GB", "TB"];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + " " + sizes[i];
-}
-
-const PLAN_STORAGE_LIMITS: Record<string, number> = {
-  free: 1 * 1024 * 1024 * 1024,      // 1 GB
-  pro: 25 * 1024 * 1024 * 1024,      // 25 GB
-  business: 0,                         // 0 = unlimited
-};
-
-async function getStorageUsage(c: any): Promise<{ used: number; limit: number }> {
-  const user = c.get("user");
-  const workspace = c.get("workspace");
-  const { data: sub } = await sql.getDbClient().from("subscriptions").select("plan_id").eq("user_id", user.id).maybeSingle();
-  const planId = sub?.plan_id ?? "free";
-  const limit = PLAN_STORAGE_LIMITS[planId] ?? PLAN_STORAGE_LIMITS.free;
-  if (!workspace) return { used: 0, limit };
-  const rows = await sql.sqlQueryByWorkspace("files", workspace.id, "size_bytes");
-  const used = rows.reduce((sum: number, f: any) => sum + (f.size_bytes || 0), 0);
-  return { used, limit };
-}
-
-async function checkStorageQuota(c: any, additionalBytes: number): Promise<{ allowed: boolean; used: number; limit: number }> {
-  const { used, limit } = await getStorageUsage(c);
-  if (limit > 0 && used + additionalBytes > limit) {
-    return { allowed: false, used, limit };
-  }
-  return { allowed: true, used, limit };
-}
-
-async function incrementStorageUsage(_c: any, _deltaBytes: number) {
-  // Storage usage is now computed live from the SQL files table.
-  // Call sites kept for compatibility; getStorageUsage() recalculates on demand.
-}
-
 async function requireAdmin(c: any) {
   const user = await getAuthedUser(c);
   if (!user) {
@@ -569,8 +375,7 @@ async function requireAdmin(c: any) {
 // Public service status — the client uses this to render the maintenance screen
 app.get("/status", async (c) => {
   try {
-    const { data } = await sql.getDbClient().from("system_config").select("value").eq("key", "maintenance").maybeSingle();
-    const mt = data?.value ?? { enabled: false, message: "" };
+    const mt = await kv.get("maintenance");
     return c.json({
       maintenance: {
         enabled: !!mt?.enabled,
@@ -587,12 +392,12 @@ app.get("/profile", async (c) => {
   try {
     const user = await getAuthedUser(c);
     if (!user) return c.json({ error: "Unauthorized" }, 401);
-    const { data: profile } = await sql.getDbClient().from("profiles").select("*").eq("user_id", user.id).maybeSingle();
+    let profile = await kv.get(`profile:${user.id}`);
     // Lazy migration: accounts registered before phase 3 only have user_metadata
     if (!profile && user.user_metadata?.full_name) {
       const meta = user.user_metadata;
       const now = new Date().toISOString();
-      const newProfile = {
+      profile = {
         user_id: user.id,
         email: user.email ?? "",
         full_name: meta.full_name,
@@ -602,10 +407,9 @@ app.get("/profile", async (c) => {
         created_at: now,
         updated_at: now,
       };
-      await sql.getDbClient().from("profiles").insert(newProfile);
-      return c.json({ profile: { ...newProfile } });
+      await kv.set(`profile:${user.id}`, profile);
     }
-    return c.json({ profile });
+    return c.json({ profile: profile ?? null });
   } catch (e) {
     console.log("GET /profile error:", e);
     return c.json({ error: String(e) }, 500);
@@ -670,44 +474,20 @@ const SEED_PLANS = [
 // rebranding or price changes in SEED_PLANS).
 const PLANS_SEED_VERSION = 2;
 
+async function getPlansFromKv(): Promise<any[]> {
+  const version = await kv.get("plans_seed_version");
+  if (version !== PLANS_SEED_VERSION) {
+    await kv.set("plans", SEED_PLANS);
+    await kv.set("plans_seed_version", PLANS_SEED_VERSION);
+    return SEED_PLANS;
+  }
+  return await getOrSeed("plans", SEED_PLANS);
+}
+
 app.get("/plans", async (c) => {
   try {
-    const { data: plans } = await sql.getDbClient().from("plans").select("*").eq("active", true).order("sort_order", { ascending: true });
-    if (!plans?.length) {
-      // Seed plans into SQL
-      const now = new Date().toISOString();
-      for (const p of SEED_PLANS) {
-        await sql.getDbClient().from("plans").insert({
-          plan_id: p.id,
-          name: p.name,
-          description: p.description,
-          monthly_price: p.monthly,
-          yearly_price: p.yearly,
-          price: p.monthly,
-          features: JSON.stringify(p.features),
-          storage_limit: PLAN_STORAGE_LIMITS[p.id] ?? 0,
-          max_projects: p.id === "free" ? 3 : p.id === "pro" ? 100 : 999,
-          max_members: p.id === "free" ? 1 : p.id === "pro" ? 50 : 500,
-          highlighted: p.highlighted ?? false,
-          active: true,
-          sort_order: p.id === "free" ? 1 : p.id === "pro" ? 2 : 3,
-          created_at: now,
-          updated_at: now,
-        });
-      }
-      const { data: seeded } = await sql.getDbClient().from("plans").select("*").eq("active", true).order("sort_order", { ascending: true });
-      return c.json(seeded.map((p: any) => ({ ...p, id: p.plan_id })));
-    }
-    return c.json(plans.map((p: any) => ({
-      id: p.plan_id,
-      name: p.name,
-      description: p.description,
-      currency: "IDR",
-      monthly: p.monthly_price,
-      yearly: p.yearly_price,
-      features: typeof p.features === "string" ? JSON.parse(p.features) : p.features,
-      highlighted: p.highlighted,
-    })));
+    const plans = await getPlansFromKv();
+    return c.json(plans);
   } catch (e) {
     console.log("GET /plans error:", e);
     return c.json({ error: String(e) }, 500);
@@ -752,14 +532,21 @@ app.post("/vouchers/validate", async (c) => {
     const interval = body.interval === "yearly" ? "yearly" : "monthly";
     if (!code) return c.json({ valid: false, reason: "Enter a voucher code" });
 
-    const { data: plans } = await sql.getDbClient().from("plans").select("*").eq("active", true).order("sort_order", { ascending: true });
-    const plan = plans?.find((p: any) => p.plan_id === planId);
-    if (!plan || plan.price === 0) {
+    const plans = await getPlansFromKv();
+    const plan = plans.find((p: any) => p.id === planId);
+    if (!plan || plan.monthly === 0) {
       return c.json({ valid: false, reason: "Invalid plan" });
     }
-    const base = interval === "yearly" ? (plan.price * 12) : plan.price;
+    const base = interval === "yearly" ? plan.yearly : plan.monthly;
 
-    const { data: voucher } = await sql.getDbClient().from("vouchers").select("*").eq("code", code).maybeSingle();
+    let voucher = await kv.get(`voucher:${code}`);
+    if (!voucher) {
+      const seed = SEED_VOUCHERS.find((v) => v.code === code);
+      if (seed) {
+        voucher = seed;
+        await kv.set(`voucher:${code}`, seed);
+      }
+    }
 
     if (!voucher || !voucher.active) {
       return c.json({ valid: false, reason: "This voucher code is not valid" });
@@ -770,7 +557,7 @@ app.post("/vouchers/validate", async (c) => {
     if (voucher.max_uses != null && voucher.used_count >= voucher.max_uses) {
       return c.json({ valid: false, reason: "This voucher has reached its usage limit" });
     }
-    if (voucher.applies_to && !voucher.applies_to.includes(planId)) {
+    if (voucher.applies_to && !voucher.applies_to.includes(plan.id)) {
       return c.json({ valid: false, reason: `This voucher does not apply to the ${plan.name} plan` });
     }
 
@@ -851,19 +638,13 @@ async function applyTransactionStatus(tx: any, midtransData: any) {
     transaction_time: midtransData.transaction_time ?? null,
   };
   tx.updated_at = now;
-
-  // Update transaction in SQL
-  await sql.getDbClient().from("transactions").update({
-    status: tx.status,
-    midtrans: tx.midtrans,
-    updated_at: now,
-  }).eq("order_id", tx.order_id);
+  await kv.set(`transaction:${tx.order_id}`, tx);
 
   if (status === "paid" && !alreadyPaid) {
     const started = new Date();
     // Renewing the SAME plan while still active extends the remaining period;
     // anything else (new plan, expired sub) starts a fresh period from now.
-    const { data: existing } = await sql.getDbClient().from("subscriptions").select("*").eq("user_id", tx.user_id).maybeSingle();
+    const existing = await kv.get(`subscription:${tx.user_id}`);
     const extendsExisting =
       existing?.status === "active" &&
       existing.plan_id === tx.plan_id &&
@@ -872,9 +653,7 @@ async function applyTransactionStatus(tx: any, midtransData: any) {
     const periodBase = extendsExisting
       ? new Date(existing.current_period_end)
       : started;
-
-    // Upsert subscription in SQL
-    await sql.getDbClient().from("subscriptions").upsert({
+    await kv.set(`subscription:${tx.user_id}`, {
       user_id: tx.user_id,
       plan_id: tx.plan_id,
       interval: tx.interval,
@@ -883,44 +662,13 @@ async function applyTransactionStatus(tx: any, midtransData: any) {
       started_at: extendsExisting ? existing.started_at : started.toISOString(),
       current_period_end: periodEnd(tx.interval, periodBase),
       updated_at: now,
-    }, { onConflict: "user_id" });
-
-    // Sync workspace plans so invited members inherit the owner's subscription
-    await ws.syncWorkspacePlans(tx.user_id, tx.plan_id);
-
+    });
     if (tx.voucher_code) {
-      const { data: voucher } = await sql.getDbClient().from("vouchers").select("*").eq("code", tx.voucher_code).maybeSingle();
+      const voucher = await kv.get(`voucher:${tx.voucher_code}`);
       if (voucher) {
-        await sql.getDbClient().from("vouchers").update({
-          used_count: (voucher.used_count ?? 0) + 1,
-          updated_at: now,
-        }).eq("code", tx.voucher_code);
+        voucher.used_count = (voucher.used_count ?? 0) + 1;
+        await kv.set(`voucher:${tx.voucher_code}`, voucher);
       }
-    }
-
-    // ── Send payment receipt email (Fase 13.2) ─────────────────────────────
-    try {
-      const { data: rawProfile } = await sql.getDbClient().from("profiles").select("*").eq("user_id", tx.user_id).maybeSingle();
-      const userEmail = rawProfile?.email;
-      const userName = [rawProfile?.first_name, rawProfile?.last_name].filter(Boolean).join(" ") || userEmail?.split("@")[0] || "User";
-      const { data: sub } = await sql.getDbClient().from("subscriptions").select("*").eq("user_id", tx.user_id).maybeSingle();
-      if (userEmail) {
-        const periodEndStr = sub?.current_period_end ?? periodEnd(tx.interval, started);
-        const html = emails.receiptHtml({
-          userName,
-          planName: tx.plan_name || tx.plan_id,
-          interval: tx.interval,
-          amount: tx.gross_amount,
-          currency: tx.currency || "IDR",
-          orderId: tx.order_id,
-          periodEnd: periodEndStr,
-          paymentType: midtransData.payment_type ?? null,
-        });
-        await emails.sendEmail(userEmail, "Your LokaSync payment receipt", html);
-      }
-    } catch (emailErr) {
-      // Email failure must never break the transaction
-      console.log("Receipt email failed:", emailErr);
     }
   }
   return tx;
@@ -955,13 +703,8 @@ app.post("/payments/checkout", async (c) => {
       );
     }
 
-    const { data: rawProfile } = await sql.getDbClient().from("profiles").select("*").eq("user_id", user.id).maybeSingle();
-    if (!rawProfile) return c.json({ error: "Complete your profile first" }, 400);
-    const profile = {
-      full_name: [rawProfile.first_name, rawProfile.last_name].filter(Boolean).join(" "),
-      email: rawProfile.email,
-      phone: rawProfile.phone,
-    };
+    const profile = await kv.get(`profile:${user.id}`);
+    if (!profile) return c.json({ error: "Complete your profile first" }, 400);
 
     const body = await c.req.json();
     const planId = String(body.plan_id ?? "");
@@ -970,16 +713,7 @@ app.post("/payments/checkout", async (c) => {
       ? String(body.voucher_code).trim().toUpperCase()
       : null;
 
-    const { data: rawPlans } = await sql.getDbClient().from("plans").select("*").eq("active", true).order("sort_order", { ascending: true });
-    if (!rawPlans?.length) return c.json({ error: "Plans not found" }, 400);
-    const plans = rawPlans.map((p: any) => ({
-      id: p.plan_id,
-      name: p.name,
-      description: p.description,
-      monthly: p.monthly_price,
-      yearly: p.yearly_price,
-      features: typeof p.features === "string" ? JSON.parse(p.features) : p.features,
-    }));
+    const plans = await getPlansFromKv();
     const plan = plans.find((p: any) => p.id === planId);
     if (!plan || plan.monthly === 0) return c.json({ error: "Invalid plan" }, 400);
     const base = interval === "yearly" ? plan.yearly : plan.monthly;
@@ -987,7 +721,7 @@ app.post("/payments/checkout", async (c) => {
     // Recompute the voucher server-side — never trust client totals
     let discount = 0;
     if (voucherCode) {
-      const { data: voucher } = await sql.getDbClient().from("vouchers").select("*").eq("code", voucherCode).maybeSingle();
+      const voucher = await kv.get(`voucher:${voucherCode}`);
       const usable =
         voucher &&
         voucher.active &&
@@ -995,12 +729,10 @@ app.post("/payments/checkout", async (c) => {
         (voucher.max_uses == null || voucher.used_count < voucher.max_uses) &&
         (!voucher.applies_to || voucher.applies_to.includes(plan.id));
       if (!usable) return c.json({ error: "This voucher code is not valid" }, 400);
-      const vType = voucher.discount_type ?? "percentage";
-      const vValue = voucher.discount_value ?? 0;
       discount =
-        vType === "percentage"
-          ? Math.round((base * vValue) / 100)
-          : Math.min(vValue, base);
+        voucher.type === "percent"
+          ? Math.round((base * voucher.value) / 100)
+          : Math.min(voucher.value, base);
     }
     const total = base - discount;
 
@@ -1060,7 +792,7 @@ app.post("/payments/checkout", async (c) => {
     const snap = await snapRes.json();
 
     const now = new Date().toISOString();
-    await sql.getDbClient().from("transactions").insert({
+    await kv.set(`transaction:${orderId}`, {
       order_id: orderId,
       user_id: user.id,
       plan_id: plan.id,
@@ -1071,7 +803,7 @@ app.post("/payments/checkout", async (c) => {
       voucher_code: voucherCode,
       gross_amount: total,
       status: "pending",
-      midtrans: { snap_token: snap.token },
+      snap_token: snap.token,
       created_at: now,
       updated_at: now,
     });
@@ -1112,7 +844,7 @@ app.post("/payments/webhook", async (c) => {
       return c.json({ error: "Invalid signature" }, 403);
     }
 
-    const { data: tx } = await sql.getDbClient().from("transactions").select("*").eq("order_id", order_id).maybeSingle();
+    const tx = await kv.get(`transaction:${order_id}`);
     if (!tx) return c.json({ error: "Unknown order" }, 404);
 
     await applyTransactionStatus(tx, body);
@@ -1129,7 +861,7 @@ app.get("/payments/status/:orderId", async (c) => {
     if (!user) return c.json({ error: "Unauthorized" }, 401);
 
     const orderId = c.req.param("orderId");
-    let { data: tx } = await sql.getDbClient().from("transactions").select("*").eq("order_id", orderId).maybeSingle();
+    let tx = await kv.get(`transaction:${orderId}`);
     if (!tx || tx.user_id !== user.id) {
       return c.json({ error: "Order not found" }, 404);
     }
@@ -1152,7 +884,7 @@ app.get("/payments/status/:orderId", async (c) => {
       }
     }
 
-    const { data: subscription } = await sql.getDbClient().from("subscriptions").select("*").eq("user_id", user.id).maybeSingle();
+    const subscription = await kv.get(`subscription:${user.id}`);
     return c.json({
       order_id: tx.order_id,
       status: tx.status,
@@ -1161,7 +893,7 @@ app.get("/payments/status/:orderId", async (c) => {
       interval: tx.interval,
       gross_amount: tx.gross_amount,
       payment_type: tx.midtrans?.payment_type ?? null,
-      subscription,
+      subscription: subscription ?? null,
     });
   } catch (e) {
     console.log("GET /payments/status error:", e);
@@ -1178,7 +910,7 @@ app.get("/subscription", async (c) => {
     const user = await getAuthedUser(c);
     if (!user) return c.json({ error: "Unauthorized" }, 401);
 
-    let { data: subscription } = await sql.getDbClient().from("subscriptions").select("*").eq("user_id", user.id).maybeSingle();
+    let subscription = await kv.get(`subscription:${user.id}`);
     if (
       subscription?.status === "active" &&
       subscription.current_period_end &&
@@ -1189,30 +921,39 @@ app.get("/subscription", async (c) => {
         status: "expired",
         updated_at: new Date().toISOString(),
       };
-      await sql.getDbClient().from("subscriptions").update({ status: "expired", updated_at: subscription.updated_at }).eq("user_id", user.id);
+      await kv.set(`subscription:${user.id}`, subscription);
     }
 
-    const planId = subscription?.status === "active" ? subscription.plan_id : "free";
-    const { data: plans } = await sql.getDbClient().from("plans").select("*").eq("active", true).order("sort_order", { ascending: true });
-    const plan = plans?.find((p: any) => p.plan_id === planId) ?? plans?.find((p: any) => p.plan_id === "free");
+    const planId =
+      subscription?.status === "active" ? subscription.plan_id : "free";
+    const plans = await getPlansFromKv();
+    const plan =
+      plans.find((p: any) => p.id === planId) ??
+      plans.find((p: any) => p.id === "free");
 
-    const { data: txRows } = await sql.getDbClient().from("transactions").select("*").eq("user_id", user.id).order("created_at", { ascending: false }).limit(20);
-    const transactions = (txRows ?? []).map((t: any) => ({
-      order_id: t.order_id,
-      plan_id: t.plan_id,
-      plan_name: t.plan_name,
-      interval: t.interval,
-      gross_amount: t.gross_amount,
-      discount: t.discount ?? 0,
-      voucher_code: t.voucher_code ?? null,
-      status: t.status,
-      payment_type: t.midtrans?.payment_type ?? null,
-      created_at: t.created_at,
-    }));
+    const all = await kv.getByPrefix("transaction:");
+    const transactions = all
+      .filter((t: any) => t?.user_id === user.id)
+      .sort((a: any, b: any) =>
+        String(a.created_at) < String(b.created_at) ? 1 : -1,
+      )
+      .slice(0, 20)
+      .map((t: any) => ({
+        order_id: t.order_id,
+        plan_id: t.plan_id,
+        plan_name: t.plan_name,
+        interval: t.interval,
+        gross_amount: t.gross_amount,
+        discount: t.discount ?? 0,
+        voucher_code: t.voucher_code ?? null,
+        status: t.status,
+        payment_type: t.midtrans?.payment_type ?? null,
+        created_at: t.created_at,
+      }));
 
     return c.json({
-      subscription,
-      effective_plan: plan ? { ...plan, id: plan.plan_id } : null,
+      subscription: subscription ?? null,
+      effective_plan: plan,
       transactions,
       is_admin: isAdminUser(user),
     });
@@ -1233,7 +974,7 @@ app.put("/profile", async (c) => {
     if (!/^\+62\d{7,13}$/.test(phone)) {
       return c.json({ error: "Phone must be a +62 number with 7-13 digits" }, 400);
     }
-    const { data: existing } = await sql.getDbClient().from("profiles").select("id, created_at").eq("user_id", user.id).maybeSingle();
+    const existing = await kv.get(`profile:${user.id}`);
     const now = new Date().toISOString();
     const profile = {
       user_id: user.id,
@@ -1245,11 +986,7 @@ app.put("/profile", async (c) => {
       created_at: existing?.created_at ?? now,
       updated_at: now,
     };
-    if (existing) {
-      await sql.getDbClient().from("profiles").update(profile).eq("id", existing.id);
-    } else {
-      await sql.getDbClient().from("profiles").insert(profile);
-    }
+    await kv.set(`profile:${user.id}`, profile);
     return c.json({ profile });
   } catch (e) {
     console.log("PUT /profile error:", e);
@@ -1270,27 +1007,27 @@ app.get("/admin/overview", async (c) => {
     });
     const totalUsers = usersPage?.users?.length ?? 0;
 
-    const { data: allSubs } = await sql.getDbClient().from("subscriptions").select("*");
     const now = new Date();
+    const subs = await kv.getByPrefix("subscription:");
     const activeByPlan: Record<string, number> = {};
     let expiredCount = 0;
-    for (const s of (allSubs ?? [])) {
+    for (const s of subs) {
       const stillActive =
         s?.status === "active" &&
         s.current_period_end &&
         new Date(s.current_period_end) > now;
       if (stillActive) {
         activeByPlan[s.plan_id] = (activeByPlan[s.plan_id] ?? 0) + 1;
-      } else {
+      } else if (s) {
         expiredCount++;
       }
     }
 
-    const { data: allTxs } = await sql.getDbClient().from("transactions").select("*");
+    const txs = await kv.getByPrefix("transaction:");
     let revenueTotal = 0;
     let paidCount = 0;
     let pendingCount = 0;
-    for (const t of (allTxs ?? [])) {
+    for (const t of txs) {
       if (t?.status === "paid") {
         revenueTotal += t.gross_amount ?? 0;
         paidCount++;
@@ -1299,9 +1036,8 @@ app.get("/admin/overview", async (c) => {
       }
     }
 
-    const { data: vouchers } = await sql.getDbClient().from("vouchers").select("code");
-    const { data: mtData } = await sql.getDbClient().from("system_config").select("value").eq("key", "maintenance").maybeSingle();
-    const mt = mtData?.value ?? { enabled: false, message: "" };
+    const vouchers = await kv.getByPrefix("voucher:");
+    const mt = await kv.get("maintenance");
 
     return c.json({
       total_users: totalUsers,
@@ -1310,121 +1046,11 @@ app.get("/admin/overview", async (c) => {
       revenue_total: revenueTotal,
       paid_transactions: paidCount,
       pending_transactions: pendingCount,
-      voucher_count: vouchers?.length ?? 0,
+      voucher_count: vouchers.filter(Boolean).length,
       maintenance: { enabled: !!mt?.enabled, message: mt?.message ?? "" },
     });
   } catch (e) {
     console.log("GET /admin/overview error:", e);
-    return c.json({ error: String(e) }, 500);
-  }
-});
-
-// ── Fase 14.4 — batch migration: legacy global KV → per-workspace ─────────────
-// The workspace gate already lazy-migrates on first read; this endpoint does a
-// controlled batch migration for production cutover. Defaults to DRY RUN.
-//
-//   POST /admin/migrate-workspaces { dry_run?: true, purge_legacy?: false }
-//
-// - dry_run (default true): report what would happen, write nothing
-// - purge_legacy: after a real run, delete the legacy global keys (cutover);
-//   ignored while dry_run is true
-
-app.post("/admin/migrate-workspaces", async (c) => {
-  try {
-    const gate = await requireAdmin(c);
-    if (!gate.user) return gate.response;
-    const body = await c.req.json().catch(() => ({}));
-    const dryRun = body.dry_run !== false;
-    const purgeLegacy = body.purge_legacy === true && !dryRun;
-
-    // Snapshot the legacy global values once
-    const legacy: Record<string, any> = {};
-    for (const key of ws.WORKSPACE_DATA_KEYS) {
-      const value = await kv.get(key);
-      if (value !== undefined && value !== null) legacy[key] = value;
-    }
-    const legacyKeys = Object.keys(legacy);
-
-    const report = {
-      dry_run: dryRun,
-      users_processed: 0,
-      workspaces_created: 0,
-      keys_copied: 0,
-      keys_skipped: 0,
-      legacy_keys_found: legacyKeys,
-      legacy_purged: false,
-      details: [] as any[],
-    };
-
-    let page = 1;
-    while (true) {
-      const { data, error } = await adminClient().auth.admin.listUsers({
-        page,
-        perPage: 200,
-      });
-      if (error) throw new Error(error.message);
-      const users = data?.users ?? [];
-      if (users.length === 0) break;
-
-      for (const user of users) {
-        report.users_processed++;
-        const detail: any = {
-          email: user.email,
-          workspace_id: null,
-          workspace_created: false,
-          copied: 0,
-          skipped: 0,
-        };
-
-        // Find the user's default workspace (first valid membership)
-        const ids = await ws.listUserWorkspaceIds(user.id);
-        let workspaceId: string | null = null;
-        for (const id of ids) {
-          if (await ws.getMembership(id, user.id)) {
-            workspaceId = id;
-            break;
-          }
-        }
-        if (!workspaceId) {
-          report.workspaces_created++;
-          detail.workspace_created = true;
-          if (!dryRun) {
-            const created = await ws.ensureDefaultWorkspace(user);
-            workspaceId = created.workspace.id;
-          }
-        }
-        detail.workspace_id = workspaceId;
-
-        for (const key of legacyKeys) {
-          // Without a real workspace (dry run + new user) every key is a copy
-          const scoped = workspaceId ? ws.wsDataKey(workspaceId, key) : null;
-          const existing = scoped ? await kv.get(scoped) : null;
-          if (existing !== undefined && existing !== null) {
-            report.keys_skipped++;
-            detail.skipped++;
-          } else {
-            report.keys_copied++;
-            detail.copied++;
-            if (!dryRun && scoped) await kv.set(scoped, legacy[key]);
-          }
-        }
-
-        if (report.details.length < 100) report.details.push(detail);
-      }
-      page++;
-    }
-
-    if (purgeLegacy && legacyKeys.length > 0) {
-      await kv.mdel(legacyKeys);
-      report.legacy_purged = true;
-    }
-
-    console.log(
-      `migrate-workspaces ${dryRun ? "(dry run) " : ""}— users: ${report.users_processed}, copied: ${report.keys_copied}, skipped: ${report.keys_skipped}, purged: ${report.legacy_purged}`,
-    );
-    return c.json(report);
-  } catch (e) {
-    console.log("POST /admin/migrate-workspaces error:", e);
     return c.json({ error: String(e) }, 500);
   }
 });
@@ -1436,8 +1062,9 @@ app.get("/admin/vouchers", async (c) => {
   try {
     const gate = await requireAdmin(c);
     if (!gate.user) return gate.response;
-    const { data: vouchers } = await sql.getDbClient().from("vouchers").select("*").order("code");
-    return c.json(vouchers ?? []);
+    const vouchers = (await kv.getByPrefix("voucher:")).filter(Boolean);
+    vouchers.sort((a: any, b: any) => String(a.code).localeCompare(String(b.code)));
+    return c.json(vouchers);
   } catch (e) {
     console.log("GET /admin/vouchers error:", e);
     return c.json({ error: String(e) }, 500);
@@ -1488,11 +1115,10 @@ app.post("/admin/vouchers", async (c) => {
     if (!gate.user) return gate.response;
     const parsed = parseVoucherInput(await c.req.json());
     if (parsed.error) return c.json({ error: parsed.error }, 400);
-    const { data: existing } = await sql.getDbClient().from("vouchers").select("code").eq("code", parsed.voucher.code).maybeSingle();
+    const existing = await kv.get(`voucher:${parsed.voucher.code}`);
     if (existing) return c.json({ error: "A voucher with this code already exists" }, 409);
-    const now = new Date().toISOString();
-    const voucher = { ...parsed.voucher, used_count: 0, created_at: now, updated_at: now };
-    await sql.getDbClient().from("vouchers").insert(voucher);
+    const voucher = { ...parsed.voucher, used_count: 0, created_at: new Date().toISOString() };
+    await kv.set(`voucher:${voucher.code}`, voucher);
     return c.json(voucher, 201);
   } catch (e) {
     console.log("POST /admin/vouchers error:", e);
@@ -1505,18 +1131,17 @@ app.put("/admin/vouchers/:code", async (c) => {
     const gate = await requireAdmin(c);
     if (!gate.user) return gate.response;
     const code = c.req.param("code").toUpperCase();
-    const { data: existing } = await sql.getDbClient().from("vouchers").select("*").eq("code", code).maybeSingle();
+    const existing = await kv.get(`voucher:${code}`);
     if (!existing) return c.json({ error: "Voucher not found" }, 404);
     const parsed = parseVoucherInput({ ...existing, ...(await c.req.json()), code });
     if (parsed.error) return c.json({ error: parsed.error }, 400);
-    const now = new Date().toISOString();
     const voucher = {
       ...parsed.voucher,
       used_count: existing.used_count ?? 0,
-      created_at: existing.created_at ?? now,
-      updated_at: now,
+      created_at: existing.created_at ?? null,
+      updated_at: new Date().toISOString(),
     };
-    await sql.getDbClient().from("vouchers").update(voucher).eq("code", code);
+    await kv.set(`voucher:${code}`, voucher);
     return c.json(voucher);
   } catch (e) {
     console.log("PUT /admin/vouchers error:", e);
@@ -1529,9 +1154,9 @@ app.delete("/admin/vouchers/:code", async (c) => {
     const gate = await requireAdmin(c);
     if (!gate.user) return gate.response;
     const code = c.req.param("code").toUpperCase();
-    const { data: existing } = await sql.getDbClient().from("vouchers").select("code").eq("code", code).maybeSingle();
+    const existing = await kv.get(`voucher:${code}`);
     if (!existing) return c.json({ error: "Voucher not found" }, 404);
-    await sql.getDbClient().from("vouchers").delete().eq("code", code);
+    await kv.del(`voucher:${code}`);
     return c.json({ ok: true });
   } catch (e) {
     console.log("DELETE /admin/vouchers error:", e);
@@ -1545,28 +1170,30 @@ app.get("/admin/subscribers", async (c) => {
     const gate = await requireAdmin(c);
     if (!gate.user) return gate.response;
     const now = new Date();
-    const { data: subs } = await sql.getDbClient().from("subscriptions").select("*");
-    const { data: profiles } = await sql.getDbClient().from("profiles").select("*");
-    const profileMap: Record<string, any> = {};
-    for (const p of (profiles ?? [])) {
-      profileMap[p.user_id] = p;
-    }
-    const rows = (subs ?? []).map((s: any) => {
-      const profile = profileMap[s.user_id];
-      const lapsed = s.status === "active" && s.current_period_end && new Date(s.current_period_end) < now;
-      return {
-        user_id: s.user_id,
-        email: profile?.email ?? "(no profile)",
-        full_name: profile?.full_name ?? "",
-        company: profile?.company ?? "",
-        plan_id: s.plan_id,
-        interval: s.interval,
-        status: lapsed ? "expired" : s.status,
-        started_at: s.started_at,
-        current_period_end: s.current_period_end,
-      };
-    });
-    rows.sort((a, b) => String(a.current_period_end) < String(b.current_period_end) ? 1 : -1);
+    const subs = (await kv.getByPrefix("subscription:")).filter(Boolean);
+    const rows = await Promise.all(
+      subs.map(async (s: any) => {
+        const profile = await kv.get(`profile:${s.user_id}`);
+        const lapsed =
+          s.status === "active" &&
+          s.current_period_end &&
+          new Date(s.current_period_end) < now;
+        return {
+          user_id: s.user_id,
+          email: profile?.email ?? "(no profile)",
+          full_name: profile?.full_name ?? "",
+          company: profile?.company ?? "",
+          plan_id: s.plan_id,
+          interval: s.interval,
+          status: lapsed ? "expired" : s.status,
+          started_at: s.started_at,
+          current_period_end: s.current_period_end,
+        };
+      }),
+    );
+    rows.sort((a, b) =>
+      String(a.current_period_end) < String(b.current_period_end) ? 1 : -1,
+    );
     return c.json(rows);
   } catch (e) {
     console.log("GET /admin/subscribers error:", e);
@@ -1580,17 +1207,13 @@ app.put("/admin/maintenance", async (c) => {
     const gate = await requireAdmin(c);
     if (!gate.user) return gate.response;
     const body = await c.req.json();
-    const now = new Date().toISOString();
     const maintenance = {
       enabled: body.enabled === true,
       message: String(body.message ?? "").slice(0, 500),
-      updated_at: now,
+      updated_at: new Date().toISOString(),
       updated_by: gate.user.email,
     };
-    await sql.getDbClient().from("system_config").upsert(
-      { key: "maintenance", value: maintenance, updated_at: now },
-      { onConflict: "key" }
-    );
+    await kv.set("maintenance", maintenance);
     return c.json({ maintenance });
   } catch (e) {
     console.log("PUT /admin/maintenance error:", e);
@@ -1625,13 +1248,15 @@ app.post("/admin/notifications", async (c) => {
     const audience = ["all", "free", "pro", "business"].includes(body.audience)
       ? body.audience
       : "all";
-    const { data: notification } = await sql.getDbClient().from("notifications").insert({
+    const notification = {
+      id: crypto.randomUUID(),
       title,
-      body: message,
+      message,
       audience,
+      created_at: new Date().toISOString(),
       created_by: gate.user.email,
-    }).select().single();
-    if (!notification) return c.json({ error: "Failed to create notification" }, 500);
+    };
+    await kv.set(`notification:${notification.id}`, notification);
     return c.json(notification, 201);
   } catch (e) {
     console.log("POST /admin/notifications error:", e);
@@ -1644,66 +1269,12 @@ app.delete("/admin/notifications/:id", async (c) => {
     const gate = await requireAdmin(c);
     if (!gate.user) return gate.response;
     const id = c.req.param("id");
-    const { data: existing } = await sql.getDbClient().from("notifications").select("*").eq("id", id).maybeSingle();
+    const existing = await kv.get(`notification:${id}`);
     if (!existing) return c.json({ error: "Notification not found" }, 404);
-    await sql.getDbClient().from("notifications").delete().eq("id", id);
+    await kv.del(`notification:${id}`);
     return c.json({ ok: true });
   } catch (e) {
     console.log("DELETE /admin/notifications error:", e);
-    return c.json({ error: String(e) }, 500);
-  }
-});
-
-// ── Subscription reminders (Fase 13.3) ───────────────────────────────────────
-// POST /admin/send-reminders  { days?: number }  →  { sent, skipped, daysAhead }
-app.post("/admin/send-reminders", async (c) => {
-  try {
-    const gate = await requireAdmin(c);
-    if (!gate.user) return gate.response;
-    const body = await c.req.json().catch(() => ({}));
-    const daysAhead = Math.min(Math.max(Number(body.days ?? 7), 1), 30);
-    const now = Date.now();
-    const cutoff = now + daysAhead * 24 * 60 * 60 * 1000;
-
-    const { data: activeSubs } = await sql.getDbClient().from("subscriptions").select("*").eq("status", "active");
-    const { data: profiles } = await sql.getDbClient().from("profiles").select("*");
-    const profileMap: Record<string, any> = {};
-    for (const p of (profiles ?? [])) {
-      profileMap[p.user_id] = p;
-    }
-
-    let sent = 0;
-    let skipped = 0;
-
-    for (const sub of (activeSubs ?? [])) {
-      if (!sub.current_period_end) { skipped++; continue; }
-      const end = new Date(sub.current_period_end).getTime();
-      if (end > now && end <= cutoff) {
-        const profile = profileMap[sub.user_id];
-        const email = profile?.email;
-        const name = profile?.full_name || email?.split("@")[0] || "User";
-        const daysLeft = Math.ceil((end - now) / (24 * 60 * 60 * 1000));
-        if (email) {
-          const html = emails.reminderHtml({
-            userName: name,
-            planName: sub.plan_id,
-            expiryDate: sub.current_period_end,
-            daysLeft,
-          });
-          const ok = await emails.sendEmail(
-            email,
-            "Your LokaSync subscription expires soon",
-            html,
-          );
-          if (ok) sent++; else skipped++;
-        } else {
-          skipped++;
-        }
-      }
-    }
-    return c.json({ sent, skipped, daysAhead });
-  } catch (e) {
-    console.log("POST /admin/send-reminders error:", e);
     return c.json({ error: String(e) }, 500);
   }
 });
@@ -1716,18 +1287,20 @@ app.get("/notifications", async (c) => {
     const user = await getAuthedUser(c);
     if (!user) return c.json({ error: "Unauthorized" }, 401);
     const planId = await getEffectivePlanId(user.id);
-    const { data: all } = await sql.getDbClient().from("notifications").select("*").order("created_at", { ascending: false }).limit(20);
-    if (!all?.length) return c.json([]);
-    const { data: reads } = await sql.getDbClient().from("notification_reads").select("notification_id").eq("user_id", user.id);
-    const readSet = new Set((reads ?? []).map((r: any) => r.notification_id));
+    const all = (await kv.getByPrefix("notification:")).filter(Boolean);
+    const reads: string[] = (await kv.get(`notification_reads:${user.id}`)) ?? [];
     const items = all
       .filter((n: any) => n.audience === "all" || n.audience === planId)
+      .sort((a: any, b: any) =>
+        String(a.created_at) < String(b.created_at) ? 1 : -1,
+      )
+      .slice(0, 20)
       .map((n: any) => ({
         id: n.id,
         title: n.title,
-        message: n.body,
+        message: n.message,
         created_at: n.created_at,
-        read: readSet.has(n.id),
+        read: reads.includes(n.id),
       }));
     return c.json(items);
   } catch (e) {
@@ -1743,9 +1316,9 @@ app.put("/notifications/read", async (c) => {
     const body = await c.req.json();
     const ids: string[] = Array.isArray(body.ids) ? body.ids.map(String) : [];
     if (ids.length === 0) return c.json({ error: "ids is required" }, 400);
-    for (const nid of ids) {
-      await sql.getDbClient().from("notification_reads").upsert({ notification_id: nid, user_id: user.id, read_at: new Date().toISOString() }, { onConflict: "notification_id,user_id" });
-    }
+    const reads: string[] = (await kv.get(`notification_reads:${user.id}`)) ?? [];
+    const merged = Array.from(new Set([...reads, ...ids])).slice(-200);
+    await kv.set(`notification_reads:${user.id}`, merged);
     return c.json({ ok: true });
   } catch (e) {
     console.log("PUT /notifications/read error:", e);
@@ -1753,485 +1326,17 @@ app.put("/notifications/read", async (c) => {
   }
 });
 
-// ── Workspaces (Fase 14) ──────────────────────────────────────────────────────
-// Roles: owner (manage workspace + members) | member (read/write project data).
-
-app.get("/workspaces", async (c) => {
-  try {
-    const user = c.get("user");
-    const userId = user.id;
-    const memberships = await sql.sqlQuery("workspace_members", "*, workspaces(*)", { user_id: userId });
-    const items = memberships.map((m: any) => ({
-      id: m.workspaces.id,
-      name: m.workspaces.name,
-      role: m.role,
-      plan_id: m.workspaces.plan_id,
-      owner_id: m.workspaces.owner_id,
-    }));
-    return c.json({ workspaces: items, active: c.get("workspace").id });
-  } catch (e) {
-    console.log("GET /workspaces error:", e);
-    return c.json({ error: String(e) }, 500);
-  }
-});
-
-app.post("/workspaces", async (c) => {
-  try {
-    const user = c.get("user");
-    const body = await c.req.json();
-    const name = String(body.name ?? "").trim().slice(0, 80);
-    if (!name) return c.json({ error: "Workspace name is required" }, 400);
-    const created = await ws.createWorkspace(user, name);
-    await broadcastAfterWrite(created.workspace.id, "workspaces");
-    return c.json({ ...created.workspace, role: created.membership.role }, 201);
-  } catch (e) {
-    console.log("POST /workspaces error:", e);
-    return c.json({ error: String(e) }, 500);
-  }
-});
-
-app.put("/workspaces/:id", async (c) => {
-  try {
-    const user = c.get("user");
-    const id = c.req.param("id");
-    const membership = await ws.getMembership(id, user.id);
-    if (!membership) return c.json({ error: "Workspace not found" }, 404);
-    if (membership.role !== "owner") {
-      return c.json({ error: "Only the owner can manage this workspace", code: "owner_required" }, 403);
-    }
-    const body = await c.req.json();
-    const name = String(body.name ?? "").trim().slice(0, 80);
-    if (!name) return c.json({ error: "Workspace name is required" }, 400);
-    await sql.sqlUpdate("workspaces", id, { name });
-    const updated = await ws.getWorkspace(id);
-    await broadcastAfterWrite(id, "workspaces");
-    return c.json({ ...updated, role: membership.role });
-  } catch (e) {
-    console.log("PUT /workspaces/:id error:", e);
-    return c.json({ error: String(e) }, 500);
-  }
-});
-
-app.delete("/workspaces/:id", async (c) => {
-  try {
-    const user = c.get("user");
-    const id = c.req.param("id");
-    const membership = await ws.getMembership(id, user.id);
-    if (!membership) return c.json({ error: "Workspace not found" }, 404);
-    if (membership.role !== "owner") {
-      return c.json({ error: "Only the owner can delete this workspace", code: "owner_required" }, 403);
-    }
-    const ids = await ws.listUserWorkspaceIds(user.id);
-    if (ids.length <= 1) {
-      return c.json({ error: "You cannot delete your only workspace" }, 400);
-    }
-    await ws.deleteWorkspace(id);
-    await broadcastAfterWrite(id, "workspaces");
-    return c.json({ ok: true });
-  } catch (e) {
-    console.log("DELETE /workspaces/:id error:", e);
-    return c.json({ error: String(e) }, 500);
-  }
-});
-
-app.get("/workspaces/:id/members", async (c) => {
-  try {
-    const user = c.get("user");
-    const id = c.req.param("id");
-    const membership = await ws.getMembership(id, user.id);
-    if (!membership) return c.json({ error: "Workspace not found" }, 404);
-    return c.json(await ws.getMembers(id));
-  } catch (e) {
-    console.log("GET /workspaces/:id/members error:", e);
-    return c.json({ error: String(e) }, 500);
-  }
-});
-
-app.put("/workspaces/:id/members/:userId", async (c) => {
-  try {
-    const user = c.get("user");
-    const id = c.req.param("id");
-    const targetId = c.req.param("userId");
-    const membership = await ws.getMembership(id, user.id);
-    if (!membership) return c.json({ error: "Workspace not found" }, 404);
-    if (membership.role !== "owner") {
-      return c.json({ error: "Only the owner can change roles", code: "owner_required" }, 403);
-    }
-    const workspace = await ws.getWorkspace(id);
-    if (workspace?.owner_id === targetId) {
-      return c.json({ error: "The workspace owner's role cannot be changed" }, 400);
-    }
-    const body = await c.req.json();
-    const role = body.role === "owner" ? "owner" : "member";
-    const updated = await ws.updateMemberRole(id, targetId, role);
-    if (!updated) return c.json({ error: "Member not found" }, 404);
-    return c.json(updated);
-  } catch (e) {
-    console.log("PUT /workspaces/:id/members/:userId error:", e);
-    return c.json({ error: String(e) }, 500);
-  }
-});
-
-app.delete("/workspaces/:id/members/:userId", async (c) => {
-  try {
-    const user = c.get("user");
-    const id = c.req.param("id");
-    const targetId = c.req.param("userId");
-    const membership = await ws.getMembership(id, user.id);
-    if (!membership) return c.json({ error: "Workspace not found" }, 404);
-    // Owners can remove anyone (except themselves); members may only leave.
-    if (membership.role !== "owner" && targetId !== user.id) {
-      return c.json({ error: "Only the owner can remove members", code: "owner_required" }, 403);
-    }
-    const workspace = await ws.getWorkspace(id);
-    if (workspace?.owner_id === targetId) {
-      return c.json({ error: "The workspace owner cannot be removed" }, 400);
-    }
-    await ws.removeMember(id, targetId);
-    return c.json({ ok: true });
-  } catch (e) {
-    console.log("DELETE /workspaces/:id/members/:userId error:", e);
-    return c.json({ error: String(e) }, 500);
-  }
-});
-
-// ── Workspace invitations (Fase 14.2) ─────────────────────────────────────────
-// Single-use tokens with a 7-day expiry. Owners create/revoke; the invitee
-// accepts while signed in with the invited email address.
-
-app.get("/workspaces/:id/invites", async (c) => {
-  try {
-    const user = c.get("user");
-    const id = c.req.param("id");
-    const membership = await ws.getMembership(id, user.id);
-    if (!membership) return c.json({ error: "Workspace not found" }, 404);
-    if (membership.role !== "owner") {
-      return c.json({ error: "Only the owner can view invitations", code: "owner_required" }, 403);
-    }
-    const invitations = await ws.listInvitations(id);
-    // Tokens are secrets — only expose them for still-pending invitations so
-    // the owner can copy the invite link.
-    return c.json(
-      invitations.map((inv) => ({
-        ...inv,
-        token: inv.status === "pending" ? inv.token : null,
-      })),
-    );
-  } catch (e) {
-    console.log("GET /workspaces/:id/invites error:", e);
-    return c.json({ error: String(e) }, 500);
-  }
-});
-
-app.post("/workspaces/:id/invites", async (c) => {
-  try {
-    const user = c.get("user");
-    const id = c.req.param("id");
-    const membership = await ws.getMembership(id, user.id);
-    if (!membership) return c.json({ error: "Workspace not found" }, 404);
-    if (membership.role !== "owner") {
-      return c.json({ error: "Only the owner can invite members", code: "owner_required" }, 403);
-    }
-    const body = await c.req.json();
-    const email = String(body.email ?? "").trim().toLowerCase();
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-      return c.json({ error: "A valid email address is required" }, 400);
-    }
-    const role = body.role === "owner" ? "owner" : "member";
-
-    const members = await ws.getMembers(id);
-    if (members.some((m) => m.email.toLowerCase() === email)) {
-      return c.json({ error: "This person is already a member of the workspace", code: "already_member" }, 409);
-    }
-
-    const workspace = await ws.getWorkspace(id);
-    if (!workspace) return c.json({ error: "Workspace not found" }, 404);
-
-    const invitation = await ws.createInvitation(workspace, user, email, role);
-    const origin = c.req.header("Origin") ?? "";
-    const inviteUrl = `${origin}/invite/${invitation.token}`;
-    const emailSent = await ws.sendInvitationEmail(invitation, inviteUrl);
-
-    return c.json({ ...invitation, invite_url: inviteUrl, email_sent: emailSent }, 201);
-  } catch (e) {
-    console.log("POST /workspaces/:id/invites error:", e);
-    return c.json({ error: String(e) }, 500);
-  }
-});
-
-app.delete("/workspaces/:id/invites/:token", async (c) => {
-  try {
-    const user = c.get("user");
-    const id = c.req.param("id");
-    const token = c.req.param("token");
-    const membership = await ws.getMembership(id, user.id);
-    if (!membership) return c.json({ error: "Workspace not found" }, 404);
-    if (membership.role !== "owner") {
-      return c.json({ error: "Only the owner can revoke invitations", code: "owner_required" }, 403);
-    }
-    const invitation = await ws.getInvitation(token);
-    if (!invitation || invitation.workspace_id !== id) {
-      return c.json({ error: "Invitation not found" }, 404);
-    }
-    await ws.saveInvitation({ ...invitation, status: "revoked" });
-    return c.json({ ok: true });
-  } catch (e) {
-    console.log("DELETE /workspaces/:id/invites/:token error:", e);
-    return c.json({ error: String(e) }, 500);
-  }
-});
-
-// Public preview for the accept page — the token itself is the secret, so the
-// invitee can see what they were invited to before signing in/registering.
-app.get("/invites/:token", async (c) => {
-  try {
-    const invitation = await ws.getInvitation(c.req.param("token"));
-    if (!invitation) return c.json({ error: "Invitation not found" }, 404);
-    const fresh = await ws.freshInvitation(invitation);
-    return c.json({
-      workspace_name: fresh.workspace_name,
-      email: fresh.email,
-      role: fresh.role,
-      invited_by: fresh.invited_by,
-      status: fresh.status,
-      expires_at: fresh.expires_at,
-    });
-  } catch (e) {
-    console.log("GET /invites/:token error:", e);
-    return c.json({ error: String(e) }, 500);
-  }
-});
-
-app.post("/invites/accept", async (c) => {
-  try {
-    const user = await getAuthedUser(c);
-    if (!user) return c.json({ error: "Unauthorized" }, 401);
-    const body = await c.req.json();
-    const token = String(body.token ?? "");
-    const invitation = token ? await ws.getInvitation(token) : null;
-    if (!invitation) return c.json({ error: "Invitation not found" }, 404);
-
-    const fresh = await ws.freshInvitation(invitation);
-    if (fresh.status === "revoked") {
-      return c.json({ error: "This invitation has been revoked", code: "invite_revoked" }, 400);
-    }
-    if (fresh.status === "expired") {
-      return c.json({ error: "This invitation has expired", code: "invite_expired" }, 410);
-    }
-    if (fresh.status === "accepted") {
-      return c.json({ error: "This invitation has already been used", code: "invite_used" }, 400);
-    }
-    if ((user.email ?? "").toLowerCase() !== fresh.email.toLowerCase()) {
-      return c.json(
-        { error: "This invitation was sent to a different email address", code: "invite_email_mismatch" },
-        403,
-      );
-    }
-
-    const workspace = await ws.getWorkspace(fresh.workspace_id);
-    if (!workspace) return c.json({ error: "This workspace no longer exists" }, 410);
-
-    const alreadyMember = !!(await ws.getMembership(workspace.id, user.id));
-    if (!alreadyMember) {
-      await ws.addMember(workspace.id, user, fresh.role);
-    }
-    await ws.saveInvitation({ ...fresh, status: "accepted" });
-
-    return c.json({
-      ok: true,
-      already_member: alreadyMember,
-      workspace: { id: workspace.id, name: workspace.name, role: fresh.role },
-    });
-  } catch (e) {
-    console.log("POST /invites/accept error:", e);
-    return c.json({ error: String(e) }, 500);
-  }
-});
-
-// ── Workspace plan (public fallback for invited members) ─────────────────────
-
-app.get("/workspace-plan", async (c) => {
-  try {
-    const workspaceId = c.req.header("X-Workspace-Id");
-    if (!workspaceId) {
-      return c.json({ plan: "free", owner_id: null });
-    }
-    const workspace = await ws.getWorkspace(workspaceId);
-    if (!workspace) {
-      return c.json({ plan: "free", owner_id: null });
-    }
-    return c.json({
-      plan: workspace.plan_id ?? "free",
-      owner_id: workspace.owner_id,
-    });
-  } catch (e) {
-    console.log("GET /workspace-plan error:", e);
-    return c.json({ error: String(e) }, 500);
-  }
-});
-
-// ── Member home (consolidated dashboard for invited members) ─────────────────
-
-const SEED_MENTIONS = [
-  { id: 1, type: "mention", text: "@iqbal assigned you to Review design mockups v3", project: "Mobile App", time: "10 min ago", read: false },
-  { id: 2, type: "comment", text: "2 new comments on Homepage redesign", project: "Web Application", time: "1 hr ago", read: false },
-  { id: 3, type: "assignment", text: "You were assigned to Database migration script", project: "Web Application", time: "2 hr ago", read: true },
-  { id: 4, type: "mention", text: "@elena mentioned you in Q3 Planning", project: "Internal", time: "3 hr ago", read: true },
-  { id: 5, type: "share", text: "John shared a file with you", project: "Web Application", time: "5 hr ago", read: true },
-];
-
-const SEED_TEAM_ACTIVITY = [
-  { id: 1, actor: "Alice", action: "completed", target: "Homepage redesign", time: "2 min ago" },
-  { id: 2, actor: "Bob", action: "started", target: "Login API", time: "15 min ago" },
-  { id: 3, actor: "Charlie", action: "commented on", target: "Database migration script", time: "30 min ago" },
-  { id: 4, actor: "Diana", action: "uploaded", target: "Design System v3.figma", time: "1 hr ago" },
-  { id: 5, actor: "Evan", action: "completed", target: "Mobile responsive fix", time: "2 hr ago" },
-  { id: 6, actor: "Fiona", action: "joined", target: "Mobile App", time: "3 hr ago" },
-  { id: 7, actor: "George", action: "updated", target: "Q3 Goals", time: "4 hr ago" },
-  { id: 8, actor: "Hannah", action: "started", target: "Auth module refactor", time: "5 hr ago" },
-  { id: 9, actor: "Ian", action: "completed", target: "Unit tests — payment module", time: "6 hr ago" },
-  { id: 10, actor: "Julia", action: "commented on", target: "Client presentation deck", time: "8 hr ago" },
-];
-
-app.get("/member-home", async (c) => {
-  try {
-    const user = c.get("user");
-    const workspace = c.get("workspace");
-    const membership = c.get("membership");
-    if (!user || !workspace || !membership) {
-      return c.json({ error: "Unauthorized" }, 401);
-    }
-
-    const workspaceId = workspace.id;
-    const userEmail = user.email;
-    const userName = user.user_metadata?.full_name || userEmail;
-
-    // Try SQL first
-    try {
-      // Tasks filtered by assignee
-      const allTasks = await sql.sqlQueryByWorkspace("tasks", workspaceId, "*, projects(name)");
-      const memberTasks = allTasks.filter((t: any) =>
-        t.assignee === userEmail || t.assignee === userName
-      );
-      const myTasks = {
-        in_progress: memberTasks.filter((t: any) => t.status === "in-progress"),
-        in_review: memberTasks.filter((t: any) => t.status === "review"),
-        due_today: memberTasks.filter((t: any) => {
-          const due = t.due_date ? new Date(t.due_date) : null;
-          return due && due.toDateString() === new Date().toDateString();
-        }),
-        completed: memberTasks.filter((t: any) => t.status === "completed"),
-      };
-
-      // Projects (active only, mapped to KV shape)
-      const sqlProjects = await sql.sqlQueryByWorkspace("projects", workspaceId, "*", { status: "active" });
-      const activeProjects = sqlProjects.map((p: any) => ({
-        id: p.legacy_id ?? p.id,
-        name: p.name,
-        total_tasks: 0,
-        completed_tasks: 0,
-        progress_percent: p.progress,
-        next_milestone: p.due_date,
-      }));
-
-      // Calendar events today
-      const today = new Date();
-      const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-      const todayEnd = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1);
-      const sqlEvents = await sql.sqlQueryByWorkspace("calendar_events", workspaceId, "*");
-      const todayEvents = sqlEvents.filter((e: any) => {
-        const start = new Date(e.start_time);
-        return start >= todayStart && start < todayEnd;
-      }).map((e: any) => ({
-        id: e.id,
-        title: e.title,
-        time: new Date(e.start_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        color: e.color,
-      }));
-
-      // Mentions
-      const mentions = await sql.sqlQueryByWorkspace("mentions", workspaceId, "*");
-      const memberMentions = mentions.filter((m: any) =>
-        m.mentionee === userEmail || m.mentionee === userName || !m.mentionee
-      );
-
-      // Activity
-      const teamActivity = await sql.sqlQueryByWorkspace("team_activity", workspaceId, "*");
-
-      // Owner info
-      const { data: ownerProfile } = await sql.getDbClient().from("profiles").select("first_name, last_name, email").eq("user_id", workspace.owner_id).maybeSingle();
-      const members = await ws.getMembers(workspace.id);
-      const owner = members.find((m: any) => m.user_id === workspace.owner_id);
-
-      return c.json({
-        workspace: {
-          name: workspace.name,
-          owner_id: workspace.owner_id,
-          owner_name: [ownerProfile?.first_name, ownerProfile?.last_name].filter(Boolean).join(" ") || owner?.name ?? "Owner",
-          owner_email: ownerProfile?.email ?? owner?.email ?? "",
-          total_members: members.length,
-          plan_id: workspace.plan_id ?? "free",
-        },
-        today_events: todayEvents,
-        my_tasks: myTasks,
-        projects: activeProjects,
-        mentions: memberMentions.slice(0, 5),
-        team_activity: teamActivity.slice(0, 10),
-      });
-  } catch (e) {
-    console.log("GET /member-home error:", e);
-    return c.json({ error: String(e) }, 500);
-  }
-});
-
-// ── Reset workspace data ──────────────────────────────────────────────────────
+// ── Reset workspace ───────────────────────────────────────────────────────────
 
 app.delete("/workspace-data", async (c) => {
   try {
-    if (!isOwner(c)) {
-      return c.json({ error: "Only the owner can reset workspace data", code: "owner_required" }, 403);
-    }
-    const workspace = c.get("workspace");
-    const tables = [
-      "tasks", "projects", "team_members", "teams", "calendar_events", "files", "file_folders",
-      "workspace_financial", "workspace_integrations", "workspace_sessions", "workspace_dashboard",
-      "workspace_analytics", "workspace_settings", "workspace_milestones", "mentions", "team_activity",
-    ];
-    for (const table of tables) {
-      await sql.getDbClient().from(table).delete().eq("workspace_id", workspace.id);
-    }
+    const user = await getAuthedUser(c);
+    if (!user) return c.json({ error: "Unauthorized" }, 401);
+    const keys = ["tasks:list", "projects:list", "teams:list", "calendar:events", "files:list", "files:folders"];
+    await kv.mdel(keys);
     return c.json({ ok: true });
   } catch (e) {
     console.log("DELETE /workspace-data error:", e);
-    return c.json({ error: String(e) }, 500);
-  }
-});
-
-app.post("/leave-workspace", async (c) => {
-  try {
-    const user = c.get("user");
-    const workspace = c.get("workspace");
-    const membership = c.get("membership");
-    if (!user || !workspace || !membership) {
-      return c.json({ error: "Unauthorized" }, 401);
-    }
-    if (membership.role === "owner") {
-      return c.json({ error: "Owner cannot leave. Transfer ownership first.", code: "owner_cannot_leave" }, 403);
-    }
-
-    // Read current members (for validation only)
-    const members = await ws.getMembers(workspace.id);
-    const filtered = members.filter((m: any) => m.user_id !== user.id);
-
-    // Update user's workspace index (handled by workspace_members SQL delete)
-    await ws.removeMember(workspace.id, user.id);
-
-    // Log the activity
-    await logActivity(c, "left", workspace.name);
-
-    return c.json({ ok: true });
-  } catch (e) {
-    console.log("POST /leave-workspace error:", e);
     return c.json({ error: String(e) }, 500);
   }
 });
@@ -2240,20 +1345,8 @@ app.post("/leave-workspace", async (c) => {
 
 app.get("/tasks", async (c) => {
   try {
-    const workspace = c.get("workspace");
-    const sqlTasks = await sql.sqlQueryByWorkspace("tasks", workspace.id, "*, projects(name)");
-    const mapped = sqlTasks.map((t: any) => ({
-      id: t.legacy_id ?? t.id,
-      title: t.title,
-      description: t.description,
-      status: t.status,
-      priority: t.priority,
-      assignee: t.assignee,
-      project: t.projects?.name ?? "",
-      due: t.due_date,
-      completed: t.status === "completed",
-    }));
-    return c.json(mapped);
+    const tasks = await getOrSeed("tasks:list", SEED_TASKS);
+    return c.json(tasks);
   } catch (e) {
     console.log("GET /tasks error:", e);
     return c.json({ error: String(e) }, 500);
@@ -2262,20 +1355,12 @@ app.get("/tasks", async (c) => {
 
 app.post("/tasks", async (c) => {
   try {
-    const workspace = c.get("workspace");
     const body = await c.req.json();
-    const newTask = await sql.sqlInsert("tasks", {
-      workspace_id: workspace.id,
-      title: body.title,
-      description: body.description ?? null,
-      status: body.status || "todo",
-      priority: body.priority || "medium",
-      assignee: body.assignee ?? null,
-      due_date: body.due ? body.due : null,
-      project_id: null,
-    });
-    await logActivity(c, "created", body.title);
-    await broadcastAfterWrite(workspace.id, "tasks");
+    const tasks = await getOrSeed("tasks:list", SEED_TASKS);
+    const newId = tasks.length > 0 ? Math.max(...tasks.map((t: any) => t.id)) + 1 : 1;
+    const newTask = { ...body, id: newId };
+    tasks.push(newTask);
+    await kv.set("tasks:list", tasks);
     return c.json(newTask, 201);
   } catch (e) {
     console.log("POST /tasks error:", e);
@@ -2286,29 +1371,13 @@ app.post("/tasks", async (c) => {
 app.put("/tasks/:id", async (c) => {
   try {
     const id = parseInt(c.req.param("id"));
-    const workspace = c.get("workspace");
     const body = await c.req.json();
-
-    const sqlTasks = await sql.sqlQueryByWorkspace("tasks", workspace.id, "*", { legacy_id: id });
-    if (sqlTasks.length === 0) return c.json({ error: "Task not found" }, 404);
-    const sqlTask = await sql.sqlUpdate("tasks", sqlTasks[0].id, {
-      title: body.title !== undefined ? body.title : sqlTasks[0].title,
-      description: body.description !== undefined ? body.description : sqlTasks[0].description,
-      status: body.status !== undefined ? body.status : sqlTasks[0].status,
-      priority: body.priority !== undefined ? body.priority : sqlTasks[0].priority,
-      assignee: body.assignee !== undefined ? body.assignee : sqlTasks[0].assignee,
-      due_date: body.due !== undefined ? body.due : sqlTasks[0].due_date,
-    });
-
-    if (body.status && body.status !== sqlTasks[0].status) {
-      await logActivity(c, "updated", body.title ?? sqlTasks[0].title);
-    }
-    if (body.assignee && body.assignee !== sqlTasks[0].assignee) {
-      const actor = c.get("user").email || c.get("user").user_metadata?.full_name || "Anonymous";
-      await addMention(c, body.assignee, `${actor} assigned you to "${body.title ?? sqlTasks[0].title}"`);
-    }
-    await broadcastAfterWrite(workspace.id, "tasks");
-    return c.json(sqlTask);
+    const tasks = await getOrSeed("tasks:list", SEED_TASKS);
+    const idx = tasks.findIndex((t: any) => t.id === id);
+    if (idx === -1) return c.json({ error: "Task not found" }, 404);
+    tasks[idx] = { ...tasks[idx], ...body };
+    await kv.set("tasks:list", tasks);
+    return c.json(tasks[idx]);
   } catch (e) {
     console.log("PUT /tasks/:id error:", e);
     return c.json({ error: String(e) }, 500);
@@ -2318,14 +1387,9 @@ app.put("/tasks/:id", async (c) => {
 app.delete("/tasks/:id", async (c) => {
   try {
     const id = parseInt(c.req.param("id"));
-    const workspace = c.get("workspace");
-
-    const sqlTasks = await sql.sqlQueryByWorkspace("tasks", workspace.id, "*", { legacy_id: id });
-    if (sqlTasks.length === 0) return c.json({ error: "Task not found" }, 404);
-    await sql.sqlDelete("tasks", sqlTasks[0].id);
-
-    await logActivity(c, "deleted", sqlTasks[0].title);
-    await broadcastAfterWrite(workspace.id, "tasks");
+    let tasks = await getOrSeed("tasks:list", SEED_TASKS);
+    tasks = tasks.filter((t: any) => t.id !== id);
+    await kv.set("tasks:list", tasks);
     return c.json({ ok: true });
   } catch (e) {
     console.log("DELETE /tasks/:id error:", e);
@@ -2337,20 +1401,8 @@ app.delete("/tasks/:id", async (c) => {
 
 app.get("/projects", async (c) => {
   try {
-    const workspace = c.get("workspace");
-    const sqlProjects = await sql.sqlQueryByWorkspace("projects", workspace.id, "*");
-    const mapped = sqlProjects.map((p: any) => ({
-      id: p.legacy_id ?? p.id,
-      name: p.name,
-      description: p.description,
-      status: p.status,
-      progress: p.progress,
-      tasks: { total: 0, done: 0 },
-      team: [],
-      due: p.due_date,
-      tags: p.tags ?? [],
-    }));
-    return c.json(mapped);
+    const projects = await getOrSeed("projects:list", SEED_PROJECTS);
+    return c.json(projects);
   } catch (e) {
     console.log("GET /projects error:", e);
     return c.json({ error: String(e) }, 500);
@@ -2359,14 +1411,12 @@ app.get("/projects", async (c) => {
 
 app.post("/projects", async (c) => {
   try {
-    const user = c.get("user");
-    const workspace = c.get("workspace");
+    const user = await getAuthedUser(c);
+    if (!user) return c.json({ error: "Unauthorized" }, 401);
     const body = await c.req.json();
+    const projects = await getOrSeed("projects:list", SEED_PROJECTS);
     const planId = await getEffectivePlanId(user.id);
-
-    // Count existing projects for plan limit check
-    const existingProjects = await sql.sqlQueryByWorkspace("projects", workspace.id, "id");
-    if (planId === "free" && existingProjects.length >= FREE_MAX_PROJECTS) {
+    if (planId === "free" && projects.length >= FREE_MAX_PROJECTS) {
       return c.json(
         {
           error: `The Free plan is limited to ${FREE_MAX_PROJECTS} projects. Upgrade to add more.`,
@@ -2376,19 +1426,10 @@ app.post("/projects", async (c) => {
         403,
       );
     }
-
-    const newProject = await sql.sqlInsert("projects", {
-      workspace_id: workspace.id,
-      name: body.name,
-      description: body.description ?? null,
-      status: body.status || "active",
-      progress: body.progress ?? 0,
-      due_date: body.due ? body.due : null,
-      tags: body.tags ?? [],
-    });
-
-    await logActivity(c, "created", body.name);
-    await broadcastAfterWrite(workspace.id, "projects");
+    const newId = projects.length > 0 ? Math.max(...projects.map((p: any) => p.id)) + 1 : 1;
+    const newProject = { ...body, id: newId };
+    projects.push(newProject);
+    await kv.set("projects:list", projects);
     return c.json(newProject, 201);
   } catch (e) {
     console.log("POST /projects error:", e);
@@ -2400,21 +1441,12 @@ app.put("/projects/:id", async (c) => {
   try {
     const id = parseInt(c.req.param("id"));
     const body = await c.req.json();
-    const workspace = c.get("workspace");
-
-    const sqlProjects = await sql.sqlQueryByWorkspace("projects", workspace.id, "*", { legacy_id: id });
-    if (sqlProjects.length === 0) return c.json({ error: "Project not found" }, 404);
-    const updated = await sql.sqlUpdate("projects", sqlProjects[0].id, {
-      name: body.name !== undefined ? body.name : sqlProjects[0].name,
-      description: body.description !== undefined ? body.description : sqlProjects[0].description,
-      status: body.status !== undefined ? body.status : sqlProjects[0].status,
-      progress: body.progress !== undefined ? body.progress : sqlProjects[0].progress,
-      due_date: body.due !== undefined ? body.due : sqlProjects[0].due_date,
-      tags: body.tags !== undefined ? body.tags : sqlProjects[0].tags,
-    });
-
-    await broadcastAfterWrite(workspace.id, "projects");
-    return c.json(updated);
+    const projects = await getOrSeed("projects:list", SEED_PROJECTS);
+    const idx = projects.findIndex((p: any) => p.id === id);
+    if (idx === -1) return c.json({ error: "Project not found" }, 404);
+    projects[idx] = { ...projects[idx], ...body };
+    await kv.set("projects:list", projects);
+    return c.json(projects[idx]);
   } catch (e) {
     console.log("PUT /projects/:id error:", e);
     return c.json({ error: String(e) }, 500);
@@ -2424,13 +1456,9 @@ app.put("/projects/:id", async (c) => {
 app.delete("/projects/:id", async (c) => {
   try {
     const id = parseInt(c.req.param("id"));
-    const workspace = c.get("workspace");
-
-    const sqlProjects = await sql.sqlQueryByWorkspace("projects", workspace.id, "*", { legacy_id: id });
-    if (sqlProjects.length === 0) return c.json({ error: "Project not found" }, 404);
-    await sql.sqlDelete("projects", sqlProjects[0].id);
-
-    await broadcastAfterWrite(workspace.id, "projects");
+    let projects = await getOrSeed("projects:list", SEED_PROJECTS);
+    projects = projects.filter((p: any) => p.id !== id);
+    await kv.set("projects:list", projects);
     return c.json({ ok: true });
   } catch (e) {
     console.log("DELETE /projects/:id error:", e);
@@ -2442,26 +1470,10 @@ app.delete("/projects/:id", async (c) => {
 
 app.get("/teams", async (c) => {
   try {
-    const workspace = c.get("workspace");
-    const teams = await sql.sqlQueryByWorkspace("teams", workspace.id, "id, name, description");
-    let members: any[] = [];
-    if (teams.length) {
-      const teamIds = teams.map((t: any) => t.id);
-      const { data: m, error } = await sql.getDbClient().from("team_members").select("*").in("team_id", teamIds);
-      if (!error && m) members = m;
-    }
-    const result = teams.map((t: any) => ({
-      name: t.name,
-      description: t.description,
-      members: members.filter((m: any) => m.team_id === t.id).map((m: any) => ({
-        initials: m.initials,
-        name: m.name,
-        role: m.role,
-        status: m.status,
-        tasks: m.tasks,
-      })),
-    }));
-    return c.json(result.length ? result : SEED_TEAMS);
+    const gate = await requirePlan(c, "pro");
+    if (!gate.user) return gate.response;
+    const teams = await getOrSeed("teams:list", SEED_TEAMS);
+    return c.json(teams);
   } catch (e) {
     console.log("GET /teams error:", e);
     return c.json({ error: String(e) }, 500);
@@ -2472,32 +1484,13 @@ app.post("/teams/invite", async (c) => {
   try {
     const gate = await requirePlan(c, "pro");
     if (!gate.user) return gate.response;
-    const workspace = c.get("workspace");
     const { teamName, member } = await c.req.json();
-    const rows = await sql.sqlQueryByWorkspace("teams", workspace.id, "id, name, description", { name: teamName });
-    if (!rows.length) return c.json({ error: "Team not found" }, 404);
-    const team = rows[0];
-    await sql.sqlInsert("team_members", {
-      team_id: team.id,
-      initials: member.initials,
-      name: member.name,
-      role: member.role,
-      status: member.status ?? "offline",
-      tasks: member.tasks ?? 0,
-    });
-    await broadcastAfterWrite(workspace.id, "teams");
-    const { data: members } = await sql.getDbClient().from("team_members").select("*").eq("team_id", team.id);
-    return c.json({
-      name: team.name,
-      description: team.description,
-      members: members?.map((m: any) => ({
-        initials: m.initials,
-        name: m.name,
-        role: m.role,
-        status: m.status,
-        tasks: m.tasks,
-      })) ?? [],
-    }, 201);
+    const teams = await getOrSeed("teams:list", SEED_TEAMS);
+    const team = teams.find((t: any) => t.name === teamName);
+    if (!team) return c.json({ error: "Team not found" }, 404);
+    team.members.push(member);
+    await kv.set("teams:list", teams);
+    return c.json(team, 201);
   } catch (e) {
     console.log("POST /teams/invite error:", e);
     return c.json({ error: String(e) }, 500);
@@ -2508,21 +1501,15 @@ app.put("/teams/member", async (c) => {
   try {
     const gate = await requirePlan(c, "pro");
     if (!gate.user) return gate.response;
-    const workspace = c.get("workspace");
     const { teamName, initials, patch } = await c.req.json();
-    const rows = await sql.sqlQueryByWorkspace("teams", workspace.id, "id", { name: teamName });
-    if (!rows.length) return c.json({ error: "Team not found" }, 404);
-    const teamId = rows[0].id;
-    const { data: members } = await sql.getDbClient().from("team_members").select("*").eq("team_id", teamId).eq("initials", initials);
-    if (!members?.length) return c.json({ error: "Member not found" }, 404);
-    const member = members[0];
-    const allowed = ["initials", "name", "role", "status", "tasks"];
-    const safePatch = Object.fromEntries(Object.entries(patch).filter(([k]) => allowed.includes(k)));
-    if (Object.keys(safePatch).length) {
-      await sql.sqlUpdate("team_members", member.id, safePatch);
-    }
-    await broadcastAfterWrite(workspace.id, "teams");
-    return c.json({ ...member, ...safePatch });
+    const teams = await getOrSeed("teams:list", SEED_TEAMS);
+    const team = teams.find((t: any) => t.name === teamName);
+    if (!team) return c.json({ error: "Team not found" }, 404);
+    const memberIdx = team.members.findIndex((m: any) => m.initials === initials);
+    if (memberIdx === -1) return c.json({ error: "Member not found" }, 404);
+    team.members[memberIdx] = { ...team.members[memberIdx], ...patch };
+    await kv.set("teams:list", teams);
+    return c.json(team.members[memberIdx]);
   } catch (e) {
     console.log("PUT /teams/member error:", e);
     return c.json({ error: String(e) }, 500);
@@ -2533,15 +1520,12 @@ app.delete("/teams/member", async (c) => {
   try {
     const gate = await requirePlan(c, "pro");
     if (!gate.user) return gate.response;
-    const workspace = c.get("workspace");
     const { teamName, initials } = await c.req.json();
-    const rows = await sql.sqlQueryByWorkspace("teams", workspace.id, "id", { name: teamName });
-    if (!rows.length) return c.json({ error: "Team not found" }, 404);
-    const teamId = rows[0].id;
-    const { data: members } = await sql.getDbClient().from("team_members").select("id").eq("team_id", teamId).eq("initials", initials);
-    if (!members?.length) return c.json({ error: "Member not found" }, 404);
-    await sql.sqlDelete("team_members", members[0].id);
-    await broadcastAfterWrite(workspace.id, "teams");
+    const teams = await getOrSeed("teams:list", SEED_TEAMS);
+    const team = teams.find((t: any) => t.name === teamName);
+    if (!team) return c.json({ error: "Team not found" }, 404);
+    team.members = team.members.filter((m: any) => m.initials !== initials);
+    await kv.set("teams:list", teams);
     return c.json({ ok: true });
   } catch (e) {
     console.log("DELETE /teams/member error:", e);
@@ -2553,16 +1537,7 @@ app.delete("/teams/member", async (c) => {
 
 app.get("/calendar", async (c) => {
   try {
-    const workspace = c.get("workspace");
-    const sqlEvents = await sql.sqlQueryByWorkspace("calendar_events", workspace.id, "*");
-    // Group by date (YYYY-M-D) and time
-    const events: Record<string, any[]> = {};
-    sqlEvents.forEach((e: any) => {
-      const date = new Date(e.start_time);
-      const dateKey = `${date.getFullYear()}-${date.getMonth() + 1}-${date.getDate()}`;
-      if (!events[dateKey]) events[dateKey] = [];
-      events[dateKey].push({ id: e.id, title: e.title, time: e.start_time.split('T')[1].slice(0,5), color: e.color });
-    });
+    const events = await getOrSeed("calendar:events", SEED_CALENDAR);
     return c.json(events);
   } catch (e) {
     console.log("GET /calendar error:", e);
@@ -2572,24 +1547,12 @@ app.get("/calendar", async (c) => {
 
 app.post("/calendar/events", async (c) => {
   try {
-    const workspace = c.get("workspace");
     const { dateKey, event } = await c.req.json();
-
-    // Parse dateKey (YYYY-M-D) + time ("09:30") into ISO start_time
-    const [year, month, day] = dateKey.split("-").map(Number);
-    const startTime = new Date(year, month - 1, day);
-    const [h, m] = (event.time || "00:00").split(":").map(Number);
-    startTime.setHours(h || 0, m || 0, 0, 0);
-
-    const sqlEvent = await sql.sqlInsert("calendar_events", {
-      workspace_id: workspace.id,
-      title: event.title,
-      start_time: startTime.toISOString(),
-      color: event.color || "#6366f1",
-    });
-
-    await broadcastAfterWrite(workspace.id, "calendar_events");
-    return c.json({ id: sqlEvent.id, title: sqlEvent.title, time: event.time || "00:00", color: sqlEvent.color }, 201);
+    const events = await getOrSeed("calendar:events", SEED_CALENDAR);
+    if (!events[dateKey]) events[dateKey] = [];
+    events[dateKey].push(event);
+    await kv.set("calendar:events", events);
+    return c.json(events[dateKey], 201);
   } catch (e) {
     console.log("POST /calendar/events error:", e);
     return c.json({ error: String(e) }, 500);
@@ -2598,11 +1561,13 @@ app.post("/calendar/events", async (c) => {
 
 app.delete("/calendar/events", async (c) => {
   try {
-    const workspace = c.get("workspace");
-    const { id } = await c.req.json();
-    if (!id) return c.json({ error: "id is required" }, 400);
-    await sql.sqlDelete("calendar_events", id);
-    await broadcastAfterWrite(workspace.id, "calendar_events");
+    const { dateKey, index } = await c.req.json();
+    const events = await getOrSeed("calendar:events", SEED_CALENDAR);
+    if (events[dateKey]) {
+      events[dateKey].splice(index, 1);
+      if (events[dateKey].length === 0) delete events[dateKey];
+    }
+    await kv.set("calendar:events", events);
     return c.json({ ok: true });
   } catch (e) {
     console.log("DELETE /calendar/events error:", e);
@@ -2614,20 +1579,9 @@ app.delete("/calendar/events", async (c) => {
 
 app.get("/files", async (c) => {
   try {
-    const workspace = c.get("workspace");
-    const sqlFiles = await sql.sqlQueryByWorkspace("files", workspace.id, "*");
-    const sqlFolders = await sql.sqlQueryByWorkspace("file_folders", workspace.id, "*");
-    const files = sqlFiles.map((f: any) => ({
-      id: f.id,
-      name: f.name,
-      size: f.size_bytes,
-      type: f.mime_type?.split('/')[1] || '',
-      date: f.created_at.split('T')[0],
-      uploader: f.uploader,
-      folderId: f.folder_id,
-      url: f.url,
-    }));
-    return c.json({ files, folders: sqlFolders });
+    const files = await getOrSeed("files:list", SEED_FILES);
+    const folders = await getOrSeed("files:folders", SEED_FOLDERS);
+    return c.json({ files, folders });
   } catch (e) {
     console.log("GET /files error:", e);
     return c.json({ error: String(e) }, 500);
@@ -2636,20 +1590,11 @@ app.get("/files", async (c) => {
 
 app.post("/files", async (c) => {
   try {
-    const workspace = c.get("workspace");
     const file = await c.req.json();
-    const sqlFile = await sql.sqlInsert("files", {
-      workspace_id: workspace.id,
-      name: file.name,
-      size_bytes: typeof file.size === "number" ? file.size : 0,
-      mime_type: file.type ? `application/${file.type}` : null,
-      storage_path: file.storagePath || "",
-      url: file.url || "",
-      uploader: file.uploader || "unknown",
-    });
-    await logActivity(c, "uploaded", file.name);
-    await broadcastAfterWrite(workspace.id, "files");
-    return c.json({ ...file, id: sqlFile.id }, 201);
+    const files = await getOrSeed("files:list", SEED_FILES);
+    files.unshift(file);
+    await kv.set("files:list", files);
+    return c.json(file, 201);
   } catch (e) {
     console.log("POST /files error:", e);
     return c.json({ error: String(e) }, 500);
@@ -2658,12 +1603,13 @@ app.post("/files", async (c) => {
 
 app.put("/files", async (c) => {
   try {
-    const workspace = c.get("workspace");
-    const { id, name } = await c.req.json();
-    if (!id) return c.json({ error: "id is required" }, 400);
-    await sql.sqlUpdate("files", id, { name });
-    await broadcastAfterWrite(workspace.id, "files");
-    return c.json({ ok: true });
+    const { oldName, newName } = await c.req.json();
+    const files = await getOrSeed("files:list", SEED_FILES);
+    const idx = files.findIndex((f: any) => f.name === oldName);
+    if (idx === -1) return c.json({ error: "File not found" }, 404);
+    files[idx] = { ...files[idx], name: newName };
+    await kv.set("files:list", files);
+    return c.json(files[idx]);
   } catch (e) {
     console.log("PUT /files error:", e);
     return c.json({ error: String(e) }, 500);
@@ -2672,25 +1618,10 @@ app.put("/files", async (c) => {
 
 app.delete("/files/:name", async (c) => {
   try {
-    const workspace = c.get("workspace");
-    const client = storageClient();
     const name = decodeURIComponent(c.req.param("name"));
-
-    const sqlFiles = await sql.sqlQueryByWorkspace("files", workspace.id, "*", { name });
-    if (sqlFiles.length === 0) return c.json({ error: "File not found" }, 404);
-    const file = sqlFiles[0];
-
-    if (client && file.storage_path) {
-      const { error } = await client.storage.from("workspace-files").remove([file.storage_path]);
-      if (error) console.log("Storage delete error:", error);
-    }
-
-    if (file.size_bytes) {
-      await incrementStorageUsage(c, -file.size_bytes);
-    }
-
-    await sql.sqlDelete("files", file.id);
-    await broadcastAfterWrite(workspace.id, "files");
+    let files = await getOrSeed("files:list", SEED_FILES);
+    files = files.filter((f: any) => f.name !== name);
+    await kv.set("files:list", files);
     return c.json({ ok: true });
   } catch (e) {
     console.log("DELETE /files/:name error:", e);
@@ -2698,139 +1629,13 @@ app.delete("/files/:name", async (c) => {
   }
 });
 
-// POST /files/upload — real multipart upload to Supabase Storage
-app.post("/files/upload", async (c) => {
-  try {
-    const client = storageClient();
-    if (!client) return c.json({ error: "Storage not configured" }, 503);
-
-    const form = await c.req.formData();
-    const file = form.get("file");
-    if (!file || !(file instanceof File)) {
-      return c.json({ error: "Missing file field" }, 400);
-    }
-    if (file.size === 0) return c.json({ error: "Empty file" }, 400);
-
-    const rawMeta = form.get("metadata");
-    const parsedMeta = rawMeta && typeof rawMeta === "string" ? JSON.parse(rawMeta) : {};
-
-    // 1. Quota check
-    const quota = await checkStorageQuota(c, file.size);
-    if (!quota.allowed) {
-      return c.json(
-        { error: "Storage quota exceeded", used: quota.used, limit: quota.limit },
-        413,
-      );
-    }
-
-    // 2. Upload to Supabase Storage
-    const workspace = c.get("workspace");
-    const ext = (file.name.split(".").pop() ?? "").toLowerCase();
-    const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
-    const storagePath = `${workspace.id}/${Date.now()}-${safeName}`;
-    const bytes = new Uint8Array(await file.arrayBuffer());
-
-    const { error: uploadErr } = await client
-      .storage
-      .from("workspace-files")
-      .upload(storagePath, bytes, {
-        contentType: file.type || "application/octet-stream",
-        upsert: false,
-      });
-
-    if (uploadErr) {
-      console.log("Storage upload error:", uploadErr);
-      return c.json({ error: uploadErr.message }, 500);
-    }
-
-    // 3. Get signed URL (7 days)
-    const { data: urlData } = await client
-      .storage
-      .from("workspace-files")
-      .createSignedUrl(storagePath, 60 * 60 * 24 * 7);
-
-    const fileRecord = {
-      name: file.name,
-      type: ext || "doc",
-      size: file.size,
-      sizeHuman: humanSize(file.size),
-      modified: new Date().toISOString(),
-      owner: parsedMeta.owner || "—",
-      shared: parsedMeta.shared ?? false,
-      archived: false,
-      storagePath,
-      url: urlData?.signedUrl ?? null,
-      urlExpiresAt: urlData?.signedUrl
-        ? new Date(Date.now() + 60 * 60 * 24 * 7 * 1000).toISOString()
-        : null,
-    };
-
-    // 4. Save metadata to SQL
-    await sql.sqlInsert("files", {
-      workspace_id: workspace.id,
-      name: fileRecord.name,
-      size_bytes: fileRecord.size,
-      mime_type: file.type || "application/octet-stream",
-      storage_path: fileRecord.storagePath,
-      url: fileRecord.url,
-      uploader: fileRecord.owner,
-      folder_id: parsedMeta.folderId || null,
-    });
-    await broadcastAfterWrite(workspace.id, "files");
-
-    // 5. Update usage counter
-    await incrementStorageUsage(c, file.size);
-
-    return c.json(fileRecord, 201);
-  } catch (e) {
-    console.log("POST /files/upload error:", e);
-    return c.json({ error: String(e) }, 500);
-  }
-});
-
-// GET /files/download/:name — generate a fresh signed URL (1 hour expiry)
-app.get("/files/download/:name", async (c) => {
-  try {
-    const client = storageClient();
-    if (!client) return c.json({ error: "Storage not configured" }, 503);
-
-    const workspace = c.get("workspace");
-    const name = decodeURIComponent(c.req.param("name"));
-    const rows = await sql.sqlQueryByWorkspace("files", workspace.id, "*", { name });
-    if (!rows.length || !rows[0].storage_path) return c.json({ error: "File not found" }, 404);
-    const file = rows[0];
-
-    const { data, error } = await client
-      .storage
-      .from("workspace-files")
-      .createSignedUrl(file.storage_path, 60 * 60); // 1 hour
-
-    if (error) return c.json({ error: error.message }, 500);
-    return c.json({ url: data.signedUrl, expiresIn: 3600 });
-  } catch (e) {
-    console.log("GET /files/download error:", e);
-    return c.json({ error: String(e) }, 500);
-  }
-});
-
-// GET /files/quota — return current storage usage and limit
-app.get("/files/quota", async (c) => {
-  try {
-    const { used, limit } = await getStorageUsage(c);
-    return c.json({ used, limit, unlimited: limit === 0 });
-  } catch (e) {
-    console.log("GET /files/quota error:", e);
-    return c.json({ error: String(e) }, 500);
-  }
-});
-
 app.post("/files/folders", async (c) => {
   try {
-    const workspace = c.get("workspace");
     const folder = await c.req.json();
-    const newFolder = await sql.sqlInsertInWorkspace("file_folders", workspace.id, folder);
-    await broadcastAfterWrite(workspace.id, "file_folders");
-    return c.json(newFolder, 201);
+    const folders = await getOrSeed("files:folders", SEED_FOLDERS);
+    folders.push(folder);
+    await kv.set("files:folders", folders);
+    return c.json(folder, 201);
   } catch (e) {
     console.log("POST /files/folders error:", e);
     return c.json({ error: String(e) }, 500);
@@ -2857,9 +1662,7 @@ app.get("/settings/:section", async (c) => {
     const section = c.req.param("section");
     const seed = settingsSeedMap[section];
     if (!seed) return c.json({ error: "Unknown settings section: " + section }, 400);
-    const workspace = c.get("workspace");
-    const rows = await sql.sqlQueryByWorkspace("workspace_settings", workspace.id, "*", { section });
-    const data = rows.length ? rows[0].data : seed;
+    const data = await getOrSeed("settings:" + section, seed);
     return c.json(data);
   } catch (e) {
     console.log("GET /settings/:section error:", e);
@@ -2871,19 +1674,8 @@ app.put("/settings/:section", async (c) => {
   try {
     const section = c.req.param("section");
     if (!settingsSeedMap[section]) return c.json({ error: "Unknown settings section: " + section }, 400);
-    const OWNER_ONLY_SECTIONS = ["workspace", "members", "billing", "api-keys", "webhooks"];
-    if (OWNER_ONLY_SECTIONS.includes(section) && !isOwner(c)) {
-      return c.json({ error: "Only the workspace owner can change these settings", code: "owner_required" }, 403);
-    }
     const body = await c.req.json();
-    const workspace = c.get("workspace");
-    const rows = await sql.sqlQueryByWorkspace("workspace_settings", workspace.id, "*", { section });
-    if (rows.length) {
-      await sql.sqlUpdate("workspace_settings", rows[0].id, { data: body, updated_at: new Date().toISOString() });
-    } else {
-      await sql.sqlInsertInWorkspace("workspace_settings", workspace.id, { section, data: body });
-    }
-    await broadcastAfterWrite(workspace.id, "workspace_settings");
+    await kv.set("settings:" + section, body);
     return c.json(body);
   } catch (e) {
     console.log("PUT /settings/:section error:", e);
@@ -2952,9 +1744,7 @@ const SEED_FINANCIAL = {
 
 app.get("/financial", async (c) => {
   try {
-    const workspace = c.get("workspace");
-    const row = await sql.sqlQueryFirst("workspace_financial", workspace.id, "data");
-    const data = row?.data ?? SEED_FINANCIAL;
+    const data = await getOrSeed("financial:data", SEED_FINANCIAL);
     return c.json(data);
   } catch (e) {
     console.log("GET /financial error:", e);
@@ -2964,13 +1754,10 @@ app.get("/financial", async (c) => {
 
 app.put("/financial", async (c) => {
   try {
-    const workspace = c.get("workspace");
     const body = await c.req.json();
-    const row = await sql.sqlQueryFirst("workspace_financial", workspace.id, "data");
-    const existing = row?.data ?? SEED_FINANCIAL;
+    const existing = await getOrSeed("financial:data", SEED_FINANCIAL);
     const updated = { ...existing, ...body };
-    await sql.sqlUpsert("workspace_financial", { workspace_id: workspace.id, data: updated, updated_at: new Date().toISOString() }, "workspace_id");
-    await broadcastAfterWrite(workspace.id, "workspace_financial");
+    await kv.set("financial:data", updated);
     return c.json(updated);
   } catch (e) {
     console.log("PUT /financial error:", e);
@@ -2993,16 +1780,8 @@ const SEED_INTEGRATIONS = [
 
 app.get("/integrations", async (c) => {
   try {
-    const workspace = c.get("workspace");
-    const rows = await sql.sqlQueryByWorkspace("workspace_integrations", workspace.id);
-    const data = rows.map((r: any) => ({
-      name: r.name,
-      description: r.description,
-      connected: r.connected,
-      lastSync: r.last_sync,
-      scopes: r.scopes,
-    }));
-    return c.json(data.length ? data : SEED_INTEGRATIONS);
+    const data = await getOrSeed("integrations:list", SEED_INTEGRATIONS);
+    return c.json(data);
   } catch (e) {
     console.log("GET /integrations error:", e);
     return c.json({ error: String(e) }, 500);
@@ -3011,16 +1790,14 @@ app.get("/integrations", async (c) => {
 
 app.put("/integrations/:name", async (c) => {
   try {
-    const workspace = c.get("workspace");
     const name = decodeURIComponent(c.req.param("name"));
     const body = await c.req.json();
-    const rows = await sql.sqlQueryByWorkspace("workspace_integrations", workspace.id, "*", { name });
-    if (!rows.length) return c.json({ error: "Integration not found" }, 404);
-    const integration = rows[0];
-    const updated = { ...integration, ...body, updated_at: new Date().toISOString() };
-    await sql.sqlUpdate("workspace_integrations", integration.id, updated);
-    await broadcastAfterWrite(workspace.id, "workspace_integrations");
-    return c.json(updated);
+    const integrations = await getOrSeed("integrations:list", SEED_INTEGRATIONS);
+    const idx = integrations.findIndex((i: any) => i.name === name);
+    if (idx === -1) return c.json({ error: "Integration not found" }, 404);
+    integrations[idx] = { ...integrations[idx], ...body };
+    await kv.set("integrations:list", integrations);
+    return c.json(integrations[idx]);
   } catch (e) {
     console.log("PUT /integrations/:name error:", e);
     return c.json({ error: String(e) }, 500);
@@ -3046,9 +1823,7 @@ const SEED_SESSIONS = {
 
 app.get("/sessions", async (c) => {
   try {
-    const workspace = c.get("workspace");
-    const row = await sql.sqlQueryFirst("workspace_sessions", workspace.id, "data");
-    const data = row?.data ?? SEED_SESSIONS;
+    const data = await getOrSeed("security:sessions", SEED_SESSIONS);
     return c.json(data);
   } catch (e) {
     console.log("GET /sessions error:", e);
@@ -3058,13 +1833,10 @@ app.get("/sessions", async (c) => {
 
 app.delete("/sessions/:device", async (c) => {
   try {
-    const workspace = c.get("workspace");
     const device = decodeURIComponent(c.req.param("device"));
-    const row = await sql.sqlQueryFirst("workspace_sessions", workspace.id, "data");
-    const data = row?.data ?? SEED_SESSIONS;
+    const data = await getOrSeed("security:sessions", SEED_SESSIONS);
     data.active = data.active.filter((s: any) => s.device !== device);
-    await sql.sqlUpsert("workspace_sessions", { workspace_id: workspace.id, data, updated_at: new Date().toISOString() }, "workspace_id");
-    await broadcastAfterWrite(workspace.id, "workspace_sessions");
+    await kv.set("security:sessions", data);
     return c.json({ ok: true });
   } catch (e) {
     console.log("DELETE /sessions/:device error:", e);
@@ -3182,48 +1954,11 @@ app.get("/analytics/metrics", async (c) => {
   try {
     const gate = await requirePlan(c, "pro");
     if (!gate.user) return gate.response;
-    const workspace = c.get("workspace");
-
-    const tasks = await sql.sqlQueryByWorkspace("tasks", workspace.id, "*");
-    const projects = await sql.sqlQueryByWorkspace("projects", workspace.id, "*");
-
-    const totalTasks = tasks.length;
-    const completedTasks = tasks.filter((t: any) => t.status === "completed").length;
-    const inProgressTasks = tasks.filter((t: any) => t.status === "in-progress").length;
-    const reviewTasks = tasks.filter((t: any) => t.status === "review").length;
-    const todoTasks = tasks.filter((t: any) => t.status === "todo").length;
-    const overdueTasks = tasks.filter((t: any) => {
-      if (!t.due_date) return false;
-      return new Date(t.due_date) < new Date() && t.status !== "completed";
-    }).length;
-    const totalProjects = projects.length;
-    const activeProjects = projects.filter((p: any) => p.status === "active").length;
-    const avgProgress = totalProjects > 0
-      ? Math.round(projects.reduce((sum: number, p: any) => sum + (p.progress ?? 0), 0) / totalProjects)
-      : 0;
-
-    const storedResult = await sql.sqlQueryFirst("workspace_analytics", workspace.id, "data");
-    const stored = storedResult?.data ?? SEED_ANALYTICS;
-    const data = {
-      ...SEED_ANALYTICS,
-      ...stored,
-      taskMetrics: {
-        ...(stored.taskMetrics ?? SEED_ANALYTICS.taskMetrics),
-        totalTasks,
-        completedTasks,
-        inProgressTasks,
-        reviewTasks,
-        todoTasks,
-        overdueTasks,
-        totalProjects,
-        activeProjects,
-        avgProgress,
-      },
-    };
-    if (!stored.completionSeries) {
-      await sql.sqlUpsert("workspace_analytics", { workspace_id: workspace.id, data, updated_at: new Date().toISOString() }, "workspace_id");
-      await broadcastAfterWrite(workspace.id, "workspace_analytics");
-    }
+    const stored = await kv.get("analytics:metrics");
+    // Merge seed defaults so newly added fields appear for previously seeded workspaces
+    const data = stored ? { ...SEED_ANALYTICS, ...stored } : SEED_ANALYTICS;
+    if (!stored) await kv.set("analytics:metrics", SEED_ANALYTICS);
+    else if (!stored.completionSeries) await kv.set("analytics:metrics", data);
     return c.json(data);
   } catch (e) {
     console.log("GET /analytics/metrics error:", e);
@@ -3235,13 +1970,10 @@ app.put("/analytics/metrics", async (c) => {
   try {
     const gate = await requirePlan(c, "pro");
     if (!gate.user) return gate.response;
-    const workspace = c.get("workspace");
     const body = await c.req.json();
-    const row = await sql.sqlQueryFirst("workspace_analytics", workspace.id, "data");
-    const existing = row?.data ?? SEED_ANALYTICS;
+    const existing = await getOrSeed("analytics:metrics", SEED_ANALYTICS);
     const updated = { ...existing, ...body };
-    await sql.sqlUpsert("workspace_analytics", { workspace_id: workspace.id, data: updated, updated_at: new Date().toISOString() }, "workspace_id");
-    await broadcastAfterWrite(workspace.id, "workspace_analytics");
+    await kv.set("analytics:metrics", updated);
     return c.json(updated);
   } catch (e) {
     console.log("PUT /analytics/metrics error:", e);
@@ -3321,9 +2053,7 @@ const SEED_DASHBOARD_OPS = {
 
 app.get("/dashboard/ops", async (c) => {
   try {
-    const workspace = c.get("workspace");
-    const row = await sql.sqlQueryFirst("workspace_dashboard", workspace.id, "data", { category: "ops" });
-    const data = row?.data ?? SEED_DASHBOARD_OPS;
+    const data = await getOrSeed("dashboard:ops", SEED_DASHBOARD_OPS);
     return c.json(data);
   } catch (e) {
     console.log("GET /dashboard/ops error:", e);
@@ -3333,13 +2063,10 @@ app.get("/dashboard/ops", async (c) => {
 
 app.put("/dashboard/ops", async (c) => {
   try {
-    const workspace = c.get("workspace");
     const body = await c.req.json();
-    const row = await sql.sqlQueryFirst("workspace_dashboard", workspace.id, "data", { category: "ops" });
-    const existing = row?.data ?? SEED_DASHBOARD_OPS;
+    const existing = await getOrSeed("dashboard:ops", SEED_DASHBOARD_OPS);
     const updated = { ...existing, ...body };
-    await sql.sqlUpsert("workspace_dashboard", { workspace_id: workspace.id, category: "ops", data: updated, updated_at: new Date().toISOString() }, "workspace_id,category");
-    await broadcastAfterWrite(workspace.id, "workspace_dashboard");
+    await kv.set("dashboard:ops", updated);
     return c.json(updated);
   } catch (e) {
     console.log("PUT /dashboard/ops error:", e);
@@ -3967,10 +2694,9 @@ const SEED_DASHBOARD_DETAILS = {
 
 app.get("/dashboard/details", async (c) => {
   try {
-    const workspace = c.get("workspace");
-    const row = await sql.sqlQueryFirst("workspace_dashboard", workspace.id, "data", { category: "details" });
-    const stored = row?.data ?? SEED_DASHBOARD_DETAILS;
-    const data = { ...SEED_DASHBOARD_DETAILS, ...stored };
+    const stored = await kv.get("dashboard:details");
+    const data = stored ? { ...SEED_DASHBOARD_DETAILS, ...stored } : SEED_DASHBOARD_DETAILS;
+    if (!stored) await kv.set("dashboard:details", SEED_DASHBOARD_DETAILS);
     return c.json(data);
   } catch (e) {
     console.log("GET /dashboard/details error:", e);
@@ -3980,13 +2706,10 @@ app.get("/dashboard/details", async (c) => {
 
 app.put("/dashboard/details", async (c) => {
   try {
-    const workspace = c.get("workspace");
     const body = await c.req.json();
-    const row = await sql.sqlQueryFirst("workspace_dashboard", workspace.id, "data", { category: "details" });
-    const existing = row?.data ?? SEED_DASHBOARD_DETAILS;
+    const existing = (await kv.get("dashboard:details")) ?? SEED_DASHBOARD_DETAILS;
     const updated = { ...existing, ...body };
-    await sql.sqlUpsert("workspace_dashboard", { workspace_id: workspace.id, category: "details", data: updated, updated_at: new Date().toISOString() }, "workspace_id,category");
-    await broadcastAfterWrite(workspace.id, "workspace_dashboard");
+    await kv.set("dashboard:details", updated);
     return c.json(updated);
   } catch (e) {
     console.log("PUT /dashboard/details error:", e);
@@ -4013,10 +2736,8 @@ const SEED_MILESTONES = {
 
 app.get("/milestones/:project", async (c) => {
   try {
-    const workspace = c.get("workspace");
     const project = c.req.param("project");
-    const row = await sql.sqlQueryFirst("workspace_milestones", workspace.id, "data");
-    const all = row?.data ?? SEED_MILESTONES;
+    const all = await getOrSeed("milestones:all", SEED_MILESTONES);
     return c.json(all[project] ?? []);
   } catch (e) {
     console.log("GET /milestones/:project error:", e);
@@ -4026,16 +2747,13 @@ app.get("/milestones/:project", async (c) => {
 
 app.put("/milestones/:project/:index", async (c) => {
   try {
-    const workspace = c.get("workspace");
     const project = c.req.param("project");
     const idx = parseInt(c.req.param("index"));
     const body = await c.req.json();
-    const row = await sql.sqlQueryFirst("workspace_milestones", workspace.id, "data");
-    const all = row?.data ?? SEED_MILESTONES;
+    const all = await getOrSeed("milestones:all", SEED_MILESTONES);
     if (!all[project] || !all[project][idx]) return c.json({ error: "Not found" }, 404);
     all[project][idx] = { ...all[project][idx], ...body };
-    await sql.sqlUpsert("workspace_milestones", { workspace_id: workspace.id, data: all, updated_at: new Date().toISOString() }, "workspace_id");
-    await broadcastAfterWrite(workspace.id, "workspace_milestones");
+    await kv.set("milestones:all", all);
     return c.json(all[project][idx]);
   } catch (e) {
     console.log("PUT /milestones/:project/:index error:", e);
