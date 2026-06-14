@@ -183,10 +183,22 @@ async function broadcastAfterWrite(workspaceId: string, table: string) {
   try {
     const client = adminClient();
     const channel = client.channel(`workspace:${workspaceId}`);
-    await channel.send({
-      type: "broadcast",
-      event: "refresh",
-      payload: { table },
+    await new Promise<void>((resolve) => {
+      channel.subscribe((status: string) => {
+        if (status === "SUBSCRIBED") {
+          channel
+            .send({
+              type: "broadcast",
+              event: "refresh",
+              payload: { table },
+            })
+            .catch(() => {})
+            .finally(() => {
+              client.removeChannel(channel);
+              resolve();
+            });
+        }
+      });
     });
   } catch (e) {
     console.log("broadcast error:", e);
