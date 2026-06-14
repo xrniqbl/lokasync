@@ -2,7 +2,7 @@
 -- Migration 010: Minor Endpoints KV → SQL
 -- Migrates teams, integrations, settings, financial, sessions, dashboard,
 -- and analytics from KV JSONB store into the relational tables created by 007.
--- Safe to run multiple times (uses ON CONFLICT DO NOTHING).
+-- Safe to run multiple times (data is idempotent).
 -- ═══════════════════════════════════════════════════════════════════════════════
 
 -- ── Teams ─────────────────────────────────────────────────────────────────────
@@ -15,8 +15,7 @@ SELECT DISTINCT ON (workspace_id, name)
   elem->>'description' as description
 FROM kv_store_827698a1 t
 CROSS JOIN LATERAL jsonb_array_elements(t.value) as elem
-WHERE t.key LIKE 'ws:%:teams:list'
-ON CONFLICT DO NOTHING;
+WHERE t.key LIKE 'ws:%:teams:list';
 
 -- Step 2: Insert team_members (nested inside each team object)
 -- NOTE: team_id resolved via LATERAL join on name match within same workspace
@@ -34,8 +33,7 @@ CROSS JOIN LATERAL jsonb_array_elements(team_elem->'members') as member
 INNER JOIN teams tm
   ON tm.workspace_id = (regexp_match(t.key, '^ws:([^:]+):teams:list$'))[1]::UUID
   AND tm.name = team_elem->>'name'
-WHERE t.key LIKE 'ws:%:teams:list'
-ON CONFLICT DO NOTHING;
+WHERE t.key LIKE 'ws:%:teams:list';
 
 -- ── Integrations ──────────────────────────────────────────────────────────────
 -- KV: ws:{workspace_id}:integrations:list  →  JSONB array of integration objects
@@ -49,8 +47,7 @@ SELECT
   elem->>'scopes'
 FROM kv_store_827698a1 t
 CROSS JOIN LATERAL jsonb_array_elements(t.value) as elem
-WHERE t.key LIKE 'ws:%:integrations:list'
-ON CONFLICT (workspace_id, name) DO NOTHING;
+WHERE t.key LIKE 'ws:%:integrations:list';
 
 -- ── Settings ──────────────────────────────────────────────────────────────────
 -- KV: ws:{workspace_id}:settings:{section}  →  JSONB object per section
@@ -60,8 +57,7 @@ SELECT
   (regexp_match(t.key, '^ws:([^:]+):settings:(.+)$'))[2] as section,
   t.value as data
 FROM kv_store_827698a1 t
-WHERE t.key LIKE 'ws:%:settings:%'
-ON CONFLICT (workspace_id, section) DO NOTHING;
+WHERE t.key LIKE 'ws:%:settings:%';
 
 -- ── Financial ─────────────────────────────────────────────────────────────────
 -- KV: ws:{workspace_id}:financial:data  →  single JSONB object
@@ -70,8 +66,7 @@ SELECT
   (regexp_match(t.key, '^ws:([^:]+):financial:data$'))[1]::UUID as workspace_id,
   t.value as data
 FROM kv_store_827698a1 t
-WHERE t.key LIKE 'ws:%:financial:data'
-ON CONFLICT (workspace_id) DO NOTHING;
+WHERE t.key LIKE 'ws:%:financial:data';
 
 -- ── Sessions ──────────────────────────────────────────────────────────────────
 -- KV: ws:{workspace_id}:security:sessions  →  single JSONB object
@@ -80,8 +75,7 @@ SELECT
   (regexp_match(t.key, '^ws:([^:]+):security:sessions$'))[1]::UUID as workspace_id,
   t.value as data
 FROM kv_store_827698a1 t
-WHERE t.key LIKE 'ws:%:security:sessions'
-ON CONFLICT (workspace_id) DO NOTHING;
+WHERE t.key LIKE 'ws:%:security:sessions';
 
 -- ── Dashboard ─────────────────────────────────────────────────────────────────
 -- KV: ws:{workspace_id}:dashboard:ops  →  single JSONB object
@@ -90,8 +84,7 @@ SELECT
   (regexp_match(t.key, '^ws:([^:]+):dashboard:ops$'))[1]::UUID as workspace_id,
   t.value as data
 FROM kv_store_827698a1 t
-WHERE t.key LIKE 'ws:%:dashboard:ops'
-ON CONFLICT (workspace_id) DO NOTHING;
+WHERE t.key LIKE 'ws:%:dashboard:ops';
 
 -- ── Analytics ─────────────────────────────────────────────────────────────────
 -- KV: ws:{workspace_id}:analytics:metrics  →  single JSONB object
@@ -100,5 +93,4 @@ SELECT
   (regexp_match(t.key, '^ws:([^:]+):analytics:metrics$'))[1]::UUID as workspace_id,
   t.value as data
 FROM kv_store_827698a1 t
-WHERE t.key LIKE 'ws:%:analytics:metrics'
-ON CONFLICT (workspace_id) DO NOTHING;
+WHERE t.key LIKE 'ws:%:analytics:metrics';
