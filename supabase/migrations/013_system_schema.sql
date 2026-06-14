@@ -37,8 +37,9 @@ CREATE TABLE IF NOT EXISTS plans (
   max_projects INTEGER DEFAULT 0,
   max_members INTEGER DEFAULT 0,
   highlighted BOOLEAN DEFAULT false,
-  active BOOLEAN DEFAULT false,
+  active BOOLEAN DEFAULT true,
   sort_order INTEGER DEFAULT 0,
+  created_at TIMESTAMPTZ DEFAULT now(),
   updated_at TIMESTAMPTZ DEFAULT now()
 );
 
