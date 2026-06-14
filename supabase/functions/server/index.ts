@@ -2166,7 +2166,7 @@ app.get("/member-home", async (c) => {
         workspace: {
           name: workspace.name,
           owner_id: workspace.owner_id,
-          owner_name: [ownerProfile?.first_name, ownerProfile?.last_name].filter(Boolean).join(" ") || owner?.name ?? "Owner",
+          owner_name: ([ownerProfile?.first_name, ownerProfile?.last_name].filter(Boolean).join(" ") || owner?.name) ?? "Owner",
           owner_email: ownerProfile?.email ?? owner?.email ?? "",
           total_members: members.length,
           plan_id: workspace.plan_id ?? "free",
