@@ -82,7 +82,6 @@ const WORKSPACE_SCOPED_PREFIXES = [
   "/dashboard",
   "/milestones",
   "/workspace-data",
-  "/workspaces",
 ];
 
 app.use("*", async (c, next) => {
