@@ -2107,7 +2107,6 @@ app.get("/member-home", async (c) => {
     const userName = user.user_metadata?.full_name || userEmail;
 
     // Try SQL first
-    try {
       // Tasks filtered by assignee
       const allTasks = await sql.sqlQueryByWorkspace("tasks", workspaceId, "*, projects(name)");
       const memberTasks = allTasks.filter((t: any) =>
