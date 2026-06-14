@@ -1310,8 +1310,8 @@ END $$;
 INSERT INTO teams (workspace_id, name, description)
 SELECT DISTINCT ON (workspace_id, name)
   (regexp_match(t.key, '^ws:([^:]+):teams:list$'))[1]::UUID as workspace_id,
-  elem->>'name',
-  elem->>'description'
+  elem->>'name' as name,
+  elem->>'description' as description
 FROM kv_store_827698a1 t
 CROSS JOIN LATERAL jsonb_array_elements(t.value) as elem
 WHERE t.key LIKE 'ws:%:teams:list'
