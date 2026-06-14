@@ -93,14 +93,14 @@ ON CONFLICT DO NOTHING;
 -- KV key format: ws:{wsId}:calendar:events  value: {"YYYY-M-D": [{id,title,time,color}]}
 INSERT INTO calendar_events (workspace_id, title, start_time, end_time, color, created_at, updated_at)
 SELECT
-  (regexp_match(t.key, '^ws:([^:]+):calendar:events$'))[1]::UUID as workspace_id,
+  split_part(t.key, ':', 2)::UUID as workspace_id,
   elem->>'title',
   (CASE
-    WHEN regexp_match(date_keys.date_key, '^(\d+)-(\d+)-(\d+)$') IS NOT NULL THEN
+    WHEN date_keys.date_key ~ '^\d+-\d+-\d+$' THEN
       TO_TIMESTAMP(
-        regexp_match(date_keys.date_key, '^(\d+)-(\d+)-(\d+)$')[1] || '-' ||
-        lpad(regexp_match(date_keys.date_key, '^(\d+)-(\d+)-(\d+)$')[2], 2, '0') || '-' ||
-        lpad(regexp_match(date_keys.date_key, '^(\d+)-(\d+)-(\d+)$')[3], 2, '0') || ' ' ||
+        split_part(date_keys.date_key, '-', 1) || '-' ||
+        lpad(split_part(date_keys.date_key, '-', 2), 2, '0') || '-' ||
+        lpad(split_part(date_keys.date_key, '-', 3), 2, '0') || ' ' ||
         COALESCE(elem->>'time', '00:00') || ':00',
         'YYYY-MM-DD HH24:MI:SS'
       )

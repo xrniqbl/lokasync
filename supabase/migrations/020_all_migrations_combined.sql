@@ -170,6 +170,7 @@ CREATE TRIGGER set_timestamp_tasks
 CREATE TRIGGER set_timestamp_calendar_events
   BEFORE UPDATE ON calendar_events
   FOR EACH ROW EXECUTE FUNCTION trigger_set_timestamp();
+
 -- ═══════════════════════════════════════════════════════════════════════════════
 -- LokaSync RLS Policies — Migration 002
 -- Enforces workspace membership at the database level.
@@ -530,6 +531,7 @@ CREATE POLICY files_delete ON files
         AND workspace_members.user_id = auth.uid()
     )
   );
+
 -- ═══════════════════════════════════════════════════════════════════════════════
 -- LokaSync Realtime Enablement — Migration 003
 -- Adds all tenant tables to the supabase_realtime publication and sets
@@ -566,6 +568,7 @@ ALTER TABLE mentions REPLICA IDENTITY FULL;
 ALTER TABLE team_activity REPLICA IDENTITY FULL;
 ALTER TABLE file_folders REPLICA IDENTITY FULL;
 ALTER TABLE files REPLICA IDENTITY FULL;
+
 -- ═══════════════════════════════════════════════════════════════════════════════
 -- Migration 004: KV → SQL Data Migration
 -- Copies existing KV structured data into the new relational tables.
@@ -661,14 +664,14 @@ ON CONFLICT DO NOTHING;
 -- KV key format: ws:{wsId}:calendar:events  value: {"YYYY-M-D": [{id,title,time,color}]}
 INSERT INTO calendar_events (workspace_id, title, start_time, end_time, color, created_at, updated_at)
 SELECT
-  (regexp_match(t.key, '^ws:([^:]+):calendar:events$'))[1]::UUID as workspace_id,
+  split_part(t.key, ':', 2)::UUID as workspace_id,
   elem->>'title',
   (CASE
-    WHEN regexp_match(date_keys.date_key, '^(\d+)-(\d+)-(\d+)$') IS NOT NULL THEN
+    WHEN date_keys.date_key ~ '^\d+-\d+-\d+$' THEN
       TO_TIMESTAMP(
-        regexp_match(date_keys.date_key, '^(\d+)-(\d+)-(\d+)$')[1] || '-' ||
-        lpad(regexp_match(date_keys.date_key, '^(\d+)-(\d+)-(\d+)$')[2], 2, '0') || '-' ||
-        lpad(regexp_match(date_keys.date_key, '^(\d+)-(\d+)-(\d+)$')[3], 2, '0') || ' ' ||
+        split_part(date_keys.date_key, '-', 1) || '-' ||
+        lpad(split_part(date_keys.date_key, '-', 2), 2, '0') || '-' ||
+        lpad(split_part(date_keys.date_key, '-', 3), 2, '0') || ' ' ||
         COALESCE(elem->>'time', '00:00') || ':00',
         'YYYY-MM-DD HH24:MI:SS'
       )
@@ -749,6 +752,7 @@ LEFT JOIN LATERAL (
 ) f ON true
 WHERE t.key LIKE 'ws:%:files:list'
 ON CONFLICT DO NOTHING;
+
 -- ═══════════════════════════════════════════════════════════════════════════════
 -- LokaSync Relational Schema — Migration 001
 -- Replaces KV JSONB store with normalized PostgreSQL tables.
@@ -1412,14 +1416,14 @@ ON CONFLICT DO NOTHING;
 -- KV key format: ws:{wsId}:calendar:events  value: {"YYYY-M-D": [{id,title,time,color}]}
 INSERT INTO calendar_events (workspace_id, title, start_time, end_time, color, created_at, updated_at)
 SELECT
-  (regexp_match(t.key, '^ws:([^:]+):calendar:events$'))[1]::UUID as workspace_id,
+  split_part(t.key, ':', 2)::UUID as workspace_id,
   elem->>'title',
   (CASE
-    WHEN regexp_match(date_keys.date_key, '^(\d+)-(\d+)-(\d+)$') IS NOT NULL THEN
+    WHEN date_keys.date_key ~ '^\d+-\d+-\d+$' THEN
       TO_TIMESTAMP(
-        regexp_match(date_keys.date_key, '^(\d+)-(\d+)-(\d+)$')[1] || '-' ||
-        lpad(regexp_match(date_keys.date_key, '^(\d+)-(\d+)-(\d+)$')[2], 2, '0') || '-' ||
-        lpad(regexp_match(date_keys.date_key, '^(\d+)-(\d+)-(\d+)$')[3], 2, '0') || ' ' ||
+        split_part(date_keys.date_key, '-', 1) || '-' ||
+        lpad(split_part(date_keys.date_key, '-', 2), 2, '0') || '-' ||
+        lpad(split_part(date_keys.date_key, '-', 3), 2, '0') || ' ' ||
         COALESCE(elem->>'time', '00:00') || ':00',
         'YYYY-MM-DD HH24:MI:SS'
       )
@@ -1500,6 +1504,7 @@ LEFT JOIN LATERAL (
 ) f ON true
 WHERE t.key LIKE 'ws:%:files:list'
 ON CONFLICT DO NOTHING;
+
 -- ═══════════════════════════════════════════════════════════════════════════════
 -- LokaSync Migration Verification Queries
 -- Run these after executing 004_migrate_kv_to_sql.sql
@@ -1549,6 +1554,7 @@ SELECT m.*, w.name as workspace_name
 FROM workspace_members m
 JOIN workspaces w ON w.id = m.workspace_id
 LIMIT 10;
+
 -- ═══════════════════════════════════════════════════════════════════════════════
 -- LokaSync Minor Endpoints Schema (007)
 -- New tables for teams, settings, financial, integrations, sessions,
@@ -1673,6 +1679,7 @@ BEGIN
     FOR EACH ROW EXECUTE FUNCTION update_updated_at();
   END IF;
 END $$;
+
 -- ═══════════════════════════════════════════════════════════════════════════════
 -- LokaSync Minor Endpoints RLS Policies (008)
 -- ═══════════════════════════════════════════════════════════════════════════════
@@ -1892,6 +1899,7 @@ CREATE POLICY analytics_delete ON workspace_analytics FOR DELETE TO authenticate
     SELECT 1 FROM workspace_members m
     WHERE m.workspace_id = workspace_analytics.workspace_id AND m.user_id = auth.uid()
   ));
+
 -- ═══════════════════════════════════════════════════════════════════════════════
 -- LokaSync Minor Endpoints Realtime Enable (009)
 -- ═══════════════════════════════════════════════════════════════════════════════
@@ -1973,6 +1981,7 @@ BEGIN
   END IF;
   ALTER TABLE workspace_analytics REPLICA IDENTITY FULL;
 END $$;
+
 -- ═══════════════════════════════════════════════════════════════════════════════
 -- Migration 010: Minor Endpoints KV → SQL
 -- Migrates teams, integrations, settings, financial, sessions, dashboard,
@@ -2076,7 +2085,8 @@ SELECT
   t.value as data
 FROM kv_store_827698a1 t
 WHERE t.key LIKE 'ws:%:analytics:metrics'
-ON CONFLICT (workspace_id) DO NOTHING;-- ═══════════════════════════════════════════════════════════════════════════════
+ON CONFLICT (workspace_id) DO NOTHING;
+-- ═══════════════════════════════════════════════════════════════════════════════
 -- Alter workspace_dashboard to support category column (ops vs details)
 -- ═══════════════════════════════════════════════════════════════════════════════
 
@@ -2085,6 +2095,7 @@ ALTER TABLE workspace_dashboard ADD COLUMN IF NOT EXISTS category TEXT NOT NULL 
 -- Drop old unique constraint and add composite unique key
 ALTER TABLE workspace_dashboard DROP CONSTRAINT IF EXISTS workspace_dashboard_workspace_id_key;
 ALTER TABLE workspace_dashboard ADD CONSTRAINT workspace_dashboard_workspace_category_key UNIQUE (workspace_id, category);
+
 -- ═══════════════════════════════════════════════════════════════════════════════
 -- workspace_milestones (012) — JSONB store for per-project milestone arrays.
 -- ═══════════════════════════════════════════════════════════════════════════════
@@ -2119,6 +2130,7 @@ BEGIN
   END IF;
   ALTER TABLE workspace_milestones REPLICA IDENTITY FULL;
 END $$;
+
 -- ═══════════════════════════════════════════════════════════════════════════════
 -- LokaSync System Schema (013)
 -- Global tables: profiles, plans, subscriptions, vouchers, transactions, system_config
@@ -2265,6 +2277,7 @@ BEGIN
     FOR EACH ROW EXECUTE FUNCTION update_updated_at();
   END IF;
 END $$;
+
 -- ═══════════════════════════════════════════════════════════════════════════════
 -- LokaSync System RLS Policies (014)
 -- ═══════════════════════════════════════════════════════════════════════════════
@@ -2325,6 +2338,7 @@ ALTER TABLE system_config ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY system_config_select ON system_config FOR SELECT TO authenticated
   USING (true);
+
 -- ═══════════════════════════════════════════════════════════════════════════════
 -- LokaSync System Realtime Enable (015)
 -- ═══════════════════════════════════════════════════════════════════════════════
@@ -2371,12 +2385,14 @@ BEGIN
   END IF;
   ALTER TABLE system_config REPLICA IDENTITY FULL;
 END $$;
+
 -- ═══════════════════════════════════════════════════════════════════════════════
 -- ALTER TABLE: Add applies_to JSONB column to vouchers
 -- Needed because checkout validates voucher against plan IDs.
 -- ═══════════════════════════════════════════════════════════════════════════════
 
 ALTER TABLE vouchers ADD COLUMN IF NOT EXISTS applies_to JSONB DEFAULT NULL;
+
 -- ═══════════════════════════════════════════════════════════════════════════════
 -- LokaSync Notification + Invitation Schema (017)
 -- ═══════════════════════════════════════════════════════════════════════════════
@@ -2438,6 +2454,7 @@ BEGIN
     FOR EACH ROW EXECUTE FUNCTION update_updated_at();
   END IF;
 END $$;
+
 -- ═══════════════════════════════════════════════════════════════════════════════
 -- LokaSync Notification + Invitation RLS (018)
 -- ═══════════════════════════════════════════════════════════════════════════════
@@ -2495,6 +2512,7 @@ CREATE POLICY invitations_delete ON workspace_invitations FOR DELETE TO authenti
     SELECT 1 FROM workspace_members m
     WHERE m.workspace_id = workspace_invitations.workspace_id AND m.user_id = auth.uid()
   ));
+
 -- ═══════════════════════════════════════════════════════════════════════════════
 -- LokaSync Notification + Invitation Realtime Enable (019)
 -- ═══════════════════════════════════════════════════════════════════════════════
@@ -2523,3 +2541,5 @@ BEGIN
   END IF;
   ALTER TABLE workspace_invitations REPLICA IDENTITY FULL;
 END $$;
+
+
