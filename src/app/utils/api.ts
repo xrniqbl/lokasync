@@ -449,8 +449,8 @@ export interface CalendarEvent {
 export const getCalendarEvents = () => request<Record<string, CalendarEvent[]>>("/calendar");
 export const createCalendarEvent = (dateKey: string, event: CalendarEvent) =>
   request<CalendarEvent[]>("/calendar/events", { method: "POST", body: JSON.stringify({ dateKey, event }) });
-export const deleteCalendarEvent = (dateKey: string, index: number) =>
-  request<{ ok: boolean }>("/calendar/events", { method: "DELETE", body: JSON.stringify({ dateKey, index }) });
+export const deleteCalendarEvent = (id: string) =>
+  request<{ ok: boolean }>("/calendar/events", { method: "DELETE", body: JSON.stringify({ id }) });
 
 // ── Files ─────────────────────────────────────────────────────────────────────
 
@@ -483,8 +483,8 @@ export interface Folder {
 export const getFiles = () => request<{ files: FileItem[]; folders: Folder[] }>("/files");
 export const createFile = (file: FileItem) =>
   request<FileItem>("/files", { method: "POST", body: JSON.stringify(file) });
-export const renameFile = (oldName: string, newName: string) =>
-  request<FileItem>("/files", { method: "PUT", body: JSON.stringify({ oldName, newName }) });
+export const renameFile = (id: string, newName: string) =>
+  request<FileItem>("/files", { method: "PUT", body: JSON.stringify({ id, name: newName }) });
 export const deleteFile = (name: string) =>
   request<{ ok: boolean }>(`/files/${encodeURIComponent(name)}`, { method: "DELETE" });
 export const createFolder = (folder: Folder) =>

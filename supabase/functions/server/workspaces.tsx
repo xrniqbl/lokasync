@@ -12,6 +12,7 @@
 
 import * as kv from "./kv_store.tsx";
 import * as sql from "./sql_client.tsx";
+import * as emails from "./emails.tsx";
 
 export type WorkspaceRole = "owner" | "member";
 

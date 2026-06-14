@@ -443,6 +443,35 @@ async function getAuthedUser(c: any) {
 const PLAN_RANK: Record<string, number> = { free: 0, pro: 1, business: 2 };
 const FREE_MAX_PROJECTS = 3;
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// Find a workspace-scoped row by the id the client sent (UUID or legacy int).
+async function findByClientId(table: string, workspaceId: string, rawId: string) {
+  if (UUID_RE.test(rawId)) {
+    const rows = await sql.sqlQueryByWorkspace(table, workspaceId, "*", { id: rawId });
+    return rows[0] ?? null;
+  }
+  const n = parseInt(rawId, 10);
+  if (!Number.isFinite(n)) return null;
+  const rows = await sql.sqlQueryByWorkspace(table, workspaceId, "*", { legacy_id: n });
+  return rows[0] ?? null;
+}
+
+// Map a vouchers DB row (discount_type/discount_value/valid_until) to the API shape.
+const voucherToApi = (v: any) => ({
+  code: v.code,
+  type: v.discount_type === "fixed" ? "fixed" : "percent",
+  value: v.discount_value,
+  active: v.active,
+  expires_at: v.valid_until ?? null,
+  max_uses: v.max_uses ?? null,
+  used_count: v.used_count ?? 0,
+  applies_to: v.applies_to ?? null,
+  created_at: v.created_at ?? null,
+  updated_at: v.updated_at ?? null,
+});
+
+
 async function getEffectivePlanId(userId: string): Promise<string> {
   const { data: subscription } = await sql.getDbClient().from("subscriptions").select("*").eq("user_id", userId).maybeSingle();
   if (
@@ -763,7 +792,7 @@ app.post("/vouchers/validate", async (c) => {
     if (!voucher || !voucher.active) {
       return c.json({ valid: false, reason: "This voucher code is not valid" });
     }
-    if (voucher.expires_at && new Date(voucher.expires_at) < new Date()) {
+    if (voucher.valid_until && new Date(voucher.valid_until) < new Date()) {
       return c.json({ valid: false, reason: "This voucher has expired" });
     }
     if (voucher.max_uses != null && voucher.used_count >= voucher.max_uses) {
@@ -774,15 +803,15 @@ app.post("/vouchers/validate", async (c) => {
     }
 
     const discount =
-      voucher.type === "percent"
-        ? Math.round((base * voucher.value) / 100)
-        : Math.min(voucher.value, base);
+      voucher.discount_type === "percentage"
+        ? Math.round((base * voucher.discount_value) / 100)
+        : Math.min(voucher.discount_value, base);
 
     return c.json({
       valid: true,
       code: voucher.code,
-      type: voucher.type,
-      value: voucher.value,
+      type: voucher.discount_type === "fixed" ? "fixed" : "percent",
+      value: voucher.discount_value,
       base,
       discount,
       total: base - discount,
@@ -901,7 +930,7 @@ async function applyTransactionStatus(tx: any, midtransData: any) {
     try {
       const { data: rawProfile } = await sql.getDbClient().from("profiles").select("*").eq("user_id", tx.user_id).maybeSingle();
       const userEmail = rawProfile?.email;
-      const userName = [rawProfile?.first_name, rawProfile?.last_name].filter(Boolean).join(" ") || userEmail?.split("@")[0] || "User";
+      const userName = rawProfile?.full_name || [rawProfile?.first_name, rawProfile?.last_name].filter(Boolean).join(" ") || userEmail?.split("@")[0] || "User";
       const { data: sub } = await sql.getDbClient().from("subscriptions").select("*").eq("user_id", tx.user_id).maybeSingle();
       if (userEmail) {
         const periodEndStr = sub?.current_period_end ?? periodEnd(tx.interval, started);
@@ -925,22 +954,6 @@ async function applyTransactionStatus(tx: any, midtransData: any) {
   return tx;
 }
 
-// TEMP diagnostic — reports key shape only (prefix/length/whitespace), never the key
-app.get("/payments/config-check", async (c) => {
-  const user = await getAuthedUser(c);
-  if (!user) return c.json({ error: "Unauthorized" }, 401);
-  const sk = Deno.env.get("MIDTRANS_SERVER_KEY") ?? "";
-  const ck = Deno.env.get("MIDTRANS_CLIENT_KEY") ?? "";
-  const shape = (k: string) => ({
-    set: k.length > 0,
-    length: k.length,
-    prefix: k.slice(0, 14),
-    has_whitespace: /\s/.test(k),
-    has_quotes: /["']/.test(k),
-  });
-  return c.json({ server_key: shape(sk), client_key: shape(ck) });
-});
-
 app.post("/payments/checkout", async (c) => {
   try {
     const user = await getAuthedUser(c);
@@ -957,7 +970,7 @@ app.post("/payments/checkout", async (c) => {
     const { data: rawProfile } = await sql.getDbClient().from("profiles").select("*").eq("user_id", user.id).maybeSingle();
     if (!rawProfile) return c.json({ error: "Complete your profile first" }, 400);
     const profile = {
-      full_name: [rawProfile.first_name, rawProfile.last_name].filter(Boolean).join(" "),
+      full_name: rawProfile.full_name || [rawProfile.first_name, rawProfile.last_name].filter(Boolean).join(" "),
       email: rawProfile.email,
       phone: rawProfile.phone,
     };
@@ -990,7 +1003,7 @@ app.post("/payments/checkout", async (c) => {
       const usable =
         voucher &&
         voucher.active &&
-        (!voucher.expires_at || new Date(voucher.expires_at) >= new Date()) &&
+        (!voucher.valid_until || new Date(voucher.valid_until) >= new Date()) &&
         (voucher.max_uses == null || voucher.used_count < voucher.max_uses) &&
         (!voucher.applies_to || voucher.applies_to.includes(plan.id));
       if (!usable) return c.json({ error: "This voucher code is not valid" }, 400);
@@ -1436,7 +1449,7 @@ app.get("/admin/vouchers", async (c) => {
     const gate = await requireAdmin(c);
     if (!gate.user) return gate.response;
     const { data: vouchers } = await sql.getDbClient().from("vouchers").select("*").order("code");
-    return c.json(vouchers ?? []);
+    return c.json((vouchers ?? []).map(voucherToApi));
   } catch (e) {
     console.log("GET /admin/vouchers error:", e);
     return c.json({ error: String(e) }, 500);
@@ -1448,16 +1461,17 @@ function parseVoucherInput(body: any) {
   if (!/^[A-Z0-9]{3,24}$/.test(code)) {
     return { error: "Code must be 3-24 letters/numbers" };
   }
-  const type = body.type === "fixed" ? "fixed" : body.type === "percent" ? "percent" : null;
+  const rawType = body.discount_type ?? body.type;
+  const type = rawType === "fixed" ? "fixed" : (rawType === "percent" || rawType === "percentage") ? "percentage" : null;
   if (!type) return { error: "Type must be percent or fixed" };
-  const value = Number(body.value);
+  const value = Number(body.discount_value ?? body.value);
   if (!Number.isFinite(value) || value <= 0) return { error: "Value must be a positive number" };
-  if (type === "percent" && value > 100) return { error: "Percent value cannot exceed 100" };
-  let expires_at: string | null = null;
-  if (body.expires_at) {
-    const d = new Date(body.expires_at);
+  if (type === "percentage" && value > 100) return { error: "Percent value cannot exceed 100" };
+  let valid_until: string | null = null;
+  if (body.valid_until ?? body.expires_at) {
+    const d = new Date(body.valid_until ?? body.expires_at);
     if (isNaN(d.getTime())) return { error: "Invalid expiry date" };
-    expires_at = d.toISOString();
+    valid_until = d.toISOString();
   }
   let max_uses: number | null = null;
   if (body.max_uses != null && body.max_uses !== "") {
@@ -1471,10 +1485,10 @@ function parseVoucherInput(body: any) {
   return {
     voucher: {
       code,
-      type,
-      value,
+      discount_type: type,
+      discount_value: value,
       active: body.active !== false,
-      expires_at,
+      valid_until,
       max_uses,
       applies_to,
     },
@@ -2158,7 +2172,7 @@ app.get("/member-home", async (c) => {
       const teamActivity = await sql.sqlQueryByWorkspace("team_activity", workspaceId, "*");
 
       // Owner info
-      const { data: ownerProfile } = await sql.getDbClient().from("profiles").select("first_name, last_name, email").eq("user_id", workspace.owner_id).maybeSingle();
+      const { data: ownerProfile } = await sql.getDbClient().from("profiles").select("full_name, first_name, last_name, email").eq("user_id", workspace.owner_id).maybeSingle();
       const members = await ws.getMembers(workspace.id);
       const owner = members.find((m: any) => m.user_id === workspace.owner_id);
 
@@ -2166,7 +2180,7 @@ app.get("/member-home", async (c) => {
         workspace: {
           name: workspace.name,
           owner_id: workspace.owner_id,
-          owner_name: ([ownerProfile?.first_name, ownerProfile?.last_name].filter(Boolean).join(" ") || owner?.name) ?? "Owner",
+          owner_name: (ownerProfile?.full_name || [ownerProfile?.first_name, ownerProfile?.last_name].filter(Boolean).join(" ") || owner?.name) ?? "Owner",
           owner_email: ownerProfile?.email ?? owner?.email ?? "",
           total_members: members.length,
           plan_id: workspace.plan_id ?? "free",
@@ -2271,7 +2285,11 @@ app.post("/tasks", async (c) => {
       priority: body.priority || "medium",
       assignee: body.assignee ?? null,
       due_date: body.due ? body.due : null,
-      project_id: null,
+      project_id: body.project
+        ? ((await findByClientId("projects", workspace.id, String(body.project)))?.id
+            ?? (await sql.sqlQueryByWorkspace("projects", workspace.id, "id", { name: body.project }))[0]?.id
+            ?? null)
+        : null,
     });
     await logActivity(c, "created", body.title);
     await broadcastAfterWrite(workspace.id, "tasks");
@@ -2284,13 +2302,13 @@ app.post("/tasks", async (c) => {
 
 app.put("/tasks/:id", async (c) => {
   try {
-    const id = parseInt(c.req.param("id"));
     const workspace = c.get("workspace");
     const body = await c.req.json();
 
-    const sqlTasks = await sql.sqlQueryByWorkspace("tasks", workspace.id, "*", { legacy_id: id });
-    if (sqlTasks.length === 0) return c.json({ error: "Task not found" }, 404);
-    const sqlTask = await sql.sqlUpdate("tasks", sqlTasks[0].id, {
+    const existing = await findByClientId("tasks", workspace.id, c.req.param("id"));
+    if (!existing) return c.json({ error: "Task not found" }, 404);
+    const sqlTasks = [existing];
+    const sqlTask = await sql.sqlUpdate("tasks", existing.id, {
       title: body.title !== undefined ? body.title : sqlTasks[0].title,
       description: body.description !== undefined ? body.description : sqlTasks[0].description,
       status: body.status !== undefined ? body.status : sqlTasks[0].status,
@@ -2316,12 +2334,12 @@ app.put("/tasks/:id", async (c) => {
 
 app.delete("/tasks/:id", async (c) => {
   try {
-    const id = parseInt(c.req.param("id"));
     const workspace = c.get("workspace");
 
-    const sqlTasks = await sql.sqlQueryByWorkspace("tasks", workspace.id, "*", { legacy_id: id });
-    if (sqlTasks.length === 0) return c.json({ error: "Task not found" }, 404);
-    await sql.sqlDelete("tasks", sqlTasks[0].id);
+    const existing = await findByClientId("tasks", workspace.id, c.req.param("id"));
+    if (!existing) return c.json({ error: "Task not found" }, 404);
+    const sqlTasks = [existing];
+    await sql.sqlDelete("tasks", existing.id);
 
     await logActivity(c, "deleted", sqlTasks[0].title);
     await broadcastAfterWrite(workspace.id, "tasks");
@@ -2397,13 +2415,13 @@ app.post("/projects", async (c) => {
 
 app.put("/projects/:id", async (c) => {
   try {
-    const id = parseInt(c.req.param("id"));
     const body = await c.req.json();
     const workspace = c.get("workspace");
 
-    const sqlProjects = await sql.sqlQueryByWorkspace("projects", workspace.id, "*", { legacy_id: id });
-    if (sqlProjects.length === 0) return c.json({ error: "Project not found" }, 404);
-    const updated = await sql.sqlUpdate("projects", sqlProjects[0].id, {
+    const existing = await findByClientId("projects", workspace.id, c.req.param("id"));
+    if (!existing) return c.json({ error: "Project not found" }, 404);
+    const sqlProjects = [existing];
+    const updated = await sql.sqlUpdate("projects", existing.id, {
       name: body.name !== undefined ? body.name : sqlProjects[0].name,
       description: body.description !== undefined ? body.description : sqlProjects[0].description,
       status: body.status !== undefined ? body.status : sqlProjects[0].status,
@@ -2422,12 +2440,12 @@ app.put("/projects/:id", async (c) => {
 
 app.delete("/projects/:id", async (c) => {
   try {
-    const id = parseInt(c.req.param("id"));
     const workspace = c.get("workspace");
 
-    const sqlProjects = await sql.sqlQueryByWorkspace("projects", workspace.id, "*", { legacy_id: id });
-    if (sqlProjects.length === 0) return c.json({ error: "Project not found" }, 404);
-    await sql.sqlDelete("projects", sqlProjects[0].id);
+    const existing = await findByClientId("projects", workspace.id, c.req.param("id"));
+    if (!existing) return c.json({ error: "Project not found" }, 404);
+    const sqlProjects = [existing];
+    await sql.sqlDelete("projects", existing.id);
 
     await broadcastAfterWrite(workspace.id, "projects");
     return c.json({ ok: true });
@@ -2620,11 +2638,16 @@ app.get("/files", async (c) => {
       id: f.id,
       name: f.name,
       size: f.size_bytes,
+      sizeHuman: humanSize(f.size_bytes ?? 0),
       type: f.mime_type?.split('/')[1] || '',
-      date: f.created_at.split('T')[0],
-      uploader: f.uploader,
+      modified: f.created_at,
+      owner: f.uploader,
+      shared: f.shared ?? false,
+      archived: f.archived ?? false,
       folderId: f.folder_id,
+      storagePath: f.storage_path ?? null,
       url: f.url,
+      urlExpiresAt: null,
     }));
     return c.json({ files, folders: sqlFolders });
   } catch (e) {
