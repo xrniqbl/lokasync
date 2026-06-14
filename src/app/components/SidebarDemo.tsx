@@ -1018,26 +1018,6 @@ function getSidebarContent(
         },
       ],
     },
-    billing: {
-      title: t("sidebar.billing"),
-      sections: [
-        {
-          title: t("sidebar.subscription"),
-          items: [
-            {
-              icon: <Report size={16} className="text-neutral-50" />,
-              label: t("sidebar.planSubscription"),
-              subId: "plan",
-            },
-            {
-              icon: <Time size={16} className="text-neutral-50" />,
-              label: t("sidebar.paymentHistory"),
-              subId: "history",
-            },
-          ],
-        },
-      ],
-    },
     profile: {
       title: t("sidebar.myProfile"),
       sections: [

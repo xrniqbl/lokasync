@@ -5,6 +5,8 @@ import { NewEventModal } from "./modals/NewEventModal";
 import { useNavigation } from "./NavigationContext";
 import * as api from "../utils/api";
 import { useLang } from "../i18n";
+import { useWorkspace } from "../workspace/WorkspaceContext";
+import { useRealtimeWorkspace } from "../realtime";
 
 type CalendarEvent = { title: string; tag: string; color: string };
 
@@ -148,6 +150,7 @@ function SharePanel({ onClose }: { onClose: () => void }) {
 export function CalendarPage() {
   const { t } = useLang();
   const { subSection } = useNavigation();
+  const { activeWorkspace } = useWorkspace();
   const [view, setView] = useState<CalendarView>("month");
   const [monthKey, setMonthKey] = useState(CUR_KEY);
   const [selectedDay, setSelectedDay] = useState(TODAY_DAY);
@@ -167,6 +170,15 @@ export function CalendarPage() {
       toast.error("Failed to load calendar events");
     });
   }, []);
+
+  useRealtimeWorkspace(activeWorkspace?.id ?? null, (table) => {
+    if (table === "calendar_events") {
+      api.getCalendarEvents().then((data) => {
+        setServerEvents(data);
+        setEvents(serverEventsToLocal(data, monthKey));
+      }).catch((e) => console.log("Realtime calendar refresh error:", e));
+    }
+  });
 
   useEffect(() => {
     if (subSection === "month") { setView("month"); setHighlightedEvent(null); }

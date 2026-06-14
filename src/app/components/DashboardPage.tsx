@@ -1,6 +1,7 @@
 import { useLang } from "../i18n";
 import { useState, useEffect, useRef } from "react";
 import { useWorkspace } from "../workspace/WorkspaceContext";
+import { useRealtimeWorkspace } from "../realtime";
 import { MemberHome } from "./MemberHome";
 import { TrendingUp, TrendingDown, Target, DollarSign, Users, BarChart2, Activity, Layers, Clock, ChevronRight } from "lucide-react";
 import { toast } from "sonner";
@@ -2798,6 +2799,14 @@ function OwnerDashboard() {
   const [teamChartData, setTeamChartData] = useState<{ name: string; tasks: number; done: number }[]>([]);
   const [, forceUpdate] = useState(0); // trigger re-render after module vars populated
   const { t } = useLang();
+  const { activeWorkspace } = useWorkspace();
+  useRealtimeWorkspace(activeWorkspace?.id ?? null, (table) => {
+    if (table === "workspace_dashboard") {
+      api.getTasks().catch((e) => console.log("Realtime dashboard refresh error:", e));
+      api.getProjects().catch((e) => console.log("Realtime dashboard refresh error:", e));
+      api.getTeams().catch((e) => console.log("Realtime dashboard refresh error:", e));
+    }
+  });
 
   const getViewLabel = (view: DashView): string => {
     switch (view) {

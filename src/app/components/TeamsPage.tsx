@@ -6,6 +6,8 @@ import { MemberProfileModal } from "./modals/MemberProfileModal";
 import { useNavigation } from "./NavigationContext";
 import * as api from "../utils/api";
 import { useLang } from "../i18n";
+import { useWorkspace } from "../workspace/WorkspaceContext";
+import { useRealtimeWorkspace } from "../realtime";
 
 interface Member {
   initials: string;
@@ -62,6 +64,15 @@ export function TeamsPage() {
   const [manageTeam, setManageTeam] = useState<Team | null>(null);
   const [selectedMember, setSelectedMember] = useState<{ member: Member; colorIndex: number } | null>(null);
   const [teamFilter, setTeamFilter] = useState<string | null>(null);
+
+  const { activeWorkspace } = useWorkspace();
+  useRealtimeWorkspace(activeWorkspace?.id ?? null, (table) => {
+    if (table === "teams" || table === "team_members") {
+      api.getTeams().then((data) => setTeams(data)).catch((e) => {
+        console.log("Realtime teams refresh error:", e);
+      });
+    }
+  });
 
   useEffect(() => {
     api.getTeams().then((data) => setTeams(data)).catch((e) => {

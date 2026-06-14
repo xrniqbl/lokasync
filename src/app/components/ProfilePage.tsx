@@ -27,6 +27,8 @@ import { useSubscription } from "../subscription/SubscriptionContext";
 import { useNavigation } from "./NavigationContext";
 import { supabase, updatePassword } from "../utils/supabase";
 import * as api from "../utils/api";
+import { useWorkspace } from "../workspace/WorkspaceContext";
+import { useRealtimeWorkspace } from "../realtime";
 import { PasswordInput } from "../pages/auth/PasswordInput";
 import { useLang } from "../i18n";
 
@@ -62,6 +64,15 @@ export function ProfilePage() {
     profile?.company ?? meta.company ?? "",
   );
   const [saving, setSaving] = useState(false);
+
+  const { activeWorkspace } = useWorkspace();
+  useRealtimeWorkspace(activeWorkspace?.id ?? null, (table) => {
+    if (table === "profiles") {
+      api.getSettings("profile").then((data) => {
+        if (data) setProfile(data);
+      }).catch((e) => console.log("Realtime profile refresh error:", e));
+    }
+  });
 
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");

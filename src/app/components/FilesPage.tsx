@@ -8,6 +8,8 @@ import { FilePreviewModal } from "./modals/FilePreviewModal";
 import { useNavigation } from "./NavigationContext";
 import * as api from "../utils/api";
 import { useLang } from "../i18n";
+import { useWorkspace } from "../workspace/WorkspaceContext";
+import { useRealtimeWorkspace } from "../realtime";
 
 type FileItem = api.FileItem;
 type FolderItem = api.Folder;
@@ -92,6 +94,16 @@ export function FilesPage() {
   const [renamingFile, setRenamingFile] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
   const renameRef = useRef<HTMLInputElement>(null);
+
+  const { activeWorkspace } = useWorkspace();
+  useRealtimeWorkspace(activeWorkspace?.id ?? null, (table) => {
+    if (table === "files" || table === "file_folders") {
+      api.getFiles().then(({ files: f, folders: fo }) => {
+        setFiles(f);
+        setFolders(fo);
+      }).catch((e) => console.log("Realtime files refresh error:", e));
+    }
+  });
 
   useEffect(() => {
     api.getFiles().then(({ files: f, folders: fo }) => {

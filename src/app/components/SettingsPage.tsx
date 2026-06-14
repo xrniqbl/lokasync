@@ -11,6 +11,8 @@ import { useNavigation } from "./NavigationContext";
 import { InviteMemberModal } from "./modals/InviteMemberModal";
 import { useLang, LangToggle } from "../i18n";
 import * as api from "../utils/api";
+import { useWorkspace } from "../workspace/WorkspaceContext";
+import { useRealtimeWorkspace } from "../realtime";
 
 // ─── Primitives ────────────────────────────────────────────────────────────────
 
@@ -182,6 +184,20 @@ export function SettingsPage() {
     digest: true, productUpdates: false, security: true,
   });
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const { activeWorkspace } = useWorkspace();
+  useRealtimeWorkspace(activeWorkspace?.id ?? null, (table) => {
+    if (table === "workspace_settings") {
+      api.getSettings("appearance").then((data) => {
+        if (data) {
+          if (data.theme) setTheme(data.theme);
+          if (data.accent) setAccentColor(accentColors.find((a) => a.label.toLowerCase() === data.accent)?.value ?? "#6366f1");
+          if (data.fontSize) setFontSize(data.fontSize);
+          if (data.density) setDensity(data.density);
+        }
+      }).catch(() => {});
+    }
+  });
 
   // Load settings sections from Supabase
   useEffect(() => {

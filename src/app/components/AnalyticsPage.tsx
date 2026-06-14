@@ -4,6 +4,8 @@ import { useNavigation } from "./NavigationContext";
 import { useLang } from "../i18n";
 import * as api from "../utils/api";
 import type { AnalyticsMetrics } from "../utils/api";
+import { useWorkspace } from "../workspace/WorkspaceContext";
+import { useRealtimeWorkspace } from "../realtime";
 import {
   BarChart, Bar, LineChart, Line, PieChart, Pie, Cell,
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -48,6 +50,13 @@ export function AnalyticsPage() {
   const [livePerformers, setLivePerformers] = useState<{ name: string; initials: string; tasks: number; rate: number }[]>([]);
   const [liveMetrics, setLiveMetrics] = useState<{ total: number; completed: number; inProgress: number; todo: number } | null>(null);
   const [analyticsMetrics, setAnalyticsMetrics] = useState<AnalyticsMetrics | null>(null);
+
+  const { activeWorkspace } = useWorkspace();
+  useRealtimeWorkspace(activeWorkspace?.id ?? null, (table) => {
+    if (table === "workspace_analytics") {
+      Promise.all([api.getTasks(), api.getTeams()]).catch((e) => console.log("Realtime analytics refresh error:", e));
+    }
+  });
 
   const viewLabels: Record<AnalyticsView, string> = {
     performance: t("analytics.performance"),
