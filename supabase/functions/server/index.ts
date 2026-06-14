@@ -1602,11 +1602,12 @@ app.get("/admin/notifications", async (c) => {
   try {
     const gate = await requireAdmin(c);
     if (!gate.user) return gate.response;
-    const items = (await kv.getByPrefix("notification:")).filter(Boolean);
-    items.sort((a: any, b: any) =>
-      String(a.created_at) < String(b.created_at) ? 1 : -1,
-    );
-    return c.json(items);
+    const { data: items } = await sql.getDbClient()
+      .from("notifications")
+      .select("*")
+      .order("created_at", { ascending: false })
+      .limit(50);
+    return c.json(items ?? []);
   } catch (e) {
     console.log("GET /admin/notifications error:", e);
     return c.json({ error: String(e) }, 500);
