@@ -46,6 +46,9 @@ async function request<T>(path: string, opts: RequestInit = {}): Promise<T> {
     },
   });
   if (!res.ok) {
+    if (res.status === 401 && !window.location.pathname.startsWith("/login")) {
+      window.location.href = "/login";
+    }
     const text = await res.text();
     let code: string | null = null;
     let message = `API ${opts.method ?? "GET"} ${path} failed (${res.status}): ${text}`;
