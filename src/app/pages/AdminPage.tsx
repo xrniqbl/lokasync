@@ -51,6 +51,15 @@ type Tab =
   | "notifications"
   | "migration";
 
+const TABS: { id: Tab; label: string; icon: typeof LayoutDashboard }[] = [
+  { id: "overview", label: "Overview", icon: LayoutDashboard },
+  { id: "vouchers", label: "Vouchers", icon: Ticket },
+  { id: "subscribers", label: "Subscribers", icon: Users },
+  { id: "maintenance", label: "Maintenance", icon: Wrench },
+  { id: "notifications", label: "Notifications", icon: BellRing },
+  { id: "migration", label: "Migration", icon: Database },
+];
+
 
 
 /* ── Overview ─────────────────────────────────────────────────────────────── */
@@ -66,6 +75,7 @@ function StatCard({ label, value, sub }: { label: string; value: string; sub?: s
 }
 
 function OverviewTab() {
+  const { t } = useLang();
   const [data, setData] = useState<api.AdminOverview | null>(null);
   const [error, setError] = useState(false);
 
@@ -768,6 +778,7 @@ function RemindersTab() {
 /* ── Migration (Fase 14.4) ────────────────────────────────────────────────── */
 
 function MigrationTab() {
+  const { t } = useLang();
   const [running, setRunning] = useState(false);
   const [purgeLegacy, setPurgeLegacy] = useState(false);
   const [report, setReport] = useState<api.MigrationReport | null>(null);
@@ -898,6 +909,7 @@ function MigrationTab() {
 /* ── Page shell ───────────────────────────────────────────────────────────── */
 
 export function AdminPage() {
+  const { t } = useLang();
   const { isAdmin, loading } = useSubscription();
   const [tab, setTab] = useState<Tab>("overview");
 
