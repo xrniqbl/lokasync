@@ -5,6 +5,7 @@ import { useNavigation } from "./NavigationContext";
 import { useSubscription } from "../subscription/SubscriptionContext";
 import * as api from "../utils/api";
 import { signOut, getCurrentUser } from "../utils/supabase";
+import { useLang } from "../LangContext";
 import svgPaths from "../imports/svg-svkvdgwod6";
 import {
   Search,
@@ -49,52 +50,14 @@ import {
 // Softer spring animation curve
 const softSpringEasing = "cubic-bezier(0.25, 1.1, 0.4, 1)";
 
-function InterfacesLogo1() {
+function LokaLogo() {
   return (
-    <div
-      className="aspect-[24/24] basis-0 grow min-h-px min-w-px overflow-clip relative shrink-0"
-      data-name="Interfaces Logo"
-    >
-      <div
-        className="absolute aspect-[24/16] left-0 right-0 top-1/2 translate-y-[-50%]"
-        data-name="Union"
-      >
-        <svg
-          className="block size-full"
-          fill="none"
-          preserveAspectRatio="none"
-          role="presentation"
-          viewBox="0 0 24 16"
-        >
-          <g id="Union">
-            <path
-              d={svgPaths.p36880f80}
-              fill="var(--fill-0, #FAFAFA)"
-              style={{
-                fill: "color(display-p3 0.9804 0.9804 0.9804)",
-                fillOpacity: "1",
-              }}
-            />
-            <path
-              d={svgPaths.p355df480}
-              fill="var(--fill-0, #FAFAFA)"
-              style={{
-                fill: "color(display-p3 0.9804 0.9804 0.9804)",
-                fillOpacity: "1",
-              }}
-            />
-            <path
-              d={svgPaths.pfa0d600}
-              fill="var(--fill-0, #FAFAFA)"
-              style={{
-                fill: "color(display-p3 0.9804 0.9804 0.9804)",
-                fillOpacity: "1",
-              }}
-            />
-          </g>
-        </svg>
-      </div>
-    </div>
+    <img
+      src="/lokasynclogo.png"
+      alt="LokaSync"
+      className="size-7 object-contain"
+      data-name="LokaSync Logo"
+    />
   );
 }
 
@@ -226,6 +189,9 @@ function ProfilePanel({
             await signOut();
             toast.success("Signed out successfully");
             onClose();
+            // Explicit redirect rather than relying solely on the RequireAuth
+            // guard to notice the auth-state change.
+            routerNavigate("/login", { replace: true });
           }}
           className="w-full text-left px-2 py-1.5 text-[12px] text-red-400 hover:text-red-300 hover:bg-red-950/30 rounded-lg transition-colors"
         >
@@ -495,6 +461,7 @@ const teamSlug = (name: string) =>
 const slugify = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
 
 function getSidebarContent(
+  t: (k: any) => string,
   activeSection: string,
   teams: api.Team[] = [],
   tasks: api.Task[] = [],
@@ -532,7 +499,7 @@ function getSidebarContent(
 
   const contentMap: Record<string, SidebarContent> = {
     dashboard: {
-      title: "Dashboard",
+      title: t("nav.dashboard"),
       sections: [
         {
           title: "Dashboard Types",
@@ -654,7 +621,7 @@ function getSidebarContent(
       ],
     },
     tasks: {
-      title: "Tasks",
+      title: t("nav.tasks"),
       sections: [
         {
           title: "Quick Actions",
@@ -717,7 +684,7 @@ function getSidebarContent(
       ],
     },
     projects: {
-      title: "Projects",
+      title: t("nav.projects"),
       sections: [
         {
           title: "Quick Actions",
@@ -778,7 +745,7 @@ function getSidebarContent(
       ],
     },
     calendar: {
-      title: "Calendar",
+      title: t("nav.calendar"),
       sections: [
         {
           title: "Views",
@@ -835,7 +802,7 @@ function getSidebarContent(
       ],
     },
     teams: {
-      title: "Teams",
+      title: t("nav.teams"),
       sections: [
         {
           title: "My Teams",
@@ -859,7 +826,7 @@ function getSidebarContent(
       ],
     },
     analytics: {
-      title: "Analytics",
+      title: t("nav.analytics"),
       sections: [
         {
           title: "Reports",
@@ -906,7 +873,7 @@ function getSidebarContent(
       ],
     },
     files: {
-      title: "Files",
+      title: t("nav.files"),
       sections: [
         {
           title: "Quick Actions",
@@ -953,7 +920,7 @@ function getSidebarContent(
       ],
     },
     billing: {
-      title: "Billing",
+      title: t("nav.billing"),
       sections: [
         {
           title: "Subscription",
@@ -973,7 +940,7 @@ function getSidebarContent(
       ],
     },
     profile: {
-      title: "My Profile",
+      title: t("nav.profile"),
       sections: [
         {
           title: "Account",
@@ -993,7 +960,7 @@ function getSidebarContent(
       ],
     },
     settings: {
-      title: "Settings",
+      title: t("nav.settings"),
       sections: [
         {
           title: "Account",
@@ -1115,38 +1082,47 @@ function IconNavigation({
   onAvatarClick: () => void;
   showProfile: boolean;
 }) {
+  const [workspace, setWorkspace] = useState<api.Workspace | null>(null);
+
+  useEffect(() => {
+    api.getWorkspace()
+      .then(({ workspace: ws }) => setWorkspace(ws))
+      .catch(() => {});
+  }, []);
+
+  const { t } = useLang();
 
   const navItems = [
     {
       id: "dashboard",
       icon: <Dashboard size={16} />,
-      label: "Dashboard",
+      label: t("nav.dashboard"),
     },
-    { id: "tasks", icon: <Task size={16} />, label: "Tasks" },
+    { id: "tasks", icon: <Task size={16} />, label: t("nav.tasks") },
     {
       id: "projects",
       icon: <Folder size={16} />,
-      label: "Projects",
+      label: t("nav.projects"),
     },
     {
       id: "calendar",
       icon: <Calendar size={16} />,
-      label: "Calendar",
+      label: t("nav.calendar"),
     },
     {
       id: "teams",
       icon: <UserMultiple size={16} />,
-      label: "Teams",
+      label: t("nav.teams"),
     },
     {
       id: "analytics",
       icon: <Analytics size={16} />,
-      label: "Analytics",
+      label: t("nav.analytics"),
     },
     {
       id: "files",
       icon: <DocumentAdd size={16} />,
-      label: "Files",
+      label: t("nav.files"),
     },
   ];
 
@@ -1155,12 +1131,22 @@ function IconNavigation({
       className="bg-[#000000] box-border content-stretch flex flex-col gap-2 h-full items-center justify-start overflow-clip p-4 relative shrink-0 w-16 border-r border-neutral-800"
       data-name="Icon Navigation"
     >
-      {/* Logo */}
-      <div className="mb-2 size-10 flex items-center justify-center">
-        <div className="size-7">
-          <InterfacesLogo1 />
-        </div>
+      {/* LokaSync Logo */}
+      <div className="mb-1 size-10 flex items-center justify-center" title="LokaSync">
+        <LokaLogo />
       </div>
+
+      {/* Workspace indicator */}
+      {workspace && (
+        <div
+          className="mb-1 w-10 flex items-center justify-center rounded-lg bg-indigo-900/40 py-1.5 cursor-default"
+          title={workspace.name || "Workspace"}
+        >
+          <span className="text-[10px] font-semibold text-indigo-300 uppercase tracking-wider truncate px-0.5" style={{ fontFamily: "Lexend, sans-serif" }}>
+            {(workspace.name || "WS").substring(0, 2)}
+          </span>
+        </div>
+      )}
 
       {/* Navigation Icons */}
       <div className="flex flex-col gap-2 w-full items-center">
@@ -1178,6 +1164,7 @@ function IconNavigation({
       {/* Bottom section */}
       <div className="flex-1" />
       <div className="flex flex-col gap-2 w-full items-center">
+        {/* Language toggle removed — now in Settings > Language */}
         <IconNavButton
           isActive={activeSection === "settings"}
           onClick={() => onSectionChange("settings")}
@@ -1277,6 +1264,7 @@ function DetailSidebar({
   activeSection: string;
 }) {
   const { navigate } = useNavigation();
+  const { t } = useLang();
   const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set());
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [teams, setTeams] = useState<api.Team[]>([]);
@@ -1295,7 +1283,7 @@ function DetailSidebar({
     api.getFiles().then(({ files }) => setRecentFiles(files.filter((f) => !f.archived).slice(0, 3))).catch(() => {});
   }, []);
 
-  const content = getSidebarContent(activeSection, teams, tasks, todayEvents, recentFiles);
+  const content = getSidebarContent(t, activeSection, teams, tasks, todayEvents, recentFiles);
 
   const toggleExpanded = (itemKey: string) => {
     const newExpanded = new Set(expandedItems);

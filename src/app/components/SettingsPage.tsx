@@ -9,6 +9,8 @@ import {
 } from "lucide-react";
 import { useNavigation } from "./NavigationContext";
 import { InviteMemberModal } from "./modals/InviteMemberModal";
+import { detectLang, persistLang, type Lang } from "../i18n";
+import { useLang } from "../LangContext";
 import * as api from "../utils/api";
 
 // ─── Primitives ────────────────────────────────────────────────────────────────
@@ -103,10 +105,28 @@ const accentColors = [
   { value: "#ef4444", label: "Rose" },
 ];
 
-const navGroups = [
-  { label: "Account", items: ["Profile", "Security", "Notifications"] },
-  { label: "Workspace", items: ["Workspace", "Appearance", "Timezone", "Default Notifications", "Members", "Billing", "Integrations"] },
-  { label: "Advanced", items: ["API Keys", "Audit Log", "Data & Export", "Danger Zone"] },
+const getNavGroups = (t: (k: any) => string) => [
+  { label: t("settings.account"), items: [
+    { key: "Profile", label: t("settings.profile") },
+    { key: "Security", label: t("settings.security") },
+    { key: "Notifications", label: t("settings.notifications") },
+  ]},
+  { label: t("settings.workspace"), items: [
+    { key: "Workspace", label: t("settings.workspace") },
+    { key: "Appearance", label: t("settings.appearance") },
+    { key: "Language", label: t("settings.language") },
+    { key: "Timezone", label: t("settings.timezone") },
+    { key: "Default Notifications", label: t("settings.defaultNotif") },
+    { key: "Members", label: t("settings.members") },
+    { key: "Billing", label: t("settings.billing") },
+    { key: "Integrations", label: t("settings.integrations") },
+  ]},
+  { label: t("settings.advanced"), items: [
+    { key: "API Keys", label: t("settings.apiKeys") },
+    { key: "Audit Log", label: t("settings.auditLog") },
+    { key: "Data & Export", label: t("settings.dataExport") },
+    { key: "Danger Zone", label: t("settings.dangerZone") },
+  ]},
 ];
 
 const subSectionMap: Record<string, string> = {
@@ -115,6 +135,7 @@ const subSectionMap: Record<string, string> = {
   notifications: "Notifications",
   workspace: "Workspace",
   "settings-theme": "Appearance",
+  "settings-language": "Language",
   "settings-timezone": "Timezone",
   "settings-notif-defaults": "Default Notifications",
   "settings-members": "Members",
@@ -130,7 +151,9 @@ const subSectionMap: Record<string, string> = {
 
 export function SettingsPage() {
   const { subSection } = useNavigation();
+  const { t, lang: globalLang, setLang: setGlobalLang } = useLang();
   const [activeNav, setActiveNav] = useState("Profile");
+  const navGroups = getNavGroups(t);
   const [integrations, setIntegrations] = useState<any[]>([]);
   const [sessions, setSessions] = useState<{ device: string; location: string; ip: string; lastActive: string; current: boolean }[]>([]);
   const [loginHistory, setLoginHistory] = useState<{ date: string; ip: string; device: string; status: string }[]>([]);
@@ -155,6 +178,10 @@ export function SettingsPage() {
   const [weekStart, setWeekStart] = useState("Monday");
   const [auditFilter, setAuditFilter] = useState("All");
   const [auditLogData, setAuditLogData] = useState<any[]>([]);
+  const [systemLang, setSystemLang] = useState<Lang>(globalLang);
+  useEffect(() => {
+    setSystemLang(globalLang);
+  }, [globalLang]);
   const [memberRoles, setMemberRoles] = useState<Record<string, string>>({});
   const [apiKeysList, setApiKeysList] = useState<any[]>([]);
   const [webhooksList, setWebhooksList] = useState<any[]>([]);
@@ -422,11 +449,11 @@ export function SettingsPage() {
               <div className="hidden lg:block text-neutral-600 text-[10px] uppercase tracking-wider px-3 mb-1">{group.label}</div>
               {group.items.map((item) => (
                 <button
-                  key={item}
-                  onClick={() => setActiveNav(item)}
-                  className={`shrink-0 lg:w-full text-left px-3 py-2 rounded-lg text-[12px] lg:text-[13px] transition-colors whitespace-nowrap ${activeNav === item ? "bg-neutral-800 text-neutral-50" : "text-neutral-500 hover:text-neutral-300 hover:bg-neutral-800/30"}`}
+                  key={item.key}
+                  onClick={() => setActiveNav(item.key)}
+                  className={`shrink-0 lg:w-full text-left px-3 py-2 rounded-lg text-[12px] lg:text-[13px] transition-colors whitespace-nowrap ${activeNav === item.key ? "bg-neutral-800 text-neutral-50" : "text-neutral-500 hover:text-neutral-300 hover:bg-neutral-800/30"}`}
                 >
-                  {item}
+                  {item.label}
                 </button>
               ))}
             </div>
@@ -865,6 +892,46 @@ export function SettingsPage() {
                 </div>
               </Section>
               <SaveRow onSave={saveAppearance} />
+            </>
+          )}
+
+          {/* ── Language ── */}
+          {activeNav === "Language" && (
+            <>
+              <Section title={t("settings.language")} description={t("settings.chooseLanguage")}>
+                <div className="space-y-2">
+                  {[
+                    { value: "en" as Lang, label: "English", description: "Use English for all interface labels and system text." },
+                    { value: "id" as Lang, label: "Bahasa Indonesia", description: "Gunakan Bahasa Indonesia untuk semua label antarmuka dan teks sistem." },
+                  ].map((option) => (
+                    <button
+                      key={option.value}
+                      onClick={() => {
+                        setSystemLang(option.value);
+                        setGlobalLang(option.value);
+                      }}
+                      className={`w-full text-left p-4 rounded-xl border transition-all ${
+                        systemLang === option.value
+                          ? "border-indigo-500 bg-indigo-950/20"
+                          : "border-neutral-800 hover:border-neutral-700"
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <div className="text-neutral-200 text-[13px]">{option.label}</div>
+                          <div className="text-neutral-600 text-[12px] mt-0.5">{option.description}</div>
+                        </div>
+                        {systemLang === option.value && <Check size={14} className="text-indigo-400 shrink-0 ml-3" />}
+                      </div>
+                    </button>
+                  ))}
+                </div>
+                <p className="text-neutral-600 text-[11px] mt-3">{t("settings.changesApply")}</p>
+              </Section>
+              <SaveRow onSave={() => {
+                setGlobalLang(systemLang);
+                toast.success(systemLang === "id" ? "Bahasa diubah ke Bahasa Indonesia" : "Language changed to English");
+              }} label={systemLang === "id" ? "Simpan bahasa" : "Save language"} />
             </>
           )}
 
