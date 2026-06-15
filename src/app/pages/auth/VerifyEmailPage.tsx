@@ -6,8 +6,10 @@ import { Button } from "@/components/cossui/button";
 import { useAuth } from "../../auth/AuthContext";
 import { resendVerification } from "../../utils/supabase";
 import { AuthShell } from "./AuthShell";
+import { useLang } from "../../LangContext";
 
 export function VerifyEmailPage() {
+  const { t } = useLang();
   const { user } = useAuth();
   const location = useLocation();
   const email = (location.state as { email?: string } | null)?.email ?? "";
@@ -16,29 +18,26 @@ export function VerifyEmailPage() {
 
   useEffect(() => {
     if (cooldown <= 0) return;
-    const t = setTimeout(() => setCooldown((c) => c - 1), 1000);
-    return () => clearTimeout(t);
+    const tmr = setTimeout(() => setCooldown((c) => c - 1), 1000);
+    return () => clearTimeout(tmr);
   }, [cooldown]);
 
-  // The confirmation link redirects back here; once Supabase picks up the
-  // session from the URL, the account is verified.
   if (user) {
     return (
       <AuthShell
-        title="Email verified"
-        description="Your account is ready to use"
+        title={t("auth.emailVerified")}
+        description={t("auth.accountReady")}
       >
         <div className="flex flex-col items-center gap-4 py-2 text-center">
           <CheckCircle2 className="size-10 text-emerald-500" aria-hidden="true" />
           <p className="text-sm text-neutral-400">
-            Thanks for confirming your email. You can now start using your
-            workspace.
+            {t("auth.thanksForConfirming")}
           </p>
           <Button
             render={<Link to="/app/dashboard" />}
             className="w-full"
           >
-            Go to dashboard
+            {t("auth.goToDashboard")}
           </Button>
         </div>
       </AuthShell>
@@ -47,7 +46,7 @@ export function VerifyEmailPage() {
 
   const handleResend = async () => {
     if (!email) {
-      toast.error("No email address found. Please sign in or register again.");
+      toast.error(t("auth.noEmailFound"));
       return;
     }
     setSending(true);
@@ -57,23 +56,23 @@ export function VerifyEmailPage() {
       toast.error(error.message);
       return;
     }
-    toast.success("Verification email sent");
+    toast.success(t("auth.verificationEmailSent"));
     setCooldown(30);
   };
 
   return (
     <AuthShell
-      title="Check your inbox"
-      description="We sent you a verification link"
+      title={t("auth.checkYourInbox")}
+      description={t("auth.weSentVerificationLink")}
       footer={
         <span>
-          Wrong account?{" "}
+          {t("auth.wrongAccount")}{" "}
           <Link to="/register" className="text-[#fafafa] hover:underline">
-            Register again
+            {t("auth.registerAgain")}
           </Link>{" "}
           or{" "}
           <Link to="/login" className="text-[#fafafa] hover:underline">
-            sign in
+            {t("auth.signIn")}
           </Link>
         </span>
       }
@@ -81,9 +80,7 @@ export function VerifyEmailPage() {
       <div className="flex flex-col items-center gap-4 py-2 text-center">
         <MailCheck className="size-10 text-neutral-400" aria-hidden="true" />
         <p className="text-sm text-neutral-400">
-          We sent a verification link to{" "}
-          <span className="text-[#fafafa]">{email || "your email"}</span>.
-          Click the link in the email to activate your account.
+          {t("auth.verificationLinkSent").replace("{email}", email || t("settings.email"))}
         </p>
         <Button
           type="button"
@@ -93,7 +90,9 @@ export function VerifyEmailPage() {
           disabled={cooldown > 0}
           onClick={handleResend}
         >
-          {cooldown > 0 ? `Resend in ${cooldown}s` : "Resend email"}
+          {cooldown > 0
+            ? t("auth.resendIn").replace("{seconds}", String(cooldown))
+            : t("auth.resendEmail")}
         </Button>
       </div>
     </AuthShell>

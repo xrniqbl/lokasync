@@ -24,6 +24,7 @@ import { Label } from "@/components/cossui/label";
 import { signUpWithEmail } from "../../utils/supabase";
 import { AuthShell } from "./AuthShell";
 import { PasswordInput } from "./PasswordInput";
+import { useLang } from "../../LangContext";
 
 function passwordStrength(pw: string): 0 | 1 | 2 | 3 {
   if (!pw) return 0;
@@ -42,6 +43,7 @@ const strengthMeta = [
 ];
 
 function StepIndicator({ step }: { step: 1 | 2 }) {
+  const { t } = useLang();
   return (
     <div className="flex items-center gap-2 text-xs text-neutral-500">
       {[1, 2].map((s) => (
@@ -56,7 +58,7 @@ function StepIndicator({ step }: { step: 1 | 2 }) {
             {s}
           </div>
           <span className={step === s ? "text-neutral-300" : ""}>
-            {s === 1 ? "Account" : "Your details"}
+            {s === 1 ? t("auth.account") : t("auth.yourDetails")}
           </span>
           {s === 1 && <div className="h-px w-6 bg-neutral-800" />}
         </div>
@@ -66,6 +68,7 @@ function StepIndicator({ step }: { step: 1 | 2 }) {
 }
 
 export function RegisterPage() {
+  const { t } = useLang();
   const navigate = useNavigate();
   const [step, setStep] = useState<1 | 2>(1);
 
@@ -90,15 +93,15 @@ export function RegisterPage() {
     e.preventDefault();
     setError("");
     if (password.length < 8) {
-      setError("Password must be at least 8 characters.");
+      setError(t("auth.passwordMin8"));
       return;
     }
     if (password !== confirm) {
-      setError("Passwords do not match.");
+      setError(t("auth.passwordsDoNotMatch"));
       return;
     }
     if (!agreed) {
-      setError("You must agree to the Terms of Service to continue.");
+      setError(t("auth.agreeToTerms"));
       return;
     }
     setStep(2);
@@ -124,9 +127,8 @@ export function RegisterPage() {
       setError(signUpError.message);
       return;
     }
-    // Supabase returns a user with no identities when the email is already registered
     if (data.user && data.user.identities?.length === 0) {
-      setError("This email is already registered. Try signing in instead.");
+      setError(t("auth.emailAlreadyRegistered"));
       return;
     }
     if (data.session) {
@@ -138,17 +140,17 @@ export function RegisterPage() {
 
   return (
     <AuthShell
-      title="Create your account"
+      title={t("auth.createAccount")}
       description={
         step === 1
-          ? "Start managing your projects in minutes"
-          : "Tell us a bit about yourself"
+          ? t("auth.startManaging")
+          : t("auth.tellUsAboutYourself")
       }
       footer={
         <span>
-          Already have an account?{" "}
+          {t("auth.alreadyHaveAccount")}{" "}
           <Link to="/login" className="text-[#fafafa] hover:underline">
-            Sign in
+            {t("auth.signIn")}
           </Link>
         </span>
       }
@@ -158,7 +160,7 @@ export function RegisterPage() {
       {error && (
         <Alert variant="error">
           <AlertCircle aria-hidden="true" />
-          <AlertTitle>Could not continue</AlertTitle>
+          <AlertTitle>{t("auth.couldNotContinue")}</AlertTitle>
           <AlertDescription>{error}</AlertDescription>
         </Alert>
       )}
@@ -166,7 +168,7 @@ export function RegisterPage() {
       {step === 1 ? (
         <form onSubmit={handleStepOne} className="flex flex-col gap-4">
           <Field>
-            <FieldLabel>Email</FieldLabel>
+            <FieldLabel>{t("settings.email")}</FieldLabel>
             <Input
               type="email"
               value={email}
@@ -177,7 +179,7 @@ export function RegisterPage() {
             />
           </Field>
           <Field>
-            <FieldLabel>Password</FieldLabel>
+            <FieldLabel>{t("settings.newPassword")}</FieldLabel>
             <PasswordInput
               value={password}
               onChange={setPassword}
@@ -199,14 +201,14 @@ export function RegisterPage() {
                   ))}
                 </div>
                 <span className="text-xs text-neutral-500">
-                  {strengthMeta[strength].label}
+                  {t(`auth.${strengthMeta[strength].label.toLowerCase()}`)}
                 </span>
               </div>
             )}
-            <FieldDescription>Minimum 8 characters.</FieldDescription>
+            <FieldDescription>{t("auth.minimum8Chars")}</FieldDescription>
           </Field>
           <Field>
-            <FieldLabel>Confirm password</FieldLabel>
+            <FieldLabel>{t("settings.confirmNewPassword")}</FieldLabel>
             <PasswordInput
               value={confirm}
               onChange={setConfirm}
@@ -242,13 +244,13 @@ export function RegisterPage() {
             </Label>
           </div>
           <Button type="submit" className="w-full">
-            Continue
+            {t("auth.continue")}
           </Button>
         </form>
       ) : (
         <form onSubmit={handleSubmit} className="flex flex-col gap-4">
           <Field>
-            <FieldLabel>Full name</FieldLabel>
+            <FieldLabel>{t("auth.fullName")}</FieldLabel>
             <Input
               type="text"
               value={fullName}
@@ -259,7 +261,7 @@ export function RegisterPage() {
             />
           </Field>
           <Field>
-            <FieldLabel>Phone number</FieldLabel>
+            <FieldLabel>{t("auth.phoneNumber")}</FieldLabel>
             <InputGroup>
               <InputGroupAddon>
                 <InputGroupText>+62</InputGroupText>
@@ -276,13 +278,13 @@ export function RegisterPage() {
               />
             </InputGroup>
             <FieldDescription>
-              Used for billing and payment receipts.
+              {t("auth.usedForBilling")}
             </FieldDescription>
           </Field>
           <Field>
             <FieldLabel>
-              Job title{" "}
-              <span className="font-normal text-neutral-500">(optional)</span>
+              {t("auth.jobTitleOptional")}{" "}
+              <span className="font-normal text-neutral-500">{t("auth.optional")}</span>
             </FieldLabel>
             <Input
               type="text"
@@ -294,8 +296,8 @@ export function RegisterPage() {
           </Field>
           <Field>
             <FieldLabel>
-              Company or team{" "}
-              <span className="font-normal text-neutral-500">(optional)</span>
+              {t("auth.companyOptional")}{" "}
+              <span className="font-normal text-neutral-500">{t("auth.optional")}</span>
             </FieldLabel>
             <Input
               type="text"
@@ -313,10 +315,10 @@ export function RegisterPage() {
               aria-label="Back to previous step"
             >
               <ArrowLeft aria-hidden="true" />
-              Back
+              {t("auth.back")}
             </Button>
             <Button type="submit" loading={submitting} className="flex-1">
-              Create account
+              {t("auth.createAccountBtn")}
             </Button>
           </div>
         </form>

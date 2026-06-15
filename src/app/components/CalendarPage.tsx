@@ -4,6 +4,7 @@ import { ChevronLeft, ChevronRight, Plus, Copy, Check, X } from "lucide-react";
 import { NewEventModal } from "./modals/NewEventModal";
 import { useNavigation } from "./NavigationContext";
 import * as api from "../utils/api";
+import { useLang } from "../LangContext";
 
 type CalendarEvent = { title: string; tag: string; color: string };
 
@@ -103,6 +104,7 @@ function slotHour(slot: string): number {
 type CalendarView = "month" | "week" | "day";
 
 function SharePanel({ onClose }: { onClose: () => void }) {
+  const { t } = useLang();
   const [copied, setCopied] = useState(false);
   const shareUrl = `${window.location.origin}/?view=calendar`;
 
@@ -115,12 +117,12 @@ function SharePanel({ onClose }: { onClose: () => void }) {
   return (
     <div className="bg-[#141414] border border-neutral-800/60 rounded-xl p-4 mb-5">
       <div className="flex items-center justify-between mb-3">
-        <span className="text-neutral-100 text-[13px] font-['Lexend:SemiBold',_sans-serif]">Share Calendar</span>
+        <span className="text-neutral-100 text-[13px] font-['Lexend:SemiBold',_sans-serif]">{t("calendarPage.shareCalendar")}</span>
         <button onClick={onClose} className="text-neutral-600 hover:text-neutral-300 transition-colors">
           <X size={14} />
         </button>
       </div>
-      <p className="text-neutral-500 text-[12px] mb-3 leading-relaxed">Share this calendar link with your team so they can view and sync events.</p>
+      <p className="text-neutral-500 text-[12px] mb-3 leading-relaxed">{t("calendarPage.shareCalendarDesc")}</p>
       <div className="flex items-center gap-2 p-2.5 bg-neutral-800/40 rounded-lg mb-3">
         <span className="text-neutral-400 text-[11px] flex-1 truncate">{shareUrl}</span>
         <button onClick={handleCopy} className="shrink-0 text-indigo-400 hover:text-indigo-300 transition-colors">
@@ -128,22 +130,23 @@ function SharePanel({ onClose }: { onClose: () => void }) {
         </button>
       </div>
       <div className="space-y-2">
-        <div className="text-neutral-600 text-[11px] mb-1">Access level</div>
-        {["View only", "View & comment", "Full access"].map((level) => (
+        <div className="text-neutral-600 text-[11px] mb-1">{t("calendarPage.accessLevel")}</div>
+        {[t("calendarPage.viewOnly"), t("calendarPage.viewAndComment"), t("calendarPage.fullAccess")].map((level) => (
           <label key={level} className="flex items-center gap-2.5 cursor-pointer">
-            <input type="radio" name="access" defaultChecked={level === "View only"} className="accent-indigo-500" />
+            <input type="radio" name="access" defaultChecked={level === t("calendarPage.viewOnly")} className="accent-indigo-500" />
             <span className="text-neutral-400 text-[12px]">{level}</span>
           </label>
         ))}
       </div>
       <button className="mt-3 w-full bg-indigo-600 hover:bg-indigo-500 text-white text-[12px] py-2 rounded-lg transition-colors">
-        Send invite
+        {t("calendarPage.sendInvite")}
       </button>
     </div>
   );
 }
 
 export function CalendarPage() {
+  const { t } = useLang();
   const { subSection } = useNavigation();
   const [view, setView] = useState<CalendarView>("month");
   const [monthKey, setMonthKey] = useState(CUR_KEY);
@@ -231,16 +234,15 @@ export function CalendarPage() {
     .filter((g) => g.evts.length > 0);
 
   const viewTabs: { key: CalendarView; label: string }[] = [
-    { key: "month", label: "Month" },
-    { key: "week", label: "Week" },
-    { key: "day", label: "Day" },
+    { key: "month", label: t("calendarPage.month") },
+    { key: "week", label: t("calendarPage.week") },
+    { key: "day", label: t("calendarPage.day") },
   ];
 
   return (
     <div className="flex flex-col lg:flex-row h-full font-['Lexend:Regular',_sans-serif]">
       {/* Main area */}
       <div className="flex-1 flex flex-col p-4 md:p-6 lg:p-8 overflow-y-auto min-w-0">
-        {/* Share panel — shown inline at top when share-calendar is active */}
         {showShare && <SharePanel onClose={() => setShowShare(false)} />}
 
         {/* Header */}
@@ -250,7 +252,7 @@ export function CalendarPage() {
               {view === "month" ? monthLabel : view === "week" ? WEEK_LABEL : `${monthShort} ${selectedDay}, ${monthYear}`}
             </h1>
             <p className="text-neutral-500 text-[12px] lg:text-[13px]">
-              {`${Object.values(events).flat().length} events this month`}
+              {t("calendarPage.eventsThisMonth").replace("{count}", String(Object.values(events).flat().length))}
             </p>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
@@ -268,7 +270,7 @@ export function CalendarPage() {
                 <button onClick={prevMonth} disabled={monthKey === PREV_KEY} className="border border-neutral-800 hover:bg-neutral-800 disabled:opacity-30 text-neutral-400 hover:text-neutral-200 w-8 h-8 rounded-lg transition-colors flex items-center justify-center">
                   <ChevronLeft size={14} />
                 </button>
-                <button onClick={() => { setMonthKey(CUR_KEY); setSelectedDay(TODAY_DAY); setEvents(serverEventsToLocal(serverEvents, CUR_KEY)); }} className="border border-neutral-800 bg-neutral-800/40 text-neutral-200 text-[12px] px-3 py-1.5 rounded-lg hover:bg-neutral-700/40 transition-colors">Today</button>
+                <button onClick={() => { setMonthKey(CUR_KEY); setSelectedDay(TODAY_DAY); setEvents(serverEventsToLocal(serverEvents, CUR_KEY)); }} className="border border-neutral-800 bg-neutral-800/40 text-neutral-200 text-[12px] px-3 py-1.5 rounded-lg hover:bg-neutral-700/40 transition-colors">{t("calendarPage.today")}</button>
                 <button onClick={nextMonth} disabled={monthKey === NEXT_KEY} className="border border-neutral-800 hover:bg-neutral-800 disabled:opacity-30 text-neutral-400 hover:text-neutral-200 w-8 h-8 rounded-lg transition-colors flex items-center justify-center">
                   <ChevronRight size={14} />
                 </button>
@@ -279,14 +281,14 @@ export function CalendarPage() {
                 <button onClick={() => setSelectedDay((d) => Math.max(1, d - 1))} className="border border-neutral-800 hover:bg-neutral-800 text-neutral-400 hover:text-neutral-200 w-8 h-8 rounded-lg transition-colors flex items-center justify-center">
                   <ChevronLeft size={14} />
                 </button>
-                <button onClick={() => setSelectedDay(TODAY_DAY)} className="border border-neutral-800 bg-neutral-800/40 text-neutral-200 text-[12px] px-3 py-1.5 rounded-lg hover:bg-neutral-700/40 transition-colors">Today</button>
+                <button onClick={() => setSelectedDay(TODAY_DAY)} className="border border-neutral-800 bg-neutral-800/40 text-neutral-200 text-[12px] px-3 py-1.5 rounded-lg hover:bg-neutral-700/40 transition-colors">{t("calendarPage.today")}</button>
                 <button onClick={() => setSelectedDay((d) => Math.min(daysInMonth, d + 1))} className="border border-neutral-800 hover:bg-neutral-800 text-neutral-400 hover:text-neutral-200 w-8 h-8 rounded-lg transition-colors flex items-center justify-center">
                   <ChevronRight size={14} />
                 </button>
               </>
             )}
             <button onClick={() => setShowNewEvent(true)} className="bg-indigo-600 hover:bg-indigo-500 text-white text-[12px] lg:text-[13px] px-3 py-2 rounded-lg transition-colors flex items-center gap-1.5">
-              <Plus size={13} /> Event
+              <Plus size={13} /> {t("calendarPage.event")}
             </button>
           </div>
         </div>
@@ -418,7 +420,7 @@ export function CalendarPage() {
                             </div>
                             {isHighlighted && (
                               <span className="text-[10px] px-2 py-0.5 rounded-full shrink-0" style={{ backgroundColor: `${ev.color}30`, color: ev.color }}>
-                                selected
+                                {t("calendarPage.selected")}
                               </span>
                             )}
                           </div>
@@ -436,7 +438,7 @@ export function CalendarPage() {
       {/* Right mini-sidebar */}
       <div className="w-full lg:w-60 xl:w-64 border-t lg:border-t-0 lg:border-l border-neutral-800/40 p-4 lg:p-5 overflow-y-auto shrink-0">
         <div className="text-neutral-50 text-[13px] font-['Lexend:SemiBold',_sans-serif] mb-4">
-          {view === "day" ? `${monthShort} ${selectedDay}` : "Upcoming"}
+          {view === "day" ? `${monthShort} ${selectedDay}` : t("calendarPage.upcoming")}
         </div>
         {view === "day" ? (
           <div className="space-y-2">
@@ -457,7 +459,7 @@ export function CalendarPage() {
                 );
               })
             ) : (
-              <div className="text-neutral-600 text-[12px]">No events on this day</div>
+              <div className="text-neutral-600 text-[12px]">{t("calendarPage.noEventsOnDay")}</div>
             )}
           </div>
         ) : (
@@ -467,7 +469,7 @@ export function CalendarPage() {
                 <div className="flex items-baseline gap-2 mb-2">
                   <span className="text-neutral-500 text-[11px]">{monthShort}</span>
                   <span className="text-neutral-400 text-[12px]">{group.day}</span>
-                  {group.day === TODAY_DAY && isCurrentMonth && <span className="text-indigo-400 text-[11px]">Today</span>}
+                  {group.day === TODAY_DAY && isCurrentMonth && <span className="text-indigo-400 text-[11px]">{t("calendarPage.today")}</span>}
                 </div>
                 <div className="space-y-1.5">
                   {group.evts.map((ev, j) => (
@@ -483,7 +485,7 @@ export function CalendarPage() {
                 </div>
               </div>
             )) : (
-              <div className="text-neutral-600 text-[12px]">No upcoming events</div>
+              <div className="text-neutral-600 text-[12px]">{t("calendarPage.noUpcomingEvents")}</div>
             )}
           </div>
         )}

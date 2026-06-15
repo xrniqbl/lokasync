@@ -15,6 +15,7 @@ import { Spinner } from "@/components/cossui/spinner";
 import { useNavigation } from "./NavigationContext";
 import { useSubscription } from "../subscription/SubscriptionContext";
 import type { TransactionSummary } from "../utils/api";
+import { useLang } from "../LangContext";
 
 const idr = new Intl.NumberFormat("id-ID", {
   style: "currency",
@@ -28,13 +29,14 @@ const dateFmt = new Intl.DateTimeFormat("en-US", {
   year: "numeric",
 });
 
-const STATUS_BADGES: Record<string, { label: string; className: string }> = {
-  paid: { label: "Paid", className: "bg-emerald-950/60 text-emerald-400" },
-  pending: { label: "Pending", className: "bg-amber-950/60 text-amber-400" },
-  failed: { label: "Failed", className: "bg-red-950/60 text-red-400" },
+const STATUS_BADGES: Record<string, { labelKey: string; className: string }> = {
+  paid: { labelKey: "billingPage.paid", className: "bg-emerald-950/60 text-emerald-400" },
+  pending: { labelKey: "billingPage.pending", className: "bg-amber-950/60 text-amber-400" },
+  failed: { labelKey: "billingPage.failed", className: "bg-red-950/60 text-red-400" },
 };
 
 function TransactionRow({ tx }: { tx: TransactionSummary }) {
+  const { t } = useLang();
   const badge = STATUS_BADGES[tx.status] ?? STATUS_BADGES.pending;
   return (
     <div className="flex items-center gap-3 py-3">
@@ -46,7 +48,7 @@ function TransactionRow({ tx }: { tx: TransactionSummary }) {
           <span
             className={`rounded-full px-2 py-0.5 text-[10px] ${badge.className}`}
           >
-            {badge.label}
+            {t(badge.labelKey as any)}
           </span>
         </div>
         <div className="mt-0.5 truncate text-[11px] text-neutral-500">
@@ -63,7 +65,7 @@ function TransactionRow({ tx }: { tx: TransactionSummary }) {
             to={`/payment/finish?order_id=${encodeURIComponent(tx.order_id)}`}
             className="text-[11px] text-indigo-400 underline-offset-4 hover:underline"
           >
-            Continue payment
+            {t("billingPage.continuePayment")}
           </Link>
         )}
       </div>
@@ -72,12 +74,12 @@ function TransactionRow({ tx }: { tx: TransactionSummary }) {
 }
 
 export function BillingPage() {
+  const { t } = useLang();
   const { subSection } = useNavigation();
   const { plan, subscription, transactions, loading, refresh } =
     useSubscription();
   const historyRef = useRef<HTMLDivElement>(null);
 
-  // Billing data changes outside the app (webhook/settlement) — refetch on open
   useEffect(() => {
     void refresh();
   }, [refresh]);
@@ -99,9 +101,9 @@ export function BillingPage() {
     >
       <div className="mx-auto flex max-w-2xl flex-col gap-6 px-6 py-8 lg:px-10">
         <div>
-          <h1 className="text-[18px] text-neutral-50">Billing</h1>
+          <h1 className="text-[18px] text-neutral-50">{t("billingPage.billingTitle")}</h1>
           <p className="text-[13px] text-neutral-500">
-            Manage your subscription and view your payment history.
+            {t("billingPage.billingSubtitle")}
           </p>
         </div>
 
@@ -118,15 +120,15 @@ export function BillingPage() {
               <CardHeader>
                 <CardTitle className="flex items-center justify-between text-neutral-50">
                   <span>
-                    {plan.name} plan
+                    {t("billingPage.billingPlanTitle").replace("{planName}", plan.name)}
                     {active && (
                       <span className="ml-2 rounded-full bg-emerald-950/60 px-2.5 py-0.5 text-[11px] font-normal text-emerald-400">
-                        Active
+                        {t("billingPage.activeBadge")}
                       </span>
                     )}
                     {expired && (
                       <span className="ml-2 rounded-full bg-red-950/60 px-2.5 py-0.5 text-[11px] font-normal text-red-400">
-                        Expired
+                        {t("billingPage.inactiveBadge")}
                       </span>
                     )}
                   </span>
@@ -136,20 +138,20 @@ export function BillingPage() {
                           subscription?.interval === "yearly"
                             ? plan.yearly
                             : plan.monthly,
-                        )} / ${
-                          subscription?.interval === "yearly" ? "year" : "month"
+                        )} ${
+                          subscription?.interval === "yearly"
+                            ? t("billingPage.perYear")
+                            : t("billingPage.perMonth")
                         }`
-                      : "Rp 0"}
+                      : `Rp 0${t("billingPage.perMonth")}`}
                   </span>
                 </CardTitle>
                 <CardDescription className="text-neutral-400">
                   {active && subscription
-                    ? `Active until ${dateFmt.format(
-                        new Date(subscription.current_period_end),
-                      )}. Renewing now adds another period on top of that date.`
+                    ? t("billingPage.activeUntil").replace("{date}", dateFmt.format(new Date(subscription.current_period_end)))
                     : expired
-                      ? "Your subscription has ended — you are back on the Free plan. Renew to regain access to paid features."
-                      : "You are on the Free plan. Upgrade to unlock analytics, team management, and unlimited projects."}
+                      ? t("billingPage.subscriptionExpired")
+                      : t("billingPage.freePlanDesc")}
                 </CardDescription>
               </CardHeader>
               <CardPanel>
@@ -169,9 +171,8 @@ export function BillingPage() {
                 {isPaidPlan && active && subscription ? (
                   <>
                     <Button variant="outline" render={<Link to="/pricing" />}>
-                      Change plan
+                      {t("billingPage.changePlan")}
                     </Button>
-                    {/* Paying for the same plan extends the current period */}
                     <Button
                       render={
                         <Link
@@ -179,13 +180,13 @@ export function BillingPage() {
                         />
                       }
                     >
-                      Renew now
+                      {t("billingPage.renewNow")}
                     </Button>
                   </>
                 ) : expired && subscription ? (
                   <>
                     <Button variant="outline" render={<Link to="/pricing" />}>
-                      Compare plans
+                      {t("billingPage.comparePlans")}
                     </Button>
                     <Button
                       render={
@@ -194,18 +195,18 @@ export function BillingPage() {
                         />
                       }
                     >
-                      Renew {subscription.plan_id === "business" ? "Business" : "Pro"}
+                      {t("billingPage.renewPlan").replace("{planName}", subscription.plan_id === "business" ? "Business" : "Pro")}
                     </Button>
                   </>
                 ) : (
                   <>
                     <Button variant="outline" render={<Link to="/pricing" />}>
-                      Compare plans
+                      {t("billingPage.comparePlans")}
                     </Button>
                     <Button
                       render={<Link to="/checkout/pro?interval=monthly" />}
                     >
-                      Upgrade to Pro
+                      {t("billingPage.upgradeToPro")}
                     </Button>
                   </>
                 )}
@@ -217,16 +218,16 @@ export function BillingPage() {
               <Card className="border-neutral-800 bg-[#1a1a1a]">
                 <CardHeader>
                   <CardTitle className="text-neutral-50">
-                    Payment history
+                    {t("billingPage.paymentHistoryTitle")}
                   </CardTitle>
                   <CardDescription className="text-neutral-400">
-                    Orders made with this account, newest first.
+                    {t("billingPage.paymentHistoryDesc")}
                   </CardDescription>
                 </CardHeader>
                 <CardPanel>
                   {transactions.length === 0 ? (
                     <p className="py-4 text-center text-[13px] text-neutral-500">
-                      No payments yet.
+                      {t("billingPage.noPaymentsYet")}
                     </p>
                   ) : (
                     <div className="divide-y divide-neutral-800/70">
