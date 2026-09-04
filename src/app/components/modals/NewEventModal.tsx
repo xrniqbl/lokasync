@@ -1,12 +1,13 @@
 import { useState } from "react";
 import { toast } from "sonner";
+import { useLang } from "../../LangContext";
 import { BaseModal, ModalInput, ModalSelect, ModalFooter } from "./BaseModal";
 
 interface NewEventModalProps {
   open: boolean;
   onClose: () => void;
   defaultDay?: number;
-  onAdd?: (day: number, event: { title: string; tag: string; color: string }) => void;
+  onAdd?: (day: number, event: { title: string; tag: string; color: string }) => Promise<void>;
 }
 
 const tagColors: Record<string, string> = {
@@ -19,6 +20,7 @@ const tagColors: Record<string, string> = {
 };
 
 export function NewEventModal({ open, onClose, defaultDay = 8, onAdd }: NewEventModalProps) {
+  const { t } = useLang();
   const [title, setTitle] = useState("");
   const [day, setDay] = useState(defaultDay.toString());
   const [time, setTime] = useState("");
@@ -31,24 +33,33 @@ export function NewEventModal({ open, onClose, defaultDay = 8, onAdd }: NewEvent
     setTag("meeting");
   };
 
-  const handleSubmit = () => {
+  const [submitting, setSubmitting] = useState(false);
+
+  const handleSubmit = async () => {
     if (!title.trim()) {
-      toast.error("Event title is required");
+      toast.error(t("events.titleRequired"));
       return;
     }
     const dayNum = parseInt(day, 10);
     if (!dayNum || dayNum < 1 || dayNum > 30) {
-      toast.error("Enter a valid day (1–30)");
+      toast.error(t("events.invalidDay"));
       return;
     }
-    onAdd?.(dayNum, {
-      title: title.trim(),
-      tag: time || "All day",
-      color: tagColors[tag] || "#6366f1",
-    });
-    toast.success("Event added");
-    reset();
-    onClose();
+    setSubmitting(true);
+    try {
+      await onAdd?.(dayNum, {
+        title: title.trim(),
+        tag: time || "All day",
+        color: tagColors[tag] || "#6366f1",
+      });
+      toast.success(t("events.added"));
+      reset();
+      onClose();
+    } catch {
+      // Parent shows error toast — modal stays open
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -73,7 +84,7 @@ export function NewEventModal({ open, onClose, defaultDay = 8, onAdd }: NewEvent
           ]}
         />
       </div>
-      <ModalFooter onCancel={() => { reset(); onClose(); }} onConfirm={handleSubmit} confirmLabel="Add event" confirmDisabled={!title.trim()} />
+      <ModalFooter onCancel={() => { reset(); onClose(); }} onConfirm={handleSubmit} confirmLabel={submitting ? "Adding..." : "Add event"} confirmDisabled={!title.trim() || submitting} />
     </BaseModal>
   );
 }

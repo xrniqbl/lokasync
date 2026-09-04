@@ -197,3 +197,28 @@ html {
   -ms-overflow-style: none;
   scrollbar-width: none;
 }
+
+/* ── Density ─────────────────────────────────────────────────────────────────── */
+/* Compact: tighter padding/gaps across cards, tables, and list rows */
+[data-density="compact"] .p-4 { padding: 0.625rem; }
+[data-density="compact"] .p-6 { padding: 1rem; }
+[data-density="compact"] .gap-3 { gap: 0.5rem; }
+[data-density="compact"] .gap-4 { gap: 0.625rem; }
+[data-density="compact"] .space-y-3 > :not([hidden]) ~ :not([hidden]) { margin-top: 0.5rem; }
+[data-density="compact"] .space-y-4 > :not([hidden]) ~ :not([hidden]) { margin-top: 0.625rem; }
+[data-density="compact"] .space-y-5 > :not([hidden]) ~ :not([hidden]) { margin-top: 0.75rem; }
+[data-density="compact"] .py-2 { padding-top: 0.375rem; padding-bottom: 0.375rem; }
+[data-density="compact"] .py-2\.5 { padding-top: 0.5rem; padding-bottom: 0.5rem; }
+[data-density="compact"] .py-3 { padding-top: 0.5rem; padding-bottom: 0.5rem; }
+
+/* Spacious: more breathing room */
+[data-density="spacious"] .p-4 { padding: 1.5rem; }
+[data-density="spacious"] .p-6 { padding: 2rem; }
+[data-density="spacious"] .gap-3 { gap: 1rem; }
+[data-density="spacious"] .gap-4 { gap: 1.25rem; }
+[data-density="spacious"] .space-y-3 > :not([hidden]) ~ :not([hidden]) { margin-top: 1rem; }
+[data-density="spacious"] .space-y-4 > :not([hidden]) ~ :not([hidden]) { margin-top: 1.25rem; }
+[data-density="spacious"] .space-y-5 > :not([hidden]) ~ :not([hidden]) { margin-top: 1.5rem; }
+[data-density="spacious"] .py-2 { padding-top: 0.75rem; padding-bottom: 0.75rem; }
+[data-density="spacious"] .py-2\.5 { padding-top: 0.875rem; padding-bottom: 0.875rem; }
+[data-density="spacious"] .py-3 { padding-top: 1rem; padding-bottom: 1rem; }

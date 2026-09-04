@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router";
 import { ArrowLeft } from "lucide-react";
+import { LokaLogo } from "../../components/LokaLogo";
+import { SEOHead } from "../../components/SEOHead";
 import {
   detectLang,
   LangToggle,
@@ -61,6 +63,10 @@ export function LegalShell({ doc }: { doc: Record<Lang, LegalDoc> }) {
     window.scrollTo(0, 0);
   }, []);
 
+  // Determine the page type from the document title for proper canonical/SEO
+  const isPrivacy = d.title.toLowerCase().includes("privacy");
+  const pagePath = isPrivacy ? "/privacy" : "/terms";
+
   return (
     <div
       className="dark min-h-screen w-full bg-[#0f0f0f] text-neutral-50"
@@ -72,14 +78,15 @@ export function LegalShell({ doc }: { doc: Record<Lang, LegalDoc> }) {
         ].join(", "),
       }}
     >
+      <SEOHead
+        title={`${d.title} — LokaSync`}
+        description={d.intro.slice(0, 160)}
+        canonical={`https://lokasync.app${pagePath}`}
+      />
       {/* Top bar */}
       <header className="border-b border-neutral-800/70">
         <div className="mx-auto flex h-16 w-full max-w-3xl items-center justify-between px-6">
-          <Link to="/" aria-label="LokaSync home">
-            <span className="text-[14px] font-bold tracking-[0.08em] text-[#fafafa]">
-              LOKASYNC
-            </span>
-          </Link>
+            <LokaLogo size="sm" />
           <div className="flex items-center gap-3">
             <Link
               to="/"

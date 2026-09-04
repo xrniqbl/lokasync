@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { toast } from "sonner";
+import { useLang } from "../../LangContext";
 import { BaseModal, ModalInput, ModalSelect, ModalFooter } from "./BaseModal";
 import * as api from "../../utils/api";
 
@@ -12,13 +13,16 @@ interface NewTask {
   due: string;
 }
 
+export type NewTaskInput = NewTask & { status: string; completed: boolean };
+
 interface NewTaskModalProps {
   open: boolean;
   onClose: () => void;
-  onAdd?: (task: NewTask & { id: number; status: string; completed: boolean }) => void;
+  onAdd?: (task: NewTaskInput) => void;
 }
 
 export function NewTaskModal({ open, onClose, onAdd }: NewTaskModalProps) {
+  const { t } = useLang();
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [priority, setPriority] = useState("medium");
@@ -27,11 +31,14 @@ export function NewTaskModal({ open, onClose, onAdd }: NewTaskModalProps) {
   const [due, setDue] = useState("");
   const [assigneeOptions, setAssigneeOptions] = useState<{ value: string; label: string }[]>([]);
   const [projectOptions, setProjectOptions] = useState<{ value: string; label: string }[]>([]);
+  const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
     if (!open) return;
-    api.getTeams().then((teams) => {
-      const opts = teams.flatMap((t) => t.members).map((m) => ({ value: m.initials, label: m.name }));
+    // Fetch workspace members for assignee dropdown — use user_id as value
+    // so "My Tasks" can filter by assignee matching the logged-in user.
+    api.getWorkspaceMembers().then(({ members }) => {
+      const opts = members.filter((m) => m.user_id != null).map((m) => ({ value: m.user_id!, label: m.name || m.email }));
       setAssigneeOptions(opts);
       setAssignee((prev) => prev || opts[0]?.value || "");
     }).catch(() => {});
@@ -51,13 +58,13 @@ export function NewTaskModal({ open, onClose, onAdd }: NewTaskModalProps) {
     setDue("");
   };
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     if (!title.trim()) {
-      toast.error("Task title is required");
+      toast.error(t("newTask.titleRequired"));
       return;
     }
-    const newTask = {
-      id: Date.now(),
+    setSubmitting(true);
+    const newTask: NewTaskInput = {
       title: title.trim(),
       description: description.trim() || "No description",
       priority,
@@ -67,10 +74,16 @@ export function NewTaskModal({ open, onClose, onAdd }: NewTaskModalProps) {
       status: "todo",
       completed: false,
     };
-    onAdd?.(newTask);
-    toast.success("Task created");
-    reset();
-    onClose();
+    try {
+      await onAdd?.(newTask);
+      toast.success(t("newTask.created"));
+      reset();
+      onClose();
+    } catch {
+      // Error toast already shown by parent — modal stays open
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -115,7 +128,7 @@ export function NewTaskModal({ open, onClose, onAdd }: NewTaskModalProps) {
           <ModalInput label="Due date" placeholder="Jun 15" value={due} onChange={setDue} />
         </div>
       </div>
-      <ModalFooter onCancel={() => { reset(); onClose(); }} onConfirm={handleSubmit} confirmLabel="Create task" confirmDisabled={!title.trim()} />
+      <ModalFooter onCancel={() => { reset(); onClose(); }} onConfirm={handleSubmit} confirmLabel={submitting ? "Creating..." : "Create task"} confirmDisabled={!title.trim() || submitting} />
     </BaseModal>
   );
 }

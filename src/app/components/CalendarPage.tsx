@@ -1,12 +1,15 @@
-import { useState, useEffect, useRef } from "react";
+import { logger } from "../utils/logger";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { toast } from "sonner";
 import { ChevronLeft, ChevronRight, Plus, Copy, Check, X } from "lucide-react";
 import { NewEventModal } from "./modals/NewEventModal";
 import { useNavigation } from "./NavigationContext";
+import { useRealtimeSync } from "../hooks/useRealtimeSync";
+import { useAuth } from "../auth/AuthContext";
 import * as api from "../utils/api";
 import { useLang } from "../LangContext";
 
-type CalendarEvent = { title: string; tag: string; color: string };
+type CalendarEvent = { title: string; tag: string; color: string; created_by?: string | null };
 
 // Convert server date key "2026-6-8" → numeric day (for current month display)
 function serverKeyToDay(key: string): number {
@@ -106,12 +109,27 @@ type CalendarView = "month" | "week" | "day";
 function SharePanel({ onClose }: { onClose: () => void }) {
   const { t } = useLang();
   const [copied, setCopied] = useState(false);
+  const [email, setEmail] = useState("");
   const shareUrl = `${window.location.origin}/?view=calendar`;
 
   const handleCopy = () => {
     navigator.clipboard?.writeText(shareUrl).catch(() => {});
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
+  };
+
+  const handleSendInvite = () => {
+    if (email.trim()) {
+      const subject = encodeURIComponent("Calendar Invitation — LokaSync");
+      const body = encodeURIComponent(`You've been invited to view our calendar.\n\nOpen here: ${shareUrl}`);
+      window.open(`mailto:${email.trim()}?subject=${subject}&body=${body}`, "_blank");
+      toast.success(t("calendarPage.shareCalendarDesc"));
+    } else {
+      // No email — just copy link
+      handleCopy();
+      toast.success(t("calendar.linkCopied"));
+    }
+    onClose();
   };
 
   return (
@@ -129,7 +147,17 @@ function SharePanel({ onClose }: { onClose: () => void }) {
           {copied ? <Check size={13} /> : <Copy size={13} />}
         </button>
       </div>
-      <div className="space-y-2">
+      <div className="mb-3">
+        <label className="block text-neutral-600 text-[11px] mb-1.5">Invite by email (optional)</label>
+        <input
+          type="email"
+          placeholder="teammate@company.com"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          className="w-full bg-[#0f0f0f] border border-neutral-800 focus:border-indigo-600/60 rounded-lg px-3 py-2 text-neutral-200 text-[12px] outline-none transition-colors placeholder:text-neutral-600"
+        />
+      </div>
+      <div className="space-y-2 mb-3">
         <div className="text-neutral-600 text-[11px] mb-1">{t("calendarPage.accessLevel")}</div>
         {[t("calendarPage.viewOnly"), t("calendarPage.viewAndComment"), t("calendarPage.fullAccess")].map((level) => (
           <label key={level} className="flex items-center gap-2.5 cursor-pointer">
@@ -138,7 +166,7 @@ function SharePanel({ onClose }: { onClose: () => void }) {
           </label>
         ))}
       </div>
-      <button className="mt-3 w-full bg-indigo-600 hover:bg-indigo-500 text-white text-[12px] py-2 rounded-lg transition-colors">
+      <button onClick={handleSendInvite} className="w-full bg-indigo-600 hover:bg-indigo-500 text-white text-[12px] py-2 rounded-lg transition-colors">
         {t("calendarPage.sendInvite")}
       </button>
     </div>
@@ -147,6 +175,7 @@ function SharePanel({ onClose }: { onClose: () => void }) {
 
 export function CalendarPage() {
   const { t } = useLang();
+  const { user } = useAuth();
   const { subSection } = useNavigation();
   const [view, setView] = useState<CalendarView>("month");
   const [monthKey, setMonthKey] = useState(CUR_KEY);
@@ -155,18 +184,23 @@ export function CalendarPage() {
   const [events, setEvents] = useState<Record<number, CalendarEvent[]>>({});
   const [showNewEvent, setShowNewEvent] = useState(false);
   const [showShare, setShowShare] = useState(false);
+  const [showMyEventsOnly, setShowMyEventsOnly] = useState(false);
   const [highlightedEvent, setHighlightedEvent] = useState<string | null>(null);
   const highlightTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  useEffect(() => {
+  const loadData = useCallback((opts?: { silent?: boolean }) => {
     api.getCalendarEvents().then((data) => {
       setServerEvents(data);
       setEvents(serverEventsToLocal(data, monthKey));
     }).catch((e) => {
-      console.log("Failed to load calendar events:", e);
-      toast.error("Failed to load calendar events");
+      logger.error("app", "Failed to load calendar events:", e);
+      if (!opts?.silent) toast.error(t("calendar.failedToLoad"));
     });
-  }, []);
+  }, [monthKey]);
+
+  useEffect(() => { loadData(); }, [loadData]);
+
+  useRealtimeSync(["calendar_events"], () => loadData({ silent: true }));
 
   useEffect(() => {
     if (subSection === "month") { setView("month"); setHighlightedEvent(null); }
@@ -208,14 +242,54 @@ export function CalendarPage() {
 
   const handleAddEvent = async (day: number, event: CalendarEvent) => {
     const dateKey = dayToServerKey(monthKey, day);
+    const prevEvents = events;
+    const prevServer = serverEvents;
     setEvents((prev) => ({ ...prev, [day]: [...(prev[day] || []), event] }));
     setServerEvents((prev) => ({ ...prev, [dateKey]: [...(prev[dateKey] || []), event] }));
     setSelectedDay(day);
     try {
       await api.createCalendarEvent(dateKey, event);
     } catch (e) {
-      console.log("Failed to save event:", e);
-      toast.error("Failed to save event");
+      setEvents(prevEvents);
+      setServerEvents(prevServer);
+      logger.error("app", "Failed to save event:", e);
+      toast.error(t("calendar.failedToSave"));
+      throw e;
+    }
+  };
+
+  const handleDeleteEvent = async (day: number, eventIndex: number) => {
+    const dateKey = dayToServerKey(monthKey, day);
+    const serverIdx = (serverEvents[dateKey] ?? []).findIndex(
+      (ev, i) => i === eventIndex || (events[day]?.[eventIndex]?.title === ev.title && events[day]?.[eventIndex]?.tag === ev.tag),
+    );
+    const idxToDelete = serverIdx >= 0 ? serverIdx : eventIndex;
+
+    // Snapshot for rollback
+    const prevEvents = events;
+    const prevServer = serverEvents;
+
+    // Optimistic remove from both local states
+    setEvents((prev) => {
+      const updated = { ...prev };
+      updated[day] = (updated[day] || []).filter((_, i) => i !== eventIndex);
+      return updated;
+    });
+    setServerEvents((prev) => {
+      const updated = { ...prev };
+      updated[dateKey] = (updated[dateKey] || []).filter((_, i) => i !== idxToDelete);
+      return updated;
+    });
+
+    try {
+      await api.deleteCalendarEvent(dateKey, idxToDelete);
+      toast.success(t("calendar.eventDeleted"));
+    } catch (e) {
+      // Rollback
+      setEvents(prevEvents);
+      setServerEvents(prevServer);
+      logger.error("app", "Failed to delete event:", e);
+      toast.error(t("calendar.failedToDelete"));
     }
   };
 
@@ -287,6 +361,12 @@ export function CalendarPage() {
                 </button>
               </>
             )}
+            <button
+              onClick={() => setShowMyEventsOnly(!showMyEventsOnly)}
+              className={`border text-[12px] lg:text-[13px] px-3 py-2 rounded-lg transition-colors ${showMyEventsOnly ? "border-indigo-600/60 bg-indigo-950/30 text-indigo-400" : "border-neutral-800 hover:bg-neutral-800 text-neutral-400 hover:text-neutral-200"}`}
+            >
+              {showMyEventsOnly ? t("calendarPage.myEvents") : t("calendarPage.allEvents")}
+            </button>
             <button onClick={() => setShowNewEvent(true)} className="bg-indigo-600 hover:bg-indigo-500 text-white text-[12px] lg:text-[13px] px-3 py-2 rounded-lg transition-colors flex items-center gap-1.5">
               <Plus size={13} /> {t("calendarPage.event")}
             </button>
@@ -305,7 +385,7 @@ export function CalendarPage() {
               {paddedCells.map((day, i) => {
                 const isToday = day === TODAY_DAY && isCurrentMonth;
                 const isSelected = day === selectedDay;
-                const dayEvents = day ? events[day] : [];
+                const dayEvents = day ? (events[day] ?? []).filter((ev) => !showMyEventsOnly || ev.created_by === user?.id) : [];
                 return (
                   <div
                     key={i}
@@ -405,13 +485,13 @@ export function CalendarPage() {
                     <div className="flex-1 space-y-1">
                       {display.map((ev, j) => {
                         const isHighlighted = highlightedEvent === ev.title;
+                        const origIdx = (events[selectedDay] || []).indexOf(ev);
                         return (
                           <div key={j}
-                            className={`flex items-center gap-2.5 px-3 py-2 rounded-lg cursor-pointer transition-all ${isHighlighted ? "ring-2 scale-[1.01]" : "hover:opacity-90"}`}
+                            className={`group flex items-center gap-2.5 px-3 py-2 rounded-lg cursor-pointer transition-all ${isHighlighted ? "ring-2 scale-[1.01]" : "hover:opacity-90"}`}
                             style={{
                               backgroundColor: isHighlighted ? `${ev.color}30` : `${ev.color}18`,
                               borderLeft: `3px solid ${ev.color}`,
-                              ringColor: isHighlighted ? ev.color : undefined,
                               boxShadow: isHighlighted ? `0 0 0 2px ${ev.color}60` : undefined,
                             }}>
                             <div className="flex-1 min-w-0">
@@ -423,6 +503,13 @@ export function CalendarPage() {
                                 {t("calendarPage.selected")}
                               </span>
                             )}
+                            <button
+                              onClick={(e) => { e.stopPropagation(); handleDeleteEvent(selectedDay, origIdx >= 0 ? origIdx : j); }}
+                              className="opacity-0 group-hover:opacity-100 text-neutral-600 hover:text-red-400 transition-all p-0.5 rounded hover:bg-red-950/30 shrink-0"
+                              title={t("calendarPage.deleteEvent")}
+                            >
+                              <X size={12} />
+                            </button>
                           </div>
                         );
                       })}
@@ -447,7 +534,7 @@ export function CalendarPage() {
                 const isHighlighted = highlightedEvent === ev.title;
                 return (
                   <div key={j}
-                    className={`flex items-center gap-2.5 p-2.5 rounded-lg transition-all cursor-pointer ${isHighlighted ? "bg-neutral-700/50" : "bg-neutral-800/20 hover:bg-neutral-800/40"}`}
+                    className={`group flex items-center gap-2.5 p-2.5 rounded-lg transition-all cursor-pointer ${isHighlighted ? "bg-neutral-700/50" : "bg-neutral-800/20 hover:bg-neutral-800/40"}`}
                     style={{ boxShadow: isHighlighted ? `0 0 0 1px ${ev.color}50` : undefined }}>
                     <div className="w-1 min-h-[28px] rounded-full shrink-0" style={{ backgroundColor: ev.color }} />
                     <div className="flex-1 min-w-0">
@@ -455,6 +542,13 @@ export function CalendarPage() {
                       <div className="text-neutral-600 text-[11px] mt-0.5">{ev.tag}</div>
                     </div>
                     {isHighlighted && <div className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: ev.color }} />}
+                    <button
+                      onClick={(e) => { e.stopPropagation(); handleDeleteEvent(selectedDay, j); }}
+                      className="opacity-0 group-hover:opacity-100 text-neutral-600 hover:text-red-400 transition-all p-0.5 rounded hover:bg-red-950/30 shrink-0"
+                      title={t("calendarPage.deleteEvent")}
+                    >
+                      <X size={12} />
+                    </button>
                   </div>
                 );
               })
@@ -473,13 +567,21 @@ export function CalendarPage() {
                 </div>
                 <div className="space-y-1.5">
                   {group.evts.map((ev, j) => (
-                    <div key={j} onClick={() => { setSelectedDay(group.day); setView("day"); }}
-                      className="flex items-center gap-2.5 p-2.5 rounded-lg bg-neutral-800/20 hover:bg-neutral-800/40 transition-colors cursor-pointer">
+                    <div key={j}
+                      className="group flex items-center gap-2.5 p-2.5 rounded-lg bg-neutral-800/20 hover:bg-neutral-800/40 transition-colors cursor-pointer"
+                      onClick={() => { setSelectedDay(group.day); setView("day"); }}>
                       <div className="w-1 min-h-[28px] rounded-full shrink-0" style={{ backgroundColor: ev.color }} />
-                      <div>
-                        <div className="text-neutral-200 text-[12px]">{ev.title}</div>
+                      <div className="flex-1 min-w-0">
+                        <div className="text-neutral-200 text-[12px] truncate">{ev.title}</div>
                         <div className="text-neutral-600 text-[11px] mt-0.5">{ev.tag}</div>
                       </div>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); handleDeleteEvent(group.day, j); }}
+                        className="opacity-0 group-hover:opacity-100 text-neutral-600 hover:text-red-400 transition-all p-0.5 rounded hover:bg-red-950/30 shrink-0"
+                        title={t("calendarPage.deleteEvent")}
+                      >
+                        <X size={12} />
+                      </button>
                     </div>
                   ))}
                 </div>

@@ -1,5 +1,7 @@
+import { logger } from "../../utils/logger";
 import { useState } from "react";
 import { toast } from "sonner";
+import { useLang } from "../../LangContext";
 import { BaseModal } from "./BaseModal";
 
 interface Member {
@@ -25,6 +27,7 @@ const statusDot: Record<string, string> = {
 };
 
 export function ManageTeamModal({ open, onClose, teamName, members, onRemove }: ManageTeamModalProps) {
+  const { t } = useLang();
   const [list, setList] = useState(members);
   const [removing, setRemoving] = useState<string | null>(null);
 
@@ -35,8 +38,8 @@ export function ManageTeamModal({ open, onClose, teamName, members, onRemove }: 
       setList((prev) => prev.filter((m) => m.initials !== initials));
       toast.success(`${name} removed from ${teamName}`);
     } catch (e) {
-      console.log("Failed to remove member:", e);
-      toast.error("Failed to remove member");
+      logger.error("app", "Failed to remove member:", e);
+      toast.error(t("invite.failedToRemove"));
     } finally {
       setRemoving(null);
     }

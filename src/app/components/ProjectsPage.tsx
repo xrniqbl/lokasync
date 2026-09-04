@@ -1,4 +1,5 @@
-import { useState, useEffect } from "react";
+import { logger } from "../utils/logger";
+﻿import { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router";
 import { toast } from "sonner";
 import { TrendingUp, TrendingDown, CheckCircle, Circle, Clock, Users, BarChart2, AlertCircle, ChevronRight } from "lucide-react";
@@ -6,7 +7,9 @@ import { NewProjectModal, type Project } from "./modals/NewProjectModal";
 import { ProjectDetailModal } from "./modals/ProjectDetailModal";
 import { useNavigation } from "./NavigationContext";
 import { PLAN_LIMITS, useSubscription, type PlanId } from "../subscription/SubscriptionContext";
+import { useRealtimeSync } from "../hooks/useRealtimeSync";
 import * as api from "../utils/api";
+import { useLang } from "../LangContext";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -31,38 +34,38 @@ const subSectionMap: Record<string, ProjView> = {
   "archived": "proj-archived",
 };
 
-const VIEW_LABELS: Record<ProjView, string> = {
-  "grid": "Projects",
-  "web-application": "Web Application v2",
-  "proj-web-frontend": "Frontend Development",
-  "proj-web-api": "API Integration",
-  "proj-web-qa": "Testing & QA",
-  "mobile-app": "Mobile App — iOS & Android",
-  "proj-mobile-design": "UI/UX Design",
-  "proj-mobile-native": "Native Development",
-  "proj-completed": "Completed Projects",
-  "proj-archived": "Archived Projects",
+const VIEW_LABEL_KEYS: Record<ProjView, string> = {
+  "grid": "projects.title",
+  "web-application": "projects.webApplication",
+  "proj-web-frontend": "projects.frontendDevelopment",
+  "proj-web-api": "projects.apiIntegration",
+  "proj-web-qa": "projects.testingQA",
+  "mobile-app": "projects.mobileApp",
+  "proj-mobile-design": "projects.uiUxDesign",
+  "proj-mobile-native": "projects.nativeDevelopment",
+  "proj-completed": "projects.completedProjects",
+  "proj-archived": "projects.archivedProjects",
 };
 
 // ── Shared sub-components ─────────────────────────────────────────────────────
 
-const statusCfg: Record<string, { label: string; color: string; dot: string }> = {
-  completed: { label: "Done", color: "#10b981", dot: "#10b981" },
-  "in-progress": { label: "In Progress", color: "#f59e0b", dot: "#f59e0b" },
-  todo: { label: "Todo", color: "#525252", dot: "#404040" },
-  review: { label: "Review", color: "#3b82f6", dot: "#3b82f6" },
+const statusCfg: Record<string, { labelKey: string; color: string; dot: string }> = {
+  completed: { labelKey: "projects.taskStatus.done", color: "#10b981", dot: "#10b981" },
+  "in-progress": { labelKey: "projects.taskStatus.inProgress", color: "#f59e0b", dot: "#f59e0b" },
+  todo: { labelKey: "projects.taskStatus.todo", color: "#525252", dot: "#404040" },
+  review: { labelKey: "projects.taskStatus.review", color: "#3b82f6", dot: "#3b82f6" },
 };
 
-const priorityCfg: Record<string, { label: string; color: string }> = {
-  high: { label: "High", color: "#ef4444" },
-  medium: { label: "Medium", color: "#f59e0b" },
-  low: { label: "Low", color: "#525252" },
+const priorityCfg: Record<string, { labelKey: string; color: string }> = {
+  high: { labelKey: "projects.priority.high", color: "#ef4444" },
+  medium: { labelKey: "projects.priority.medium", color: "#f59e0b" },
+  low: { labelKey: "projects.priority.low", color: "#525252" },
 };
 
-const projectStatusConfig: Record<string, { label: string; color: string; bg: string }> = {
-  active: { label: "Active", color: "#10b981", bg: "bg-emerald-950/40" },
-  paused: { label: "Paused", color: "#f59e0b", bg: "bg-amber-950/40" },
-  completed: { label: "Completed", color: "#6366f1", bg: "bg-indigo-950/40" },
+const projectStatusConfig: Record<string, { labelKey: string; color: string; bg: string }> = {
+  active: { labelKey: "projects.status.active", color: "#10b981", bg: "bg-emerald-950/40" },
+  paused: { labelKey: "projects.status.paused", color: "#f59e0b", bg: "bg-amber-950/40" },
+  completed: { labelKey: "projects.status.completed", color: "#6366f1", bg: "bg-indigo-950/40" },
 };
 
 const tagColors = [
@@ -113,11 +116,14 @@ function ProgressBar({ value, color = "#6366f1" }: { value: number; color?: stri
   );
 }
 
-function AvatarGroup({ members }: { members: string[] }) {
+function AvatarGroup({ members, membersMap }: { members: string[]; membersMap?: Map<string, string> }) {
+  const resolve = (id: string) => membersMap?.get(id) || id;
   return (
-    <div className="flex -space-x-1.5">
+    <div className="flex -space-x-1.5" title={members.map(resolve).join(", ")}>
       {members.slice(0, 4).map((m, i) => (
-        <div key={i} className="w-6 h-6 rounded-full bg-neutral-700 border border-[#141414] flex items-center justify-center text-[10px] text-neutral-300 font-['Lexend:SemiBold',_sans-serif]">{m}</div>
+        <div key={i} className="w-6 h-6 rounded-full bg-neutral-700 border border-[#141414] flex items-center justify-center text-[10px] text-neutral-300 font-['Lexend:SemiBold',_sans-serif]">
+          {(resolve(m)[0] ?? "?").toUpperCase()}
+        </div>
       ))}
       {members.length > 4 && (
         <div className="w-6 h-6 rounded-full bg-neutral-800 border border-[#141414] flex items-center justify-center text-[10px] text-neutral-500">+{members.length - 4}</div>
@@ -126,30 +132,31 @@ function AvatarGroup({ members }: { members: string[] }) {
   );
 }
 
-type TaskItem = { id: number; title: string; status: string; priority: string; assignee: string; due: string };
+type TaskItem = { id: string; title: string; status: string; priority: string; assignee: string; due: string; project: string };
 
 function TaskTable({ tasks }: { tasks: TaskItem[] }) {
+  const { t } = useLang();
   const done = tasks.filter((t) => t.status === "completed").length;
   const pct = tasks.length > 0 ? Math.round((done / tasks.length) * 100) : 0;
   return (
     <div>
       <div className="flex items-center justify-between mb-3">
-        <span className="text-neutral-500 text-[11px]">{done} of {tasks.length} completed</span>
+        <span className="text-neutral-500 text-[11px]">{done} / {tasks.length} {t("projects.completedOf")}</span>
         <span className="text-neutral-500 text-[11px]">{pct}%</span>
       </div>
       <ProgressBar value={pct} />
       <div className="mt-4 space-y-1">
-        {tasks.map((t) => (
-          <div key={t.id} className="flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-neutral-800/20 transition-colors">
-            {t.status === "completed"
+        {tasks.map((task) => (
+          <div key={task.id} className="flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-neutral-800/20 transition-colors">
+            {task.status === "completed"
               ? <CheckCircle size={14} className="text-emerald-500 shrink-0" />
-              : t.status === "in-progress"
+              : task.status === "in-progress"
               ? <Clock size={14} className="text-amber-400 shrink-0" />
               : <Circle size={14} className="text-neutral-600 shrink-0" />}
-            <span className={`flex-1 text-[12px] truncate ${t.status === "completed" ? "line-through text-neutral-600" : "text-neutral-300"}`}>{t.title}</span>
-            <span className="text-[10px] shrink-0" style={{ color: priorityCfg[t.priority].color }}>{priorityCfg[t.priority].label}</span>
-            <div className="w-5 h-5 rounded-full bg-neutral-800 flex items-center justify-center text-[9px] text-neutral-400 shrink-0">{t.assignee}</div>
-            <span className="text-neutral-600 text-[10px] w-10 text-right shrink-0 hidden sm:block">{t.due}</span>
+            <span className={`flex-1 text-[12px] truncate ${task.status === "completed" ? "line-through text-neutral-600" : "text-neutral-300"}`}>{task.title}</span>
+            <span className="text-[10px] shrink-0" style={{ color: priorityCfg[task.priority].color }}>{t(priorityCfg[task.priority].labelKey as any)}</span>
+            <div className="w-5 h-5 rounded-full bg-neutral-800 flex items-center justify-center text-[9px] text-neutral-400 shrink-0">{task.assignee}</div>
+            <span className="text-neutral-600 text-[10px] w-10 text-right shrink-0 hidden sm:block">{task.due}</span>
           </div>
         ))}
       </div>
@@ -160,11 +167,13 @@ function TaskTable({ tasks }: { tasks: TaskItem[] }) {
 // ── View: Project grid (default) ──────────────────────────────────────────────
 
 function ProjectGrid({
-  projects, filter, setFilter, onSelect, onNew,
+  projects, filter, setFilter, onSelect, onNew, onAnalytics, membersMap,
 }: {
   projects: Project[]; filter: string; setFilter: (f: string) => void;
-  onSelect: (p: Project) => void; onNew: () => void;
+  onSelect: (p: Project) => void; onNew: () => void; onAnalytics?: (p: Project) => void;
+  membersMap?: Map<string, string>;
 }) {
+  const { t } = useLang();
   const filters = ["All", "Active", "Paused", "Completed"];
   const filtered = filter === "All" ? projects : projects.filter((p) => p.status === filter.toLowerCase());
   return (
@@ -172,20 +181,20 @@ function ProjectGrid({
       <div className="px-4 md:px-6 lg:px-8 pt-6 lg:pt-8 pb-5 border-b border-neutral-800/40">
         <div className="flex items-center justify-between gap-3 mb-4">
           <div>
-            <h1 className="text-neutral-50 font-['Lexend:SemiBold',_sans-serif] text-[18px] lg:text-[22px] leading-tight mb-1">Projects</h1>
+            <h1 className="text-neutral-50 font-['Lexend:SemiBold',_sans-serif] text-[18px] lg:text-[22px] leading-tight mb-1">{t("projects.title")}</h1>
             <p className="text-neutral-500 text-[12px] lg:text-[13px]">
-              {projects.filter((p) => p.status === "active").length} active · {projects.filter((p) => p.status === "completed").length} completed
+              {projects.filter((p) => p.status === "active").length} {t("projects.activeCount")} · {projects.filter((p) => p.status === "completed").length} {t("projects.completedCount")}
             </p>
           </div>
           <button onClick={onNew} className="bg-indigo-600 hover:bg-indigo-500 text-white text-[13px] px-4 py-2 rounded-lg transition-colors shrink-0">
-            + New project
+            {t("projects.newProject")}
           </button>
         </div>
         <div className="flex gap-1 overflow-x-auto">
           {filters.map((f) => (
             <button key={f} onClick={() => setFilter(f)}
               className={`px-3 py-1.5 rounded-lg text-[12px] lg:text-[13px] transition-colors whitespace-nowrap ${filter === f ? "bg-neutral-800 text-neutral-50" : "text-neutral-500 hover:text-neutral-300"}`}>
-              {f}
+              {t(`projects.${f.toLowerCase()}` as any)}
             </button>
           ))}
         </div>
@@ -199,7 +208,7 @@ function ProjectGrid({
                 <h3 className="text-neutral-50 text-[13px] lg:text-[14px] font-['Lexend:SemiBold',_sans-serif] truncate mr-3 flex-1">{project.name}</h3>
                 <span className={`inline-flex items-center text-[11px] px-2 py-0.5 rounded shrink-0 ${projectStatusConfig[project.status].bg}`}
                   style={{ color: projectStatusConfig[project.status].color }}>
-                  {projectStatusConfig[project.status].label}
+                  {t(projectStatusConfig[project.status].labelKey as any)}
                 </span>
               </div>
               <p className="text-neutral-500 text-[12px] leading-relaxed mb-4 line-clamp-2">{project.description}</p>
@@ -210,20 +219,33 @@ function ProjectGrid({
               </div>
               <div className="mb-4">
                 <div className="flex items-center justify-between mb-1.5">
-                  <span className="text-neutral-600 text-[11px]">{project.tasks.done} / {project.tasks.total} tasks</span>
+                  <span className="text-neutral-600 text-[11px]">{project.tasks.done} / {project.tasks.total} {t("projects.tasks")}</span>
                   <span className="text-neutral-500 text-[11px]">{project.progress}%</span>
                 </div>
                 <ProgressBar value={project.progress} />
               </div>
               <div className="flex items-center justify-between">
-                <AvatarGroup members={project.team} />
-                <span className="text-neutral-600 text-[12px]">{project.due}</span>
+                <AvatarGroup members={project.team} membersMap={membersMap} />
+                <div className="flex items-center gap-2">
+                  {onAnalytics && (
+                    <button
+                      onClick={(e) => { e.stopPropagation(); onAnalytics(project); }}
+                      className="text-neutral-600 hover:text-indigo-400 transition-colors p-1"
+                      title="View analytics"
+                    >
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                        <line x1="18" y1="20" x2="18" y2="10" /><line x1="12" y1="20" x2="12" y2="4" /><line x1="6" y1="20" x2="6" y2="14" />
+                      </svg>
+                    </button>
+                  )}
+                  <span className="text-neutral-600 text-[12px]">{project.due}</span>
+                </div>
               </div>
             </div>
           ))}
         </div>
         {filtered.length === 0 && (
-          <div className="flex items-center justify-center h-32 text-neutral-600 text-[13px]">No projects in this category</div>
+          <div className="flex items-center justify-center h-32 text-neutral-600 text-[13px]">{t("projects.noProjects")}</div>
         )}
       </div>
     </div>
@@ -232,35 +254,36 @@ function ProjectGrid({
 
 // ── View: Web Application overview ────────────────────────────────────────────
 
-function WebAppView({ onDrillDown, allTasks, webMilestones, projects }: { onDrillDown: (v: ProjView) => void; allTasks: TaskItem[]; webMilestones: { milestone: string; date: string; done: boolean }[]; projects: Project[] }) {
+function WebAppView({ onDrillDown, allTasks, webMilestones, projects, onToggleMilestone, membersMap }: { onDrillDown: (v: ProjView) => void; allTasks: TaskItem[]; webMilestones: { milestone: string; date: string; done: boolean }[]; projects: Project[]; onToggleMilestone?: (index: number) => void; membersMap?: Map<string, string> }) {
+  const { t } = useLang();
   const proj = projects.find((p) => p.name.toLowerCase().includes("web app") || p.name.toLowerCase().includes("web application"));
   const webTasks = allTasks.filter((t) => t.project === "Web Application v2" || t.project === "Web App v2");
   const frontendTasks = webTasks.filter((t) => !t.title.toLowerCase().includes("api") && !t.title.toLowerCase().includes("test") && !t.title.toLowerCase().includes("auth endpoint"));
   const apiTasks = webTasks.filter((t) => t.title.toLowerCase().includes("api") || t.title.toLowerCase().includes("endpoint") || t.title.toLowerCase().includes("webhook"));
   const qaTasks = webTasks.filter((t) => t.title.toLowerCase().includes("test") || t.title.toLowerCase().includes("qa") || t.title.toLowerCase().includes("bug"));
   const areas = [
-    { label: "Frontend Development", view: "proj-web-frontend" as ProjView, tasks: frontendTasks, color: "#818cf8", team: [...new Set(frontendTasks.map((t) => t.assignee))] },
-    { label: "API Integration", view: "proj-web-api" as ProjView, tasks: apiTasks, color: "#10b981", team: [...new Set(apiTasks.map((t) => t.assignee))] },
-    { label: "Testing & QA", view: "proj-web-qa" as ProjView, tasks: qaTasks, color: "#f59e0b", team: [...new Set(qaTasks.map((t) => t.assignee))] },
+    { labelKey: "projects.frontendDevelopment", view: "proj-web-frontend" as ProjView, tasks: frontendTasks, color: "#818cf8", team: [...new Set(frontendTasks.map((t) => t.assignee))] },
+    { labelKey: "projects.apiIntegration", view: "proj-web-api" as ProjView, tasks: apiTasks, color: "#10b981", team: [...new Set(apiTasks.map((t) => t.assignee))] },
+    { labelKey: "projects.testingQA", view: "proj-web-qa" as ProjView, tasks: qaTasks, color: "#f59e0b", team: [...new Set(qaTasks.map((t) => t.assignee))] },
   ];
   const totalDone = webTasks.filter(t => t.status === "completed").length;
   const pct = webTasks.length > 0 ? Math.round((totalDone / webTasks.length) * 100) : 0;
   return (
     <div className="space-y-5">
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <StatCard label="Overall Progress" value={`${pct}%`} sub={`${totalDone}/${webTasks.length} tasks`} up={pct >= 50} />
-        <StatCard label="Tasks Done" value={`${totalDone}/${webTasks.length}`} sub={`${webTasks.length - totalDone} remaining`} />
-        <StatCard label="Due Date" value={proj?.due ?? "—"} sub="target deadline" />
-        <StatCard label="Team Size" value={`${[...new Set(webTasks.map(t => t.assignee))].length}`} sub={[...new Set(webTasks.map(t => t.assignee))].join(", ") || "—"} />
+        <StatCard label={t("projects.overallProgress")} value={`${pct}%`} sub={`${totalDone}/${webTasks.length} ${t("projects.tasks")}`} up={pct >= 50} />
+        <StatCard label={t("projects.tasksDone")} value={`${totalDone}/${webTasks.length}`} sub={`${webTasks.length - totalDone} ${t("projects.remaining")}`} />
+        <StatCard label={t("projects.dueDate")} value={proj?.due ?? "—"} sub={t("projects.targetDeadline")} />
+        <StatCard label={t("projects.teamSize")} value={`${[...new Set(webTasks.map(t => t.assignee))].length}`} sub={[...new Set(webTasks.map(t => t.assignee))].join(", ") || "—"} />
       </div>
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <Card>
-          <SectionHeader title="Sprint Progress" sub="Current sprint" />
+          <SectionHeader title={t("projects.sprintProgress")} sub={t("projects.currentSprint")} />
           <div className="space-y-3">
             {[
-              { label: "Tasks completed", value: totalDone, total: webTasks.length, color: "#818cf8" },
-              { label: "In progress", value: webTasks.filter(t => t.status === "in-progress").length, total: webTasks.length, color: "#10b981" },
-              { label: "In review", value: webTasks.filter(t => t.status === "review").length, total: webTasks.length, color: "#f59e0b" },
+              { label: t("projects.tasksCompleted"), value: totalDone, total: webTasks.length, color: "#818cf8" },
+              { label: t("projects.inProgress"), value: webTasks.filter(t => t.status === "in-progress").length, total: webTasks.length, color: "#10b981" },
+              { label: t("projects.inReview"), value: webTasks.filter(t => t.status === "review").length, total: webTasks.length, color: "#f59e0b" },
             ].map((s) => (
               <div key={s.label}>
                 <div className="flex items-center justify-between mb-1.5">
@@ -274,10 +297,11 @@ function WebAppView({ onDrillDown, allTasks, webMilestones, projects }: { onDril
         </Card>
 
         <Card>
-          <SectionHeader title="Milestones" sub="Key delivery dates" />
+          <SectionHeader title={t("projects.milestones")} sub={t("projects.keyDeliveryDates")} />
           <div className="space-y-3">
-            {webMilestones.map((m) => (
-              <div key={m.milestone} className="flex items-center gap-3 p-2.5 rounded-lg bg-neutral-800/20">
+            {webMilestones.map((m, idx) => (
+              <button key={m.milestone} onClick={() => onToggleMilestone?.(idx)}
+                className="flex items-center gap-3 p-2.5 rounded-lg bg-neutral-800/20 hover:bg-neutral-800/40 transition-colors w-full text-left">
                 {m.done
                   ? <CheckCircle size={15} className="text-emerald-500 shrink-0" />
                   : <Circle size={15} className="text-neutral-600 shrink-0" />}
@@ -285,7 +309,7 @@ function WebAppView({ onDrillDown, allTasks, webMilestones, projects }: { onDril
                   <div className={`text-[12px] ${m.done ? "line-through text-neutral-600" : "text-neutral-300"}`}>{m.milestone}</div>
                 </div>
                 <span className="text-neutral-500 text-[11px] shrink-0">{m.date}</span>
-              </div>
+              </button>
             ))}
           </div>
         </Card>
@@ -296,20 +320,20 @@ function WebAppView({ onDrillDown, allTasks, webMilestones, projects }: { onDril
           const done = a.tasks.filter((t) => t.status === "completed").length;
           const pct = Math.round((done / a.tasks.length) * 100);
           return (
-            <div key={a.label} onClick={() => onDrillDown(a.view)}
+            <div key={a.labelKey} onClick={() => onDrillDown(a.view)}
               className="bg-[#141414] border border-neutral-800/60 rounded-xl p-4 hover:border-neutral-700/60 transition-colors cursor-pointer group">
               <div className="flex items-center justify-between mb-3">
-                <span className="text-neutral-200 text-[13px] font-['Lexend:SemiBold',_sans-serif]">{a.label}</span>
+                <span className="text-neutral-200 text-[13px] font-['Lexend:SemiBold',_sans-serif]">{t(a.labelKey as any)}</span>
                 <ChevronRight size={14} className="text-neutral-600 group-hover:text-neutral-400 transition-colors" />
               </div>
               <div className="text-neutral-50 text-[24px] font-['Lexend:SemiBold',_sans-serif] mb-1" style={{ color: a.color }}>{pct}%</div>
-              <div className="text-neutral-600 text-[11px] mb-3">{done}/{a.tasks.length} tasks</div>
+              <div className="text-neutral-600 text-[11px] mb-3">{done}/{a.tasks.length} {t("projects.tasksCount")}</div>
               <ProgressBar value={pct} color={a.color} />
               <div className="flex items-center justify-between mt-3">
-                <AvatarGroup members={a.team} />
+                <AvatarGroup members={a.team} membersMap={membersMap} />
                 <span className={`text-[10px] px-2 py-0.5 rounded-full`}
                   style={{ color: a.color, backgroundColor: `${a.color}18` }}>
-                  {a.tasks.filter((t) => t.status === "in-progress").length} active
+                  {a.tasks.filter((t) => t.status === "in-progress").length} {t("projects.activeCount")}
                 </span>
               </div>
             </div>
@@ -322,40 +346,41 @@ function WebAppView({ onDrillDown, allTasks, webMilestones, projects }: { onDril
 
 // ── View: Mobile App overview ─────────────────────────────────────────────────
 
-function MobileAppView({ onDrillDown, allTasks, mobileMilestones, projects }: { onDrillDown: (v: ProjView) => void; allTasks: TaskItem[]; mobileMilestones: { milestone: string; date: string; done: boolean }[]; projects: Project[] }) {
+function MobileAppView({ onDrillDown, allTasks, mobileMilestones, projects, onToggleMilestone, membersMap }: { onDrillDown: (v: ProjView) => void; allTasks: TaskItem[]; mobileMilestones: { milestone: string; date: string; done: boolean }[]; projects: Project[]; onToggleMilestone?: (index: number) => void; membersMap?: Map<string, string> }) {
+  const { t } = useLang();
   const proj = projects.find((p) => p.name.toLowerCase().includes("mobile"));
   const mobileTasks = allTasks.filter((t) => t.project === "Mobile App");
   const designTasks = mobileTasks.filter((t) => t.title.toLowerCase().includes("design") || t.title.toLowerCase().includes("ui") || t.title.toLowerCase().includes("wireframe") || t.title.toLowerCase().includes("mockup"));
   const nativeTasks = mobileTasks.filter((t) => !t.title.toLowerCase().includes("design") && !t.title.toLowerCase().includes("ui") && !t.title.toLowerCase().includes("wireframe"));
   const areas = [
-    { label: "UI/UX Design", view: "proj-mobile-design" as ProjView, tasks: designTasks, color: "#818cf8", team: [...new Set(designTasks.map((t) => t.assignee))] },
-    { label: "Native Development", view: "proj-mobile-native" as ProjView, tasks: nativeTasks, color: "#10b981", team: [...new Set(nativeTasks.map((t) => t.assignee))] },
+    { labelKey: "projects.uiUxDesign", view: "proj-mobile-design" as ProjView, tasks: designTasks, color: "#818cf8", team: [...new Set(designTasks.map((t) => t.assignee))] },
+    { labelKey: "projects.nativeDevelopment", view: "proj-mobile-native" as ProjView, tasks: nativeTasks, color: "#10b981", team: [...new Set(nativeTasks.map((t) => t.assignee))] },
   ];
   const totalDone = mobileTasks.filter(t => t.status === "completed").length;
   const pct = mobileTasks.length > 0 ? Math.round((totalDone / mobileTasks.length) * 100) : 0;
   return (
     <div className="space-y-5">
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <StatCard label="Overall Progress" value={`${pct}%`} sub={`${totalDone}/${mobileTasks.length} tasks`} up={pct >= 50} />
-        <StatCard label="Tasks Done" value={`${totalDone}/${mobileTasks.length}`} sub={`${mobileTasks.length - totalDone} remaining`} />
-        <StatCard label="Due Date" value={proj?.due ?? "—"} sub="target deadline" />
-        <StatCard label="Team Size" value={`${[...new Set(mobileTasks.map(t => t.assignee))].length}`} sub={[...new Set(mobileTasks.map(t => t.assignee))].join(", ") || "—"} />
+        <StatCard label={t("projects.overallProgress")} value={`${pct}%`} sub={`${totalDone}/${mobileTasks.length} ${t("projects.tasks")}`} up={pct >= 50} />
+        <StatCard label={t("projects.tasksDone")} value={`${totalDone}/${mobileTasks.length}`} sub={`${mobileTasks.length - totalDone} ${t("projects.remaining")}`} />
+        <StatCard label={t("projects.dueDate")} value={proj?.due ?? "—"} sub={t("projects.targetDeadline")} />
+        <StatCard label={t("projects.teamSize")} value={`${[...new Set(mobileTasks.map(t => t.assignee))].length}`} sub={[...new Set(mobileTasks.map(t => t.assignee))].join(", ") || "—"} />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <Card>
-          <SectionHeader title="Platform Status" sub="By work area" />
+          <SectionHeader title={t("projects.platformStatus")} sub={t("projects.byWorkArea")} />
           <div className="space-y-4 mt-1">
             {[
-              { platform: "UI/UX Design", done: designTasks.filter((t) => t.status === "completed").length, total: designTasks.length, color: "#818cf8" },
-              { platform: "Native Development", done: nativeTasks.filter((t) => t.status === "completed").length, total: nativeTasks.length, color: "#10b981" },
+              { platformKey: "projects.uiUxDesign", done: designTasks.filter((t) => t.status === "completed").length, total: designTasks.length, color: "#818cf8" },
+              { platformKey: "projects.nativeDevelopment", done: nativeTasks.filter((t) => t.status === "completed").length, total: nativeTasks.length, color: "#10b981" },
             ].map((p) => {
               const progress = Math.round((p.done / Math.max(p.total, 1)) * 100);
               return (
-              <div key={p.platform}>
+              <div key={p.platformKey}>
                 <div className="flex items-center justify-between mb-1.5">
-                  <span className="text-neutral-300 text-[12px]">{p.platform}</span>
-                  <span className="text-neutral-500 text-[11px]">{p.done}/{p.total} tasks — {progress}%</span>
+                  <span className="text-neutral-300 text-[12px]">{t(p.platformKey as any)}</span>
+                  <span className="text-neutral-500 text-[11px]">{p.done}/{p.total} {t("projects.tasks")} — {progress}%</span>
                 </div>
                 <ProgressBar value={progress} color={p.color} />
               </div>
@@ -365,10 +390,11 @@ function MobileAppView({ onDrillDown, allTasks, mobileMilestones, projects }: { 
         </Card>
 
         <Card>
-          <SectionHeader title="Milestones" sub="Key delivery dates" />
+          <SectionHeader title={t("projects.milestones")} sub={t("projects.keyDeliveryDates")} />
           <div className="space-y-3">
-            {mobileMilestones.map((m) => (
-              <div key={m.milestone} className="flex items-center gap-3 p-2.5 rounded-lg bg-neutral-800/20">
+            {mobileMilestones.map((m, idx) => (
+              <button key={m.milestone} onClick={() => onToggleMilestone?.(idx)}
+                className="flex items-center gap-3 p-2.5 rounded-lg bg-neutral-800/20 hover:bg-neutral-800/40 transition-colors w-full text-left">
                 {m.done
                   ? <CheckCircle size={15} className="text-emerald-500 shrink-0" />
                   : <Circle size={15} className="text-neutral-600 shrink-0" />}
@@ -376,7 +402,7 @@ function MobileAppView({ onDrillDown, allTasks, mobileMilestones, projects }: { 
                   <div className={`text-[12px] ${m.done ? "line-through text-neutral-600" : "text-neutral-300"}`}>{m.milestone}</div>
                 </div>
                 <span className="text-neutral-500 text-[11px] shrink-0">{m.date}</span>
-              </div>
+              </button>
             ))}
           </div>
         </Card>
@@ -387,19 +413,19 @@ function MobileAppView({ onDrillDown, allTasks, mobileMilestones, projects }: { 
           const done = a.tasks.filter((t) => t.status === "completed").length;
           const pct = Math.round((done / a.tasks.length) * 100);
           return (
-            <div key={a.label} onClick={() => onDrillDown(a.view)}
+            <div key={a.labelKey} onClick={() => onDrillDown(a.view)}
               className="bg-[#141414] border border-neutral-800/60 rounded-xl p-4 hover:border-neutral-700/60 transition-colors cursor-pointer group">
               <div className="flex items-center justify-between mb-3">
-                <span className="text-neutral-200 text-[13px] font-['Lexend:SemiBold',_sans-serif]">{a.label}</span>
+                <span className="text-neutral-200 text-[13px] font-['Lexend:SemiBold',_sans-serif]">{t(a.labelKey as any)}</span>
                 <ChevronRight size={14} className="text-neutral-600 group-hover:text-neutral-400 transition-colors" />
               </div>
               <div className="text-neutral-50 text-[24px] font-['Lexend:SemiBold',_sans-serif] mb-1" style={{ color: a.color }}>{pct}%</div>
-              <div className="text-neutral-600 text-[11px] mb-3">{done}/{a.tasks.length} tasks</div>
+              <div className="text-neutral-600 text-[11px] mb-3">{done}/{a.tasks.length} {t("projects.tasksCount")}</div>
               <ProgressBar value={pct} color={a.color} />
               <div className="flex items-center justify-between mt-3">
-                <AvatarGroup members={a.team} />
+                <AvatarGroup members={a.team} membersMap={membersMap} />
                 <span className="text-[10px] px-2 py-0.5 rounded-full" style={{ color: a.color, backgroundColor: `${a.color}18` }}>
-                  {a.tasks.filter((t) => t.status === "in-progress").length} active
+                  {a.tasks.filter((t) => t.status === "in-progress").length} {t("projects.activeCount")}
                 </span>
               </div>
             </div>
@@ -420,6 +446,7 @@ function AreaView({
   teamLabel: string;
   milestones?: { milestone: string; date: string; done: boolean }[];
 }) {
+  const { t } = useLang();
   const [statusFilter, setStatusFilter] = useState("All");
   const tabs = ["All", "In Progress", "Todo", "Done"];
   const filtered = statusFilter === "All" ? tasks
@@ -436,12 +463,12 @@ function AreaView({
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <Card className="lg:col-span-2">
           <div className="flex items-center justify-between mb-4">
-            <SectionHeader title="Task List" sub={`${tasks.filter((t) => t.status === "completed").length} of ${tasks.length} done`} />
+            <SectionHeader title={t("projects.taskList")} sub={`${tasks.filter((t) => t.status === "completed").length} / ${tasks.length} ${t("projects.completedOf")}`} />
             <div className="flex gap-1">
-              {tabs.map((t) => (
-                <button key={t} onClick={() => setStatusFilter(t)}
-                  className={`px-2.5 py-1 rounded-lg text-[11px] transition-colors whitespace-nowrap ${statusFilter === t ? "bg-neutral-800 text-neutral-200" : "text-neutral-600 hover:text-neutral-400"}`}>
-                  {t}
+              {tabs.map((tab) => (
+                <button key={tab} onClick={() => setStatusFilter(tab)}
+                  className={`px-2.5 py-1 rounded-lg text-[11px] transition-colors whitespace-nowrap ${statusFilter === tab ? "bg-neutral-800 text-neutral-200" : "text-neutral-600 hover:text-neutral-400"}`}>
+                  {tab === "All" ? t("projects.all") : tab === "In Progress" ? t("projects.inProgress") : tab === "Todo" ? t("projects.taskStatus.todo") : t("projects.taskStatus.done")}
                 </button>
               ))}
             </div>
@@ -451,7 +478,7 @@ function AreaView({
 
         <div className="space-y-4">
           <Card>
-            <SectionHeader title="Team" sub={teamLabel} />
+            <SectionHeader title={t("projects.team")} sub={teamLabel} />
             <div className="space-y-2">
               {[...new Set(tasks.map((t) => t.assignee))].map((a) => {
                 const count = tasks.filter((t) => t.assignee === a).length;
@@ -474,7 +501,7 @@ function AreaView({
 
           {milestones && (
             <Card>
-              <SectionHeader title="Milestones" sub="" />
+              <SectionHeader title={t("projects.milestones")} sub="" />
               <div className="space-y-2">
                 {milestones.map((m) => (
                   <div key={m.milestone} className="flex items-start gap-2.5 p-2.5 rounded-lg bg-neutral-800/20">
@@ -500,22 +527,23 @@ function ProjectAreaView({ tasks, label1, label2, teamLabel, milestones, deadlin
   tasks: TaskItem[]; label1: string; label2: string; teamLabel: string;
   milestones?: { milestone: string; date: string; done: boolean }[]; deadline: string;
 }) {
+  const { t } = useLang();
   const done = tasks.filter((t) => t.status === "completed").length;
   const inProg = tasks.filter((t) => t.status === "in-progress").length;
   const pct = tasks.length > 0 ? Math.round((done / tasks.length) * 100) : 0;
   if (tasks.length === 0) {
     return (
       <div className="flex items-center justify-center h-48 text-neutral-600 text-[13px]">
-        No tasks found for this area — add tasks from the Tasks page and assign them to this project.
+        {t("projects.noTasksArea")}
       </div>
     );
   }
   return <AreaView
     stats={[
-      { label: label1, value: `${done}/${tasks.length}`, sub: `${pct}% complete`, up: pct >= 50 },
-      { label: "Progress", value: `${pct}%`, sub: "of area tasks", up: pct >= 50 },
-      { label: "Active", value: `${inProg}`, sub: "in progress" },
-      { label: "Due", value: deadline, sub: "project deadline" },
+      { label: label1, value: `${done}/${tasks.length}`, sub: `${pct}% ${t("projects.complete")}`, up: pct >= 50 },
+      { label: t("projects.progress"), value: `${pct}%`, sub: t("projects.ofAreaTasks"), up: pct >= 50 },
+      { label: t("projects.active"), value: `${inProg}`, sub: t("projects.inProgressCount") },
+      { label: t("projects.dueDate"), value: deadline, sub: t("projects.projectDeadline") },
     ]}
     tasks={tasks}
     teamLabel={teamLabel}
@@ -525,19 +553,20 @@ function ProjectAreaView({ tasks, label1, label2, teamLabel, milestones, deadlin
 
 // ── View: Completed projects ──────────────────────────────────────────────────
 
-function CompletedView({ projects }: { projects: Project[] }) {
+function CompletedView({ projects, membersMap }: { projects: Project[]; membersMap?: Map<string, string> }) {
+  const { t } = useLang();
   const completed = projects.filter((p) => p.status === "completed");
   return (
     <div className="space-y-5">
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <StatCard label="Completed" value={`${completed.length}`} sub="projects shipped" up={true} />
-        <StatCard label="Total Tasks" value={`${completed.reduce((a, p) => a + p.tasks.total, 0)}`} sub="all done" up={true} />
-        <StatCard label="Latest Ship" value={completed.length > 0 ? completed[completed.length - 1].due : "—"} sub={completed.length > 0 ? completed[completed.length - 1].name : "no completed projects"} />
-        <StatCard label="Avg. Progress" value="100%" sub="all complete" up={true} />
+        <StatCard label={t("projects.completed")} value={`${completed.length}`} sub={t("projects.projectsShipped")} up={true} />
+        <StatCard label={t("projects.totalTasks")} value={`${completed.reduce((a, p) => a + p.tasks.total, 0)}`} sub={t("projects.allDone")} up={true} />
+        <StatCard label={t("projects.latestShip")} value={completed.length > 0 ? completed[completed.length - 1].due : "—"} sub={completed.length > 0 ? completed[completed.length - 1].name : t("projects.noCompletedProjects")} />
+        <StatCard label={t("projects.avgProgress")} value="100%" sub={t("projects.allComplete")} up={true} />
       </div>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {completed.length === 0 ? (
-          <div className="col-span-2 flex items-center justify-center h-32 text-neutral-600 text-[13px]">No completed projects yet</div>
+          <div className="col-span-2 flex items-center justify-center h-32 text-neutral-600 text-[13px]">{t("projects.noCompletedProjectsYet")}</div>
         ) : completed.map((p) => (
           <Card key={p.id}>
             <div className="flex items-start justify-between mb-3">
@@ -552,14 +581,14 @@ function CompletedView({ projects }: { projects: Project[] }) {
             </div>
             <div className="mb-4">
               <div className="flex items-center justify-between mb-1.5">
-                <span className="text-neutral-600 text-[11px]">{p.tasks.total}/{p.tasks.total} tasks</span>
+                <span className="text-neutral-600 text-[11px]">{p.tasks.total}/{p.tasks.total} {t("projects.tasks")}</span>
                 <span className="text-emerald-400 text-[11px]">100%</span>
               </div>
               <ProgressBar value={100} color="#10b981" />
             </div>
             <div className="flex items-center justify-between">
-              <AvatarGroup members={p.team} />
-              <span className="text-neutral-600 text-[12px]">Shipped {p.due}</span>
+              <AvatarGroup members={p.team} membersMap={membersMap} />
+              <span className="text-neutral-600 text-[12px]">{t("projects.shipped")} {p.due}</span>
             </div>
           </Card>
         ))}
@@ -570,20 +599,21 @@ function CompletedView({ projects }: { projects: Project[] }) {
 
 // ── View: Archived / Paused projects ─────────────────────────────────────────
 
-function ArchivedView({ projects }: { projects: Project[] }) {
+function ArchivedView({ projects, membersMap }: { projects: Project[]; membersMap?: Map<string, string> }) {
+  const { t } = useLang();
   const paused = projects.filter((p) => p.status === "paused");
   return (
     <div className="space-y-5">
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <StatCard label="Paused" value={`${paused.length}`} sub="projects on hold" />
-        <StatCard label="Tasks Pending" value={`${paused.reduce((a, p) => a + (p.tasks.total - p.tasks.done), 0)}`} sub="awaiting resume" />
-        <StatCard label="Avg. Progress" value={`${Math.round(paused.reduce((a, p) => a + p.progress, 0) / Math.max(paused.length, 1))}%`} sub="at pause time" />
-        <StatCard label="Est. Resume" value={paused[0]?.due ?? "—"} sub="earliest due date" />
+        <StatCard label={t("projects.paused")} value={`${paused.length}`} sub={t("projects.projectsOnHold")} />
+        <StatCard label={t("projects.tasksPending")} value={`${paused.reduce((a, p) => a + (p.tasks.total - p.tasks.done), 0)}`} sub={t("projects.awaitingResume")} />
+        <StatCard label={t("projects.avgProgress")} value={`${Math.round(paused.reduce((a, p) => a + p.progress, 0) / Math.max(paused.length, 1))}%`} sub={t("projects.atPauseTime")} />
+        <StatCard label={t("projects.estResume")} value={paused[0]?.due ?? "—"} sub={t("projects.earliestDueDate")} />
       </div>
 
       {paused.length === 0 ? (
         <Card>
-          <div className="flex items-center justify-center h-24 text-neutral-600 text-[13px]">No archived projects</div>
+          <div className="flex items-center justify-center h-24 text-neutral-600 text-[13px]">{t("projects.noArchivedProjects")}</div>
         </Card>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -593,7 +623,7 @@ function ArchivedView({ projects }: { projects: Project[] }) {
                 <h3 className="text-neutral-50 text-[13px] font-['Lexend:SemiBold',_sans-serif] truncate mr-3 flex-1">{p.name}</h3>
                 <div className="flex items-center gap-1.5 shrink-0">
                   <AlertCircle size={13} className="text-amber-400" />
-                  <span className="text-amber-400 text-[11px]">Paused</span>
+                  <span className="text-amber-400 text-[11px]">{t("projects.paused")}</span>
                 </div>
               </div>
               <p className="text-neutral-500 text-[12px] leading-relaxed mb-4 line-clamp-2">{p.description}</p>
@@ -610,7 +640,7 @@ function ArchivedView({ projects }: { projects: Project[] }) {
                 <ProgressBar value={p.progress} color="#f59e0b" />
               </div>
               <div className="flex items-center justify-between">
-                <AvatarGroup members={p.team} />
+                <AvatarGroup members={p.team} membersMap={membersMap} />
                 <span className="text-neutral-600 text-[12px]">Due {p.due}</span>
               </div>
             </Card>
@@ -642,13 +672,15 @@ function ArchivedView({ projects }: { projects: Project[] }) {
 // ── Main ProjectsPage ─────────────────────────────────────────────────────────
 
 export function ProjectsPage() {
-  const { subSection } = useNavigation();
+  const { t } = useLang();
+  const { subSection, navigate } = useNavigation();
   const routerNavigate = useNavigate();
   const { plan } = useSubscription();
   const [view, setView] = useState<ProjView>("grid");
   const [gridFilter, setGridFilter] = useState("All");
   const [projects, setProjects] = useState<Project[]>([]);
   const [allTasks, setAllTasks] = useState<TaskItem[]>([]);
+  const [membersMap, setMembersMap] = useState<Map<string, string>>(new Map());
   const [webMilestones, setWebMilestones] = useState<{ milestone: string; date: string; done: boolean }[]>([]);
   const [mobileMilestones, setMobileMilestones] = useState<{ milestone: string; date: string; done: boolean }[]>([]);
   const [showNew, setShowNew] = useState(false);
@@ -667,18 +699,29 @@ export function ProjectsPage() {
     setShowNew(true);
   };
 
+  // Fetch workspace members for resolving team user_ids to names
   useEffect(() => {
-    api.getProjects().then((data) => setProjects(data)).catch((e) => {
-      console.log("Failed to load projects:", e);
-      toast.error("Failed to load projects");
-    });
-    api.getTasks().then((data) => setAllTasks(data)).catch((e) => {
-      console.log("Failed to load tasks:", e);
-    });
-    // Fetch milestones from Supabase
-    api.getMilestones("web").then(setWebMilestones).catch(() => {});
-    api.getMilestones("mobile").then(setMobileMilestones).catch(() => {});
+    api.getWorkspaceMembers().then(({ members }) => {
+      const map = new Map<string, string>();
+      for (const m of members) if (m.user_id) map.set(m.user_id, m.name || m.email);
+      setMembersMap(map);
+    }).catch(() => {});
   }, []);
+
+  const loadData = useCallback((opts?: { silent?: boolean }) => {
+    const onErr = (label: string) => (e: unknown) => {
+      logger.error("app", e instanceof Error ? e : new Error(`Failed to load ${label}`));
+      if (!opts?.silent) toast.error(`Failed to load ${label}`);
+    };
+    api.getProjects().then((data) => setProjects(data)).catch(onErr("projects"));
+    api.getTasks().then((data) => setAllTasks(data)).catch(onErr("tasks"));
+    api.getMilestones("web").then(setWebMilestones).catch(onErr("milestones"));
+    api.getMilestones("mobile").then(setMobileMilestones).catch(onErr("milestones"));
+  }, []);
+
+  useEffect(() => { loadData(); }, [loadData]);
+
+  useRealtimeSync(["projects", "tasks", "milestones"], () => loadData({ silent: true }));
 
   useEffect(() => {
     if (subSection === "new-project") { openNewProject(); return; }
@@ -691,12 +734,12 @@ export function ProjectsPage() {
   const webProj = projects.find((p) => p.name.toLowerCase().includes("web app") || p.name.toLowerCase().includes("web application"));
   const mobileProj = projects.find((p) => p.name.toLowerCase().includes("mobile"));
 
-  const navTabs: { view: ProjView; label: string }[] = [
-    { view: "grid", label: "All Projects" },
-    { view: "web-application", label: "Web App" },
-    { view: "mobile-app", label: "Mobile App" },
-    { view: "proj-completed", label: "Completed" },
-    { view: "proj-archived", label: "Archived" },
+  const navTabs: { view: ProjView; labelKey: string }[] = [
+    { view: "grid", labelKey: "projects.allProjects" },
+    { view: "web-application", labelKey: "projects.webApp" },
+    { view: "mobile-app", labelKey: "projects.mobileAppShort" },
+    { view: "proj-completed", labelKey: "projects.completed" },
+    { view: "proj-archived", labelKey: "projects.archived" },
   ];
 
   if (isGridView) {
@@ -708,22 +751,53 @@ export function ProjectsPage() {
           setFilter={setGridFilter}
           onSelect={setSelectedProject}
           onNew={openNewProject}
+          onAnalytics={(p) => navigate("project-analytics", p.id)}
+          membersMap={membersMap}
         />
         <NewProjectModal open={showNew} onClose={() => setShowNew(false)} onAdd={async (p) => {
           try { const created = await api.createProject(p); setProjects((prev) => [created, ...prev]); }
           catch (e) {
-            console.log("Failed to create project:", e);
-            // The server enforces the plan limit too (in case the UI is stale)
+            logger.error("app", "Failed to create project:", e);
             if (e instanceof api.ApiError && e.code === "project_limit") {
               toast.error(e.message, {
                 action: { label: "Upgrade", onClick: () => routerNavigate("/pricing") },
               });
             } else {
-              toast.error("Failed to create project");
+              toast.error(t("projects.failedToCreate"));
             }
+            throw e;
           }
         }} />
-        <ProjectDetailModal open={!!selectedProject} onClose={() => setSelectedProject(null)} project={selectedProject} />
+        <ProjectDetailModal
+          open={!!selectedProject}
+          onClose={() => setSelectedProject(null)}
+          project={selectedProject}
+          onUpdate={async (id, patch) => {
+            const prev = projects;
+            setProjects((ps) => ps.map((p) => p.id === id ? { ...p, ...patch } : p));
+            try {
+              const updated = await api.updateProject(id, patch);
+              setProjects((ps) => ps.map((p) => p.id === id ? updated : p));
+            } catch (e) {
+              setProjects(prev);
+              logger.error("app", "Failed to update project:", e);
+              toast.error(t("projects.failedToUpdate"));
+              throw e;
+            }
+          }}
+          onDelete={async (id) => {
+            const prev = projects;
+            setProjects((ps) => ps.filter((p) => p.id !== id));
+            try {
+              await api.deleteProject(id);
+            } catch (e) {
+              setProjects(prev);
+              logger.error("app", "Failed to delete project:", e);
+              toast.error(t("projects.failedToDelete"));
+              throw e;
+            }
+          }}
+        />
       </>
     );
   }
@@ -735,16 +809,16 @@ export function ProjectsPage() {
         <div className="flex items-center justify-between mb-4 gap-3">
           <div>
             <h1 className="text-neutral-50 font-['Lexend:SemiBold',_sans-serif] text-[18px] lg:text-[22px] leading-tight mb-1">
-              {VIEW_LABELS[view]}
+              {t(VIEW_LABEL_KEYS[view] as any)}
             </h1>
             <p className="text-neutral-500 text-[12px] lg:text-[13px]">
-              {view === "web-application" || view.startsWith("proj-web") ? `Web Application v2 · Due ${webProj?.due ?? "—"}`
-                : view === "mobile-app" || view.startsWith("proj-mobile") ? `Mobile App · Due ${mobileProj?.due ?? "—"}`
-                : "Projects overview"}
+              {view === "web-application" || view.startsWith("proj-web") ? `${t("projects.webApplication")} · ${t("projects.due")} ${webProj?.due ?? "—"}`
+                : view === "mobile-app" || view.startsWith("proj-mobile") ? `${t("projects.mobileAppShort")} · ${t("projects.due")} ${mobileProj?.due ?? "—"}`
+                : t("projects.overview")}
             </p>
           </div>
           <button onClick={openNewProject} className="bg-indigo-600 hover:bg-indigo-500 text-white text-[13px] px-4 py-2 rounded-lg transition-colors shrink-0">
-            + New project
+            {t("projects.newProject")}
           </button>
         </div>
 
@@ -753,14 +827,14 @@ export function ProjectsPage() {
           {navTabs.map((tab) => (
             <button key={tab.view} onClick={() => setView(tab.view)}
               className={`px-3 lg:px-4 py-2.5 text-[12px] lg:text-[13px] border-b-2 transition-colors -mb-px whitespace-nowrap ${view === tab.view ? "border-indigo-500 text-neutral-50" : "border-transparent text-neutral-500 hover:text-neutral-300"}`}>
-              {tab.label}
+              {t(tab.labelKey as any)}
             </button>
           ))}
           {/* Sub-area pill if drilled into an area */}
           {(view === "proj-web-frontend" || view === "proj-web-api" || view === "proj-web-qa" || view === "proj-mobile-design" || view === "proj-mobile-native") && (
             <div className="flex items-center gap-1 ml-2">
               <ChevronRight size={13} className="text-neutral-600" />
-              <span className="text-indigo-400 text-[12px] py-2.5">{VIEW_LABELS[view]}</span>
+              <span className="text-indigo-400 text-[12px] py-2.5">{t(VIEW_LABEL_KEYS[view] as any)}</span>
             </div>
           )}
         </div>
@@ -773,21 +847,62 @@ export function ProjectsPage() {
           const mobileTasks = allTasks.filter((t) => t.project === "Mobile App");
           return (
             <>
-              {view === "web-application" && <WebAppView onDrillDown={setView} allTasks={allTasks} webMilestones={webMilestones} projects={projects} />}
-              {view === "proj-web-frontend" && <ProjectAreaView tasks={webTasks.filter((t) => !t.title.toLowerCase().includes("api") && !t.title.toLowerCase().includes("test"))} label1="Tasks Completed" label2="Frontend area" teamLabel="Web Frontend team" milestones={webMilestones} deadline={webProj?.due ?? "—"} />}
-              {view === "proj-web-api" && <ProjectAreaView tasks={webTasks.filter((t) => t.title.toLowerCase().includes("api") || t.title.toLowerCase().includes("endpoint") || t.title.toLowerCase().includes("auth"))} label1="Tasks Completed" label2="API area" teamLabel="Backend team" deadline={webProj?.due ?? "—"} />}
-              {view === "proj-web-qa" && <ProjectAreaView tasks={webTasks.filter((t) => t.title.toLowerCase().includes("test") || t.title.toLowerCase().includes("qa") || t.title.toLowerCase().includes("bug"))} label1="Tests Passing" label2="QA area" teamLabel="QA team" deadline={webProj?.due ?? "—"} />}
-              {view === "mobile-app" && <MobileAppView onDrillDown={setView} allTasks={allTasks} mobileMilestones={mobileMilestones} projects={projects} />}
-              {view === "proj-mobile-design" && <ProjectAreaView tasks={mobileTasks.filter((t) => t.title.toLowerCase().includes("design") || t.title.toLowerCase().includes("ui") || t.title.toLowerCase().includes("wireframe"))} label1="Screens Done" label2="Design area" teamLabel="Design team" milestones={mobileMilestones} deadline={mobileProj?.due ?? "—"} />}
-              {view === "proj-mobile-native" && <ProjectAreaView tasks={mobileTasks.filter((t) => !t.title.toLowerCase().includes("design") && !t.title.toLowerCase().includes("ui"))} label1="Tasks Completed" label2="Native dev area" teamLabel="Mobile dev team" deadline={mobileProj?.due ?? "—"} />}
-              {view === "proj-completed" && <CompletedView projects={projects} />}
-              {view === "proj-archived" && <ArchivedView projects={projects} />}
+              {view === "web-application" && <WebAppView onDrillDown={setView} allTasks={allTasks} webMilestones={webMilestones} projects={projects} membersMap={membersMap}
+                onToggleMilestone={(idx) => {
+                  const m = webMilestones[idx];
+                  if (!m) return;
+                  const newDone = !m.done;
+                  setWebMilestones((prev) => prev.map((item, i) => i === idx ? { ...item, done: newDone } : item));
+                  api.toggleMilestone("web", idx, newDone).catch((e) => {
+                    logger.error("app", "Failed to toggle milestone:", e);
+                    setWebMilestones((prev) => prev.map((item, i) => i === idx ? { ...item, done: !newDone } : item));
+                    toast.error(t("projects.failedToUpdateMilestone"));
+                  });
+                }}
+              />}
+              {view === "proj-web-frontend" && <ProjectAreaView tasks={webTasks.filter((t) => !t.title.toLowerCase().includes("api") && !t.title.toLowerCase().includes("test"))} label1={t("projects.tasksCompleted")} label2={t("projects.frontendArea")} teamLabel={t("projects.webFrontendTeam")} milestones={webMilestones} deadline={webProj?.due ?? "—"} />}
+              {view === "proj-web-api" && <ProjectAreaView tasks={webTasks.filter((t) => t.title.toLowerCase().includes("api") || t.title.toLowerCase().includes("endpoint") || t.title.toLowerCase().includes("auth"))} label1={t("projects.tasksCompleted")} label2={t("projects.apiArea")} teamLabel={t("projects.backendTeam")} deadline={webProj?.due ?? "—"} />}
+              {view === "proj-web-qa" && <ProjectAreaView tasks={webTasks.filter((t) => t.title.toLowerCase().includes("test") || t.title.toLowerCase().includes("qa") || t.title.toLowerCase().includes("bug"))} label1={t("projects.testsPassing")} label2={t("projects.qaArea")} teamLabel={t("projects.qaTeam")} deadline={webProj?.due ?? "—"} />}
+              {view === "mobile-app" && <MobileAppView onDrillDown={setView} allTasks={allTasks} mobileMilestones={mobileMilestones} projects={projects} membersMap={membersMap}
+                onToggleMilestone={(idx) => {
+                  const m = mobileMilestones[idx];
+                  if (!m) return;
+                  const newDone = !m.done;
+                  setMobileMilestones((prev) => prev.map((item, i) => i === idx ? { ...item, done: newDone } : item));
+                  api.toggleMilestone("mobile", idx, newDone).catch((e) => {
+                    logger.error("app", "Failed to toggle milestone:", e);
+                    setMobileMilestones((prev) => prev.map((item, i) => i === idx ? { ...item, done: !newDone } : item));
+                    toast.error(t("projects.failedToUpdateMilestone"));
+                  });
+                }}
+              />}
+              {view === "proj-mobile-design" && <ProjectAreaView tasks={mobileTasks.filter((t) => t.title.toLowerCase().includes("design") || t.title.toLowerCase().includes("ui") || t.title.toLowerCase().includes("wireframe"))} label1={t("projects.screensDone")} label2={t("projects.designArea")} teamLabel={t("projects.designTeam")} milestones={mobileMilestones} deadline={mobileProj?.due ?? "—"} />}
+              {view === "proj-mobile-native" && <ProjectAreaView tasks={mobileTasks.filter((t) => !t.title.toLowerCase().includes("design") && !t.title.toLowerCase().includes("ui"))} label1={t("projects.tasksCompleted")} label2={t("projects.nativeDevArea")} teamLabel={t("projects.mobileDevTeam")} deadline={mobileProj?.due ?? "—"} />}
+              {view === "proj-completed" && <CompletedView projects={projects} membersMap={membersMap} />}
+              {view === "proj-archived" && <ArchivedView projects={projects} membersMap={membersMap} />}
             </>
           );
         })()}
       </div>
 
-      <NewProjectModal open={showNew} onClose={() => setShowNew(false)} onAdd={(p) => setProjects((prev) => [p, ...prev])} />
+      <NewProjectModal open={showNew} onClose={() => setShowNew(false)} onAdd={async (p) => {
+        try {
+          const created = await api.createProject(p);
+          setProjects((prev) => [created, ...prev]);
+        } catch (e) {
+          logger.error("app", "Failed to create project:", e);
+          if (e instanceof api.ApiError && e.code === "project_limit") {
+            toast.error(e.message, {
+              action: { label: "Upgrade", onClick: () => routerNavigate("/pricing") },
+            });
+          } else {
+            toast.error(t("projects.failedToCreate"));
+          }
+          throw e;
+        }
+      }} />
     </div>
   );
 }
+
+

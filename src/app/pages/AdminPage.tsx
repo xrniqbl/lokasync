@@ -1,5 +1,8 @@
+import { logger } from "../utils/logger";
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { Link } from "react-router";
+import { LokaLogo } from "../components/LokaLogo";
+import { useLang } from "../LangContext";
 import {
   ArrowLeft,
   BellRing,
@@ -72,7 +75,7 @@ function OverviewTab() {
       .adminGetOverview()
       .then(setData)
       .catch((e) => {
-        console.error("Failed to load overview:", e);
+        logger.error("app", "Failed to load overview:", e);
         setError(true);
       });
   }, []);
@@ -140,6 +143,7 @@ const EMPTY_VOUCHER_FORM = {
 };
 
 function VouchersTab() {
+  const { t } = useLang();
   const [vouchers, setVouchers] = useState<api.Voucher[] | null>(null);
   const [form, setForm] = useState(EMPTY_VOUCHER_FORM);
   const [saving, setSaving] = useState(false);
@@ -149,8 +153,8 @@ function VouchersTab() {
       .adminGetVouchers()
       .then(setVouchers)
       .catch((e) => {
-        console.error("Failed to load vouchers:", e);
-        toast.error("Failed to load vouchers");
+        logger.error("app", "Failed to load vouchers:", e);
+        toast.error(t("admin.failedToLoadVouchers"));
       });
   }, []);
 
@@ -166,7 +170,7 @@ function VouchersTab() {
           ? null
           : [form.pro && "pro", form.business && "business"].filter(Boolean) as string[];
       if (applies_to && applies_to.length === 0) {
-        toast.error("Pick at least one plan the voucher applies to");
+        toast.error(t("admin.pickPlan"));
         return;
       }
       const created = await api.adminCreateVoucher({
@@ -385,6 +389,7 @@ function VouchersTab() {
 /* ── Subscribers ──────────────────────────────────────────────────────────── */
 
 function SubscribersTab() {
+  const { t } = useLang();
   const [rows, setRows] = useState<api.SubscriberRow[] | null>(null);
 
   useEffect(() => {
@@ -392,8 +397,8 @@ function SubscribersTab() {
       .adminGetSubscribers()
       .then(setRows)
       .catch((e) => {
-        console.error("Failed to load subscribers:", e);
-        toast.error("Failed to load subscribers");
+        logger.error("app", "Failed to load subscribers:", e);
+        toast.error(t("admin.failedToLoadSubscribers"));
       });
   }, []);
 
@@ -458,6 +463,7 @@ function SubscribersTab() {
 /* ── Maintenance ──────────────────────────────────────────────────────────── */
 
 function MaintenanceTab() {
+  const { t } = useLang();
   const [loaded, setLoaded] = useState(false);
   const [enabled, setEnabled] = useState(false);
   const [message, setMessage] = useState("");
@@ -472,8 +478,8 @@ function MaintenanceTab() {
         setLoaded(true);
       })
       .catch((e) => {
-        console.error("Failed to load status:", e);
-        toast.error("Failed to load maintenance status");
+        logger.error("app", "Failed to load status:", e);
+        toast.error(t("admin.failedToLoadMaintenance"));
       });
   }, []);
 
@@ -553,6 +559,7 @@ const AUDIENCES = [
 ] as const;
 
 function NotificationsTab() {
+  const { t } = useLang();
   const [items, setItems] = useState<api.AdminNotification[] | null>(null);
   const [title, setTitle] = useState("");
   const [message, setMessage] = useState("");
@@ -565,8 +572,8 @@ function NotificationsTab() {
       .adminGetNotifications()
       .then(setItems)
       .catch((e) => {
-        console.error("Failed to load notifications:", e);
-        toast.error("Failed to load notifications");
+        logger.error("app", "Failed to load notifications:", e);
+        toast.error(t("admin.failedToLoadNotifications"));
       });
   }, []);
 
@@ -578,7 +585,7 @@ function NotificationsTab() {
       setItems((prev) => (prev ? [created, ...prev] : [created]));
       setTitle("");
       setMessage("");
-      toast.success("Notification sent");
+      toast.success(t("admin.notificationSent"));
     } catch (err) {
       toast.error(err instanceof api.ApiError ? err.message : "Failed to send");
     } finally {
@@ -591,7 +598,7 @@ function NotificationsTab() {
     try {
       await api.adminDeleteNotification(item.id);
       setItems((prev) => (prev ? prev.filter((n) => n.id !== item.id) : prev));
-      toast.success("Notification deleted");
+      toast.success(t("admin.notificationDeleted"));
     } catch (err) {
       toast.error(err instanceof api.ApiError ? err.message : "Failed to delete");
     }
@@ -703,6 +710,7 @@ function NotificationsTab() {
 
 export function AdminPage() {
   const { isAdmin, loading } = useSubscription();
+  const { t } = useLang();
   const [tab, setTab] = useState<Tab>("overview");
 
   if (loading) {
@@ -724,11 +732,7 @@ export function AdminPage() {
       <header className="border-b border-neutral-800/70">
         <div className="mx-auto flex h-16 w-full max-w-5xl items-center justify-between px-6">
           <div className="flex items-center gap-3">
-            <Link to="/" aria-label="LokaSync home">
-              <span className="text-[14px] font-bold tracking-[0.08em] text-[#fafafa]">
-                LOKASYNC
-              </span>
-            </Link>
+            <LokaLogo size="sm" />
             <span className="rounded-full bg-indigo-900/50 px-2.5 py-0.5 text-[11px] text-indigo-300">
               Founder panel
             </span>

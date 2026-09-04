@@ -71,30 +71,18 @@ export async function updatePassword(password: string) {
 }
 
 export async function signOut() {
+  // Clear project detail localStorage on logout (Issue #25)
+  try {
+    const keys = Object.keys(localStorage).filter((k) => k.startsWith("projectDetail_"));
+    keys.forEach((k) => localStorage.removeItem(k));
+  } catch (e) {
+    console.error("[signOut] Failed to clear project detail cache:", e);
+  }
   return supabase.auth.signOut();
 }
 
 export async function resetPassword(email: string) {
   return supabase.auth.resetPasswordForEmail(email, {
     redirectTo: `${window.location.origin}/reset-password`,
-  });
-}
-
-export function getSession() {
-  return supabase.auth.getSession();
-}
-
-export function onAuthStateChange(callback: (user: AuthUser | null) => void) {
-  return supabase.auth.onAuthStateChange((_event, session) => {
-    if (session?.user) {
-      callback({
-        id: session.user.id,
-        email: session.user.email ?? "",
-        full_name: session.user.user_metadata?.full_name,
-        avatar_url: session.user.user_metadata?.avatar_url,
-      });
-    } else {
-      callback(null);
-    }
   });
 }

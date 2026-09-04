@@ -1,4 +1,4 @@
-import { projectId, publicAnonKey } from "/utils/supabase/info";
+import { projectId } from "/utils/supabase/info";
 
 const BASE = `https://${projectId}.supabase.co/functions/v1/server`;
 
@@ -9,40 +9,145 @@ export const setApiAccessToken = (token: string | null) => {
   userAccessToken = token;
 };
 
+// Endpoints that do not require a Bearer token (server whitelists these too).
+const PUBLIC_PATHS = ["/plans", "/status"];
+
+// Called once on 401 so the whole app can react (sign out + redirect) instead
+// of every component handling expired tokens independently. Wired up in
+// main.tsx; defaults to a no-op so this module stays side-effect free.
+let onUnauthorized: (() => void) | null = null;
+export const registerUnauthorizedHandler = (handler: () => void) => {
+  onUnauthorized = handler;
+};
+
 /** Error thrown for non-2xx responses; `code` carries the server error code. */
 export class ApiError extends Error {
   status: number;
   code: string | null;
-  constructor(message: string, status: number, code: string | null) {
+  /** Optional invitation token carried by `pending_invite` responses. */
+  token?: string;
+  constructor(message: string, status: number, code: string | null, token?: string) {
     super(message);
     this.status = status;
     this.code = code;
+    this.token = token;
   }
 }
 
+// ── Request deduplication + short-lived cache ────────────────────────────────
+// GET requests are deduplicated: if the same path is in-flight, the caller
+// shares the pending promise instead of firing a second request. Results are
+// cached for a short TTL to avoid redundant round-trips during realtime
+// refetch bursts. Mutations (POST/PUT/DELETE/PATCH) always bypass the cache
+// and invalidate cached entries for the same path.
+
+const CACHE_TTL_MS = 2000; // 2s — enough to coalesce realtime refetch bursts
+const inflight = new Map<string, Promise<unknown>>();
+const cache = new Map<string, { data: unknown; expiry: number }>();
+
+function cacheKey(path: string, method: string): string {
+  return `${method}:${path}`;
+}
+
 async function request<T>(path: string, opts: RequestInit = {}): Promise<T> {
-  const res = await fetch(BASE + path, {
-    ...opts,
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${userAccessToken ?? publicAnonKey}`,
-      ...opts.headers,
-    },
-  });
+  // Skip the Authorization header for genuinely public routes; otherwise the
+  // server requires a valid Bearer token. We no longer fall back to the anon
+  // key as a fake credential — a logged-out caller must hit 401, not silently
+  // masquerade as authenticated against routes that happen to skip the check.
+  // The invitation preview (GET /invitations/:token) is public, but accepting
+  // (POST .../accept) still needs auth — match the preview shape precisely.
+  const method = (opts.method ?? "GET").toUpperCase();
+  const key = cacheKey(path, method);
+
+  // For GET requests: return cached result if fresh, or share in-flight promise
+  if (method === "GET") {
+    const cached = cache.get(key);
+    if (cached && cached.expiry > Date.now()) return cached.data as T;
+    const pending = inflight.get(key);
+    if (pending) return pending as Promise<T>;
+  }
+
+  // For mutations: invalidate any cached GET for this path
+  if (method !== "GET") {
+    cache.delete(cacheKey(path, "GET"));
+  }
+
+  const promise = doRequest<T>(path, opts, method);
+
+  if (method === "GET") {
+    inflight.set(key, promise);
+    promise.then(
+      (data) => {
+        cache.set(key, { data, expiry: Date.now() + CACHE_TTL_MS });
+        inflight.delete(key);
+      },
+      () => { inflight.delete(key); },
+    );
+  }
+
+  return promise;
+}
+
+async function doRequest<T>(path: string, opts: RequestInit, method: string): Promise<T> {
+  const isInvitePreview = method === "GET" && /^\/invitations\/[^/]+$/.test(path);
+  const isPublic =
+    isInvitePreview || PUBLIC_PATHS.some((p) => path === p || path.startsWith(p));
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    ...(opts.headers as Record<string, string> | undefined),
+  };
+  if (!isPublic) {
+    // Honour an explicitly-provided Bearer token (e.g. passed by AuthContext
+    // before the global token has been set) while still falling back to the
+    // module-level token. This eliminates startup race-condition 401s.
+    const authHeader =
+      (opts.headers as Record<string, string> | undefined)?.Authorization ??
+      (opts.headers as Record<string, string> | undefined)?.authorization;
+    const token = authHeader?.startsWith("Bearer ")
+      ? authHeader.slice(7)
+      : userAccessToken;
+    if (!token) {
+      throw new ApiError(
+        "Not authenticated — please sign in again.",
+        401,
+        "unauthorized",
+      );
+    }
+    headers["Authorization"] = `Bearer ${token}`;
+  }
+
+  const res = await fetch(BASE + path, { ...opts, headers });
+  if (res.status === 401) {
+    // Token expired / invalid — let the registered handler sign out and
+    // bounce to login. Components still receive the ApiError to clean up.
+    try {
+      onUnauthorized?.();
+    } catch {
+      /* never let the handler throw break the rejection */
+    }
+  }
   if (!res.ok) {
     const text = await res.text();
     let code: string | null = null;
+    let token: string | undefined;
     let message = `API ${opts.method ?? "GET"} ${path} failed (${res.status}): ${text}`;
     try {
       const body = JSON.parse(text);
       if (body?.code) code = body.code;
       if (body?.error) message = body.error;
+      if (body?.token) token = body.token;
     } catch {
       /* non-JSON error body */
     }
-    throw new ApiError(message, res.status, code);
+    throw new ApiError(message, res.status, code, token);
   }
   return res.json();
+}
+
+/** Invalidate all cached GET responses (e.g. after a realtime event). */
+export function invalidateCache() {
+  cache.clear();
+  inflight.clear();
 }
 
 // ── Profile (authenticated — requires the user's access token) ───────────────
@@ -147,6 +252,10 @@ export interface PaymentStatusResult {
   gross_amount: number;
   payment_type: string | null;
   subscription: Subscription | null;
+  /** Only present for pending orders — allows re-opening the Snap popup. */
+  snap_token?: string | null;
+  client_key?: string;
+  is_production?: boolean;
 }
 
 export const createCheckout = (
@@ -315,10 +424,21 @@ export const adminDeleteNotification = (id: string) =>
     method: "DELETE",
   });
 
+export interface MigrateKvReport {
+  plans: number;
+  profiles: number;
+  subscriptions: number;
+  transactions: number;
+  errors: string[];
+}
+
+export const adminMigrateKv = () =>
+  request<MigrateKvReport>("/admin/migrate-kv", { method: "POST" });
+
 // ── Tasks ─────────────────────────────────────────────────────────────────────
 
 export interface Task {
-  id: number;
+  id: string;
   title: string;
   description: string;
   status: string;
@@ -327,23 +447,25 @@ export interface Task {
   project: string;
   due: string;
   completed: boolean;
+  created_by?: string;
 }
 
 export const getTasks = () => request<Task[]>("/tasks");
-export const createTask = (task: Omit<Task, "id">) =>
+export const createTask = (task: Omit<Task, "id" | "created_by">) =>
   request<Task>("/tasks", { method: "POST", body: JSON.stringify(task) });
-export const updateTask = (id: number, patch: Partial<Task>) =>
-  request<Task>(`/tasks/${id}`, { method: "PUT", body: JSON.stringify(patch) });
-export const deleteTask = (id: number) =>
-  request<{ ok: boolean }>(`/tasks/${id}`, { method: "DELETE" });
+export const updateTask = (id: string, patch: Partial<Task>) =>
+  request<Task>(`/tasks/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify(patch) });
+export const deleteTask = (id: string) =>
+  request<{ ok: boolean }>(`/tasks/${encodeURIComponent(id)}`, { method: "DELETE" });
 
 // ── Projects ──────────────────────────────────────────────────────────────────
 
 export interface Project {
-  id: number;
+  id: string;
   name: string;
   description: string;
   status: string;
+  priority?: string;
   progress: number;
   tasks: { total: number; done: number };
   team: string[];
@@ -354,10 +476,10 @@ export interface Project {
 export const getProjects = () => request<Project[]>("/projects");
 export const createProject = (project: Omit<Project, "id">) =>
   request<Project>("/projects", { method: "POST", body: JSON.stringify(project) });
-export const updateProject = (id: number, patch: Partial<Project>) =>
-  request<Project>(`/projects/${id}`, { method: "PUT", body: JSON.stringify(patch) });
-export const deleteProject = (id: number) =>
-  request<{ ok: boolean }>(`/projects/${id}`, { method: "DELETE" });
+export const updateProject = (id: string, patch: Partial<Project>) =>
+  request<Project>(`/projects/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify(patch) });
+export const deleteProject = (id: string) =>
+  request<{ ok: boolean }>(`/projects/${encodeURIComponent(id)}`, { method: "DELETE" });
 
 // ── Teams ─────────────────────────────────────────────────────────────────────
 
@@ -407,6 +529,7 @@ export interface FileItem {
   owner: string;
   shared: boolean;
   archived: boolean;
+  created_by?: string | null;
 }
 
 export interface Folder {
@@ -424,12 +547,110 @@ export const deleteFile = (name: string) =>
   request<{ ok: boolean }>(`/files/${encodeURIComponent(name)}`, { method: "DELETE" });
 export const createFolder = (folder: Folder) =>
   request<Folder>("/files/folders", { method: "POST", body: JSON.stringify(folder) });
-
+export const renameFolder = (oldName: string, newName: string) =>
+  request<Folder>("/files/folders", { method: "PUT", body: JSON.stringify({ oldName, newName }) });
+export const deleteFolder = (name: string) =>
+  request<{ ok: boolean }>(`/files/folders/${encodeURIComponent(name)}`, { method: "DELETE" });
 // ── Settings ──────────────────────────────────────────────────────────────────
 
-export const getSettings = (section: string) => request<any>(`/settings/${section}`);
-export const saveSettings = (section: string, data: any) =>
-  request<any>(`/settings/${section}`, { method: "PUT", body: JSON.stringify(data) });
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- settings schema varies by section
+export const getSettings = <T = any>(section: string) => request<T>(`/settings/${section}`);
+export const saveSettings = (section: string, data: unknown) =>
+  request<{ ok: boolean }>(`/settings/${section}`, { method: "PUT", body: JSON.stringify(data) });
+
+// ── Workspace provisioning ────────────────────────────────────────────────────
+// POST /workspace is idempotent: returns the existing workspace if the user
+// already has one, otherwise provisions one (+ membership + seed data). Called
+// from onboarding (named after the user's company) and again from AppLayout on
+// mount as a safety net — so every signed-in user lands on a workspace-scoped
+// page with a workspace already in place, instead of a blank sidebar/logo.
+
+export interface Workspace {
+  id?: string;
+  name: string;
+  url?: string;
+  industry?: string | null;
+  team_size?: string | null;
+  region?: string | null;
+  owner_id?: string;
+}
+
+export const getWorkspace = () =>
+  request<{ workspace: Workspace | null; role?: string }>("/workspace");
+
+export const ensureWorkspace = (input?: { name?: string }) =>
+  request<{ workspace: Workspace; role?: string }>("/workspace", {
+    method: "POST",
+    body: JSON.stringify(input ?? {}),
+  });
+
+// ── Workspace members & invitations ───────────────────────────────────────────
+
+export interface WorkspaceMember {
+  user_id: string | null;
+  name: string;
+  email: string;
+  role: string;
+  status: string;
+  initials: string;
+  joined: string;
+}
+
+export const getWorkspaceMembers = () =>
+  request<{ members: WorkspaceMember[]; my_role: string }>("/workspace/members");
+
+export const updateWorkspaceMemberRole = (userId: string, role: string) =>
+  request<{ ok: boolean }>(`/workspace/members/${encodeURIComponent(userId)}`, {
+    method: "PUT",
+    body: JSON.stringify({ role }),
+  });
+
+export const removeWorkspaceMember = (userId: string) =>
+  request<{ ok: boolean }>(`/workspace/members/${encodeURIComponent(userId)}`, {
+    method: "DELETE",
+  });
+
+export interface Invitation {
+  id: string;
+  email: string;
+  role: string;
+  token: string;
+  status: string;
+  expires_at: string;
+  created_at: string;
+}
+
+export interface InvitationPreview {
+  email: string;
+  role: string;
+  status: "pending" | "accepted" | "expired" | "revoked";
+  workspace_name: string;
+  inviter_name: string;
+}
+
+export const createInvitation = (input: { email: string; role: string; team?: string }) =>
+  request<{ invitation: Invitation }>("/workspace/invitations", {
+    method: "POST",
+    body: JSON.stringify(input),
+  }).then((r) => r.invitation);
+
+export const getInvitations = () =>
+  request<{ invitations: Invitation[] }>("/workspace/invitations").then((r) => r.invitations);
+
+export const revokeInvitation = (id: string) =>
+  request<{ ok: boolean }>(`/workspace/invitations/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  });
+
+// Public preview — pass the token explicitly; this route allows no-auth GET.
+export const getInvitationByToken = (token: string) =>
+  request<InvitationPreview>(`/invitations/${encodeURIComponent(token)}`);
+
+export const acceptInvitation = (token: string) =>
+  request<{ ok: boolean; workspace_id: string; workspace_name: string; role: string }>(
+    `/invitations/${encodeURIComponent(token)}/accept`,
+    { method: "POST" },
+  );
 
 // ── Workspace admin ───────────────────────────────────────────────────────────
 
@@ -478,6 +699,101 @@ export interface SessionData {
   active: { device: string; location: string; ip: string; lastActive: string; current: boolean }[];
   loginHistory: { date: string; ip: string; device: string; status: string }[];
 }
+
+export const setup2FA = () => request<{ secret: string; otpauthUrl: string; backupCodes: string[] }>("/2fa/setup");
+export const verify2FA = (code: string) => request<{ ok: boolean }>("/2fa/verify", { method: "POST", body: JSON.stringify({ code }) });
+export const disable2FA = (code?: string, backupCode?: string, emailOTPCode?: string) =>
+  request<{ ok: boolean }>("/2fa", { method: "DELETE", body: JSON.stringify({ code, backupCode, emailOTPCode }) });
+export const transferOwnership = (targetEmail: string) =>
+  request<{ ok: boolean }>("/workspace/transfer-ownership", { method: "POST", body: JSON.stringify({ targetEmail }) });
+export const deleteAccount = (password: string) =>
+  request<{ ok: boolean }>("/account", { method: "DELETE", body: JSON.stringify({ password }) });
+export const verify2FALogin = (code: string, backupCode?: string) =>
+  request<{ ok: boolean }>("/2fa/verify-login", { method: "POST", body: JSON.stringify({ code, backupCode }) });
+
+// ── Email OTP (Brevo) ────────────────────────────────────────────────────────
+/** Send email OTP for signup verification. */
+export const sendEmailOTP = () =>
+  request<{ ok: boolean; expiresIn: number }>("/email-otp/send", { method: "POST" });
+export const verifyEmailOTP = (code: string) =>
+  request<{ ok: boolean }>("/email-otp/verify", { method: "POST", body: JSON.stringify({ code }) });
+/** Send email OTP for login 2FA. Same endpoint as signup, separate verify path. */
+export const sendEmailOTPLogin = sendEmailOTP; // same endpoint, alias for clarity
+export const verifyEmailOTPLogin = (code: string) =>
+  request<{ ok: boolean }>("/email-otp/verify-login", { method: "POST", body: JSON.stringify({ code }) });
+
+// ── File updates ─────────────────────────────────────────────────────────────
+export const updateFile = (name: string, patch: Record<string, unknown>) =>
+  request<Record<string, unknown>>(`/files/${encodeURIComponent(name)}`, {
+    method: "PATCH",
+    body: JSON.stringify(patch),
+  });
+
+// ── Chat ──────────────────────────────────────────────────────────────────────
+
+export interface ChatReaction {
+  id: string;
+  message_id: string;
+  user_id: string;
+  emoji: string;
+  created_at: string;
+}
+
+export interface ChatMessage {
+  id: string;
+  workspace_id: string;
+  user_id: string;
+  content: string;
+  file_url: string | null;
+  file_name: string | null;
+  file_type: string | null;
+  reply_to: string | null;
+  created_at: string;
+  updated_at: string | null;
+  sender: { name: string; initials: string };
+  reactions: ChatReaction[];
+  reply_to_preview: { id: string; content: string; sender_name: string } | null;
+}
+
+export const getChatMessages = (limit = 50, before?: string) =>
+  request<{ messages: ChatMessage[]; has_more: boolean }>(
+    `/chat/messages?limit=${limit}${before ? `&before=${encodeURIComponent(before)}` : ""}`
+  );
+
+export const sendChatMessage = (input: {
+  content: string;
+  file_url?: string;
+  file_name?: string;
+  file_type?: string;
+  reply_to?: string;
+}) =>
+  request<ChatMessage>("/chat/messages", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+
+export const editChatMessage = (id: string, content: string) =>
+  request<ChatMessage>(`/chat/messages/${encodeURIComponent(id)}`, {
+    method: "PUT",
+    body: JSON.stringify({ content }),
+  });
+
+export const deleteChatMessage = (id: string) =>
+  request<{ ok: boolean }>(`/chat/messages/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  });
+
+export const addChatReaction = (messageId: string, emoji: string) =>
+  request<ChatReaction & { removed?: boolean }>(
+    `/chat/messages/${encodeURIComponent(messageId)}/reactions`,
+    { method: "POST", body: JSON.stringify({ emoji }) }
+  );
+
+export const removeChatReaction = (messageId: string, emoji: string) =>
+  request<{ ok: boolean }>(
+    `/chat/messages/${encodeURIComponent(messageId)}/reactions/${encodeURIComponent(emoji)}`,
+    { method: "DELETE" }
+  );
 
 export const getSessions = () => request<SessionData>("/sessions");
 export const revokeSession = (device: string) =>
@@ -598,9 +914,9 @@ export interface Milestone {
   done: boolean;
 }
 
-export const getMilestones = (project: string) => request<Milestone[]>(`/milestones/${project}`);
+export const getMilestones = (project: string) => request<Milestone[]>(`/milestones/${encodeURIComponent(project)}`);
 export const toggleMilestone = (project: string, index: number, done: boolean) =>
-  request<Milestone>(`/milestones/${project}/${index}`, {
+  request<Milestone>(`/milestones/${encodeURIComponent(project)}/${index}`, {
     method: "PUT",
     body: JSON.stringify({ done }),
   });

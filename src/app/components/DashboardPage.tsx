@@ -1,9 +1,16 @@
+import { logger } from "../utils/logger";
 import { useLang } from "../LangContext";
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
+import { useRealtimeSync } from "../hooks/useRealtimeSync";
 import { TrendingUp, TrendingDown, Target, DollarSign, Users, BarChart2, Activity, Layers, Clock, ChevronRight } from "lucide-react";
 import { toast } from "sonner";
+import {
+  AreaChart, Area, BarChart as RBarChart, Bar as RBar,
+  XAxis, YAxis, CartesianGrid, Tooltip as RTooltip, ResponsiveContainer,
+} from "recharts";
 import { useNavigation } from "./NavigationContext";
 import { NewTaskModal } from "./modals/NewTaskModal";
+import { ProjectDetailModal } from "./modals/ProjectDetailModal";
 import * as api from "../utils/api";
 
 
@@ -17,6 +24,24 @@ type DashView =
   | "quarterly" | "quarterly-market" | "quarterly-roi" | "quarterly-retention" | "quarterly-innovation"
   | "performance-metrics" | "perf-sales" | "perf-response" | "perf-clv" | "perf-churn"
   | "predictive" | "pred-forecast" | "pred-resources" | "pred-trends" | "pred-risks";
+
+// ── Recharts tooltip (dark theme) ─────────────────────────────────────────────
+function DashTooltip({ active, payload, label }: {
+  active?: boolean; payload?: Array<{ name: string; value: number; color: string }>; label?: string;
+}) {
+  if (!active || !payload?.length) return null;
+  return (
+    <div className="bg-[#1a1a1a] border border-neutral-800 rounded-lg p-3 shadow-xl">
+      <p className="text-neutral-400 text-[11px] mb-2">{label}</p>
+      {payload.filter((e) => e.value > 0).map((entry, i) => (
+        <div key={i} className="flex items-center gap-2">
+          <div className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: entry.color }} />
+          <span className="text-neutral-300 text-[11px]">{entry.name}: {entry.value}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
 
 // ── Custom chart components ───────────────────────────────────────────────────
 
@@ -173,11 +198,12 @@ function ChartBar({
   xKey: string;
   height?: number;
 }) {
+  const { t } = useLang();
   const [tooltip, setTooltip] = useState<{ idx: number } | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [tipPos, setTipPos] = useState({ x: 0, y: 0 });
 
-  if (!data || data.length === 0) return <div style={{ height }} className="flex items-center justify-center text-neutral-700 text-[11px]">No data</div>;
+  if (!data || data.length === 0) return <div style={{ height }} className="flex items-center justify-center text-neutral-700 text-[11px]">{t("dashboard.noDataLabel")}</div>;
 
   const allValues = data.flatMap((d) => bars.map((b) => (d[b.key] as number) ?? 0));
   const maxVal = Math.max(...allValues, 1);
@@ -284,7 +310,9 @@ function ChartHBar({
   labelKey: string;
   height?: number;
 }) {
-  if (!data || data.length === 0) return <div style={{ height }} className="flex items-center justify-center text-neutral-700 text-[11px]">No data</div>;
+  const { t } = useLang();
+
+  if (!data || data.length === 0) return <div style={{ height }} className="flex items-center justify-center text-neutral-700 text-[11px]">{t("dashboard.noDataLabel")}</div>;
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10, height }}>
       {data.map((d, di) => {
@@ -326,9 +354,10 @@ function ChartDonut({
   data: { name: string; value: number; color: string }[];
   size?: number;
 }) {
+  const { t } = useLang();
   const [hovered, setHovered] = useState<number | null>(null);
 
-  if (!data || data.length === 0) return <div style={{ height: size }} className="flex items-center justify-center text-neutral-700 text-[11px]">No data</div>;
+  if (!data || data.length === 0) return <div style={{ height: size }} className="flex items-center justify-center text-neutral-700 text-[11px]">{t("dashboard.noDataLabel")}</div>;
 
   const total = data.reduce((a, b) => a + b.value, 0);
   const r = 30;
@@ -414,17 +443,17 @@ function dd<K extends keyof api.DashboardDetails>(key: K): Partial<api.Dashboard
 }
 
 // ── Config helpers ─────────────────────────────────────────────────────────────
-const statusConfig: Record<string, { label: string; color: string }> = {
-  "in-progress": { label: "In Progress", color: "#f59e0b" },
-  review: { label: "Review", color: "#3b82f6" },
-  todo: { label: "Todo", color: "#525252" },
-  completed: { label: "Done", color: "#10b981" },
+const statusConfig: Record<string, { labelKey: string; color: string }> = {
+  "in-progress": { labelKey: "tasks.statusInProgress", color: "#f59e0b" },
+  review: { labelKey: "tasks.statusReview", color: "#3b82f6" },
+  todo: { labelKey: "tasks.todo", color: "#525252" },
+  completed: { labelKey: "tasks.done", color: "#10b981" },
 };
 
-const priorityConfig: Record<string, { label: string; color: string }> = {
-  high: { label: "High", color: "#ef4444" },
-  medium: { label: "Medium", color: "#f59e0b" },
-  low: { label: "Low", color: "#525252" },
+const priorityConfig: Record<string, { labelKey: string; color: string }> = {
+  high: { labelKey: "tasks.high", color: "#ef4444" },
+  medium: { labelKey: "tasks.medium", color: "#f59e0b" },
+  low: { labelKey: "tasks.low", color: "#525252" },
 };
 
 const tagConfig: Record<string, string> = {
@@ -480,156 +509,261 @@ function ProgressBar({ value, color = "#818cf8" }: { value: number; color?: stri
   );
 }
 
-const VIEW_LABELS: Record<DashView, string> = {
-  "overview": "Overview",
-  "executive-summary": "Executive Summary",
-  "exec-revenue": "Revenue Overview",
-  "exec-kpis": "Key Performance Indicators",
-  "exec-goals": "Strategic Goals Progress",
-  "exec-departments": "Department Highlights",
-  "operations": "Operations Dashboard",
-  "ops-timeline": "Project Timeline",
-  "ops-resources": "Resource Allocation",
-  "ops-performance": "Team Performance",
-  "ops-capacity": "Capacity Planning",
-  "financial": "Financial Dashboard",
-  "fin-budget": "Budget vs Actual",
-  "fin-cashflow": "Cash Flow Analysis",
-  "fin-expense": "Expense Breakdown",
-  "fin-pl": "Profit & Loss Summary",
-  "weekly": "Weekly Reports",
-  "weekly-productivity": "Team Productivity",
-  "weekly-completion": "Project Completion",
-  "weekly-budget": "Budget Utilization",
-  "weekly-satisfaction": "Client Satisfaction",
-  "monthly": "Monthly Insights",
-  "monthly-revenue": "Revenue Growth",
-  "monthly-clients": "New Clients",
-  "monthly-expansion": "Team Expansion",
-  "monthly-cost": "Cost Reduction",
-  "quarterly": "Quarterly Analysis",
-  "quarterly-market": "Market Position",
-  "quarterly-roi": "Return on Investment",
-  "quarterly-retention": "Customer Retention",
-  "quarterly-innovation": "Innovation Index",
-  "performance-metrics": "Performance Metrics",
-  "perf-sales": "Sales Conversion",
-  "perf-response": "Lead Response Time",
-  "perf-clv": "Customer Lifetime Value",
-  "perf-churn": "Churn Rate",
-  "predictive": "Predictive Analytics",
-  "pred-forecast": "Q4 Revenue Forecast",
-  "pred-resources": "Resource Demand",
-  "pred-trends": "Market Trends",
-  "pred-risks": "Risk Assessment",
+const VIEW_LABEL_KEYS: Record<DashView, string> = {
+  "overview": "sidebar.overview",
+  "executive-summary": "sidebar.executiveSummary",
+  "exec-revenue": "sidebar.revenueOverview",
+  "exec-kpis": "sidebar.keyPerformanceIndicators",
+  "exec-goals": "sidebar.strategicGoalsProgress",
+  "exec-departments": "sidebar.departmentHighlights",
+  "operations": "sidebar.operationsDashboard",
+  "ops-timeline": "sidebar.projectTimeline",
+  "ops-resources": "sidebar.resourceAllocation",
+  "ops-performance": "sidebar.teamPerformance",
+  "ops-capacity": "sidebar.capacityPlanning",
+  "financial": "sidebar.financialDashboard",
+  "fin-budget": "sidebar.budgetVsActual",
+  "fin-cashflow": "sidebar.cashFlowAnalysis",
+  "fin-expense": "sidebar.expenseBreakdown",
+  "fin-pl": "sidebar.profitLossSummary",
+  "weekly": "sidebar.weeklyReports",
+  "weekly-productivity": "sidebar.teamProductivity",
+  "weekly-completion": "sidebar.projectCompletion",
+  "weekly-budget": "sidebar.budgetUtilization",
+  "weekly-satisfaction": "sidebar.clientSatisfaction",
+  "monthly": "sidebar.monthlyInsights",
+  "monthly-revenue": "sidebar.revenueGrowth",
+  "monthly-clients": "sidebar.newClients",
+  "monthly-expansion": "sidebar.teamExpansion",
+  "monthly-cost": "sidebar.costReduction",
+  "quarterly": "sidebar.quarterlyAnalysis",
+  "quarterly-market": "sidebar.marketPosition",
+  "quarterly-roi": "sidebar.roi",
+  "quarterly-retention": "sidebar.customerRetention",
+  "quarterly-innovation": "sidebar.innovationIndex",
+  "performance-metrics": "sidebar.performanceMetrics",
+  "perf-sales": "sidebar.salesConversion",
+  "perf-response": "sidebar.leadResponseTime",
+  "perf-clv": "sidebar.customerLifetimeValue",
+  "perf-churn": "sidebar.churnRate",
+  "predictive": "sidebar.predictiveAnalytics",
+  "pred-forecast": "sidebar.q4RevenueForecast",
+  "pred-resources": "sidebar.resourceDemand",
+  "pred-trends": "sidebar.marketTrends",
+  "pred-risks": "sidebar.riskAssessment",
 };
 
 // ── Sub-view components ───────────────────────────────────────────────────────
 
-function OverviewView({ recentTasks, onNavigate, showNewTask, taskStats, todayEvents, teamChartData }: {
+function OverviewView({ recentTasks, onNavigate, showNewTask, taskStats, todayEvents, teamChartData, teamPerformance, overdueCount, membersMap, projects, fullProjects, onProjectClick, activityItems }: {
   recentTasks: { title: string; status: string; priority: string; assignee: string; due: string }[];
   onNavigate: (s: string) => void;
   showNewTask: () => void;
   taskStats: { total: number; completed: number; inProgress: number; members: number };
   todayEvents: { title: string; tag: string; color?: string }[];
   teamChartData: { name: string; tasks: number; done: number }[];
+  teamPerformance: { name: string; initials: string; role: string; done: number; total: number }[];
+  overdueCount: number;
+  membersMap: Map<string, string>;
+  projects: { name: string; description: string; status: string; progress: number }[];
+  fullProjects: api.Project[];
+  onProjectClick: (project: api.Project) => void;
+  activityItems: { action: string; title: string; time: string; type: "completed" | "created" | "updated" }[];
 }) {
-  const today = new Date().toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
+  const { t, lang } = useLang();
   const completionRate = taskStats.total > 0 ? Math.round((taskStats.completed / taskStats.total) * 100) : 0;
+  const resolveAssignee = (id: string) => membersMap.get(id) || id;
+
   return (
     <div className="space-y-5 lg:space-y-7">
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 lg:gap-4">
-        <StatCard label="Total Tasks" value={`${taskStats.total}`} trend={{ value: `${taskStats.inProgress} active`, up: true }} />
-        <StatCard label="Completed" value={`${taskStats.completed}`} trend={{ value: `${completionRate}% rate`, up: completionRate >= 50 }} sub={`${completionRate}% complete`} />
-        <StatCard label="In Progress" value={`${taskStats.inProgress}`} sub={`${taskStats.total - taskStats.completed - taskStats.inProgress} todo`} />
-        <StatCard label="Team Members" value={`${taskStats.members}`} sub="active workspace" />
+      {/* Welcome Header */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-neutral-50 text-[20px] lg:text-[24px] font-['Lexend:SemiBold',_sans-serif] mb-1">
+            {t("dashboard.welcome")}
+          </h2>
+          <p className="text-neutral-500 text-[12px] lg:text-[13px]">
+            {new Date().toLocaleDateString(lang === "id" ? "id-ID" : "en-US", {
+              weekday: "long",
+              month: "long",
+              day: "numeric",
+              year: "numeric",
+            })}
+          </p>
+        </div>
+        <button
+          onClick={showNewTask}
+          className="bg-indigo-600 hover:bg-indigo-500 text-white text-[13px] px-4 py-2 rounded-lg transition-colors shrink-0"
+        >
+          {t("dashboard.newTaskBtn")}
+        </button>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        <Card className="lg:col-span-2">
-          <div className="flex items-center justify-between mb-4 lg:mb-5">
-            <SectionHeader title="Task Activity" sub="Completion trend" />
-            <div className="flex items-center gap-3 lg:gap-4">
-              <div className="flex items-center gap-1.5"><div className="w-2 h-2 rounded-full bg-indigo-400" /><span className="text-neutral-500 text-[11px]">Completed</span></div>
-              <div className="flex items-center gap-1.5"><div className="w-2 h-2 rounded-full bg-neutral-600" /><span className="text-neutral-500 text-[11px]">Created</span></div>
+      {/* Bar Chart - Full Width, Prominent */}
+      <div className="bg-[#141414] border border-neutral-800/60 rounded-xl p-4 lg:p-5">
+        <div className="text-neutral-50 text-[13px] lg:text-[14px] font-['Lexend:SemiBold',_sans-serif] mb-1">
+          {t("dashboard.taskActivity")}
+        </div>
+        <div className="text-neutral-500 text-[11px] mb-4">{t("dashboard.completionTrend")}</div>
+        <ResponsiveContainer width="100%" height={220}>
+          <RBarChart data={weeklyData.length > 0 ? weeklyData : teamData} barSize={14}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#1f1f1f" vertical={false} />
+            <XAxis dataKey={weeklyData.length > 0 ? "week" : "name"} tick={{ fill: "#525252", fontSize: 10 }} axisLine={false} tickLine={false} />
+            <YAxis tick={{ fill: "#525252", fontSize: 10 }} axisLine={false} tickLine={false} width={24} />
+            <RTooltip content={<DashTooltip />} />
+            <RBar dataKey={weeklyData.length > 0 ? "completed" : "done"} name="Completed" fill="#818cf8" radius={[3, 3, 0, 0]} />
+            {weeklyData.length > 0 && <RBar dataKey="created" name="Created" fill="#262626" radius={[3, 3, 0, 0]} />}
+          </RBarChart>
+        </ResponsiveContainer>
+      </div>
+
+      {/* Projects Section */}
+      <div className="bg-[#141414] border border-neutral-800/60 rounded-xl">
+        <div className="flex items-center justify-between px-4 lg:px-5 py-3 lg:py-4 border-b border-neutral-800/60">
+          <div className="text-neutral-50 text-[13px] lg:text-[14px] font-['Lexend:SemiBold',_sans-serif]">
+            {t("nav.projects")}
+          </div>
+          <button
+            onClick={() => onNavigate("projects")}
+            className="text-neutral-500 text-[12px] hover:text-indigo-400 transition-colors"
+          >
+            {t("dashboard.viewAll")}
+          </button>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 p-4 lg:p-5">
+          {projects.length === 0 && (
+            <div className="col-span-3 text-neutral-600 text-[13px] text-center py-6">
+              {t("dashboard.noDataLabel")}
             </div>
-          </div>
-          <ChartArea
-            data={weeklyData}
-            xKey="week"
-            height={160}
-            series={[
-              { key: "completed", name: "Completed", stroke: "#818cf8", fill: "rgba(129,140,248,0.08)" },
-              { key: "created", name: "Created", stroke: "#404040", fill: "rgba(82,82,82,0.08)" },
-            ]}
-          />
-        </Card>
-
-        <Card>
-          <SectionHeader title="Team Workload" sub="Active vs. done" />
-          <ChartBar
-            data={teamChartData.length > 0 ? teamChartData : teamData}
-            xKey="name"
-            height={160}
-            bars={[
-              { key: "tasks", name: "Total", color: "#262626" },
-              { key: "done", name: "Done", color: "#818cf8" },
-            ]}
-          />
-        </Card>
+          )}
+          {projects.slice(0, 6).map((project, i) => (
+            <div
+              key={i}
+              onClick={() => {
+                const fp = fullProjects.find((p) => p.name === project.name);
+                if (fp) onProjectClick(fp);
+                else onNavigate("projects");
+              }}
+              className="p-3 bg-neutral-800/20 rounded-lg cursor-pointer hover:bg-neutral-800/40 transition-colors"
+            >
+              <div className="flex items-center gap-2 mb-2">
+                <div className="w-2 h-2 rounded-full shrink-0" style={{
+                  backgroundColor: project.status === "completed" ? "#10b981" : project.status === "in-progress" ? "#818cf8" : "#f59e0b",
+                }} />
+                <span className="text-neutral-200 text-[12px] lg:text-[13px] font-['Lexend:SemiBold',_sans-serif] truncate">
+                  {project.name}
+                </span>
+              </div>
+              <div className="text-neutral-500 text-[11px] truncate mb-2">
+                {project.description}
+              </div>
+              <div className="w-full h-1.5 bg-neutral-800 rounded-full overflow-hidden">
+                <div className="h-full rounded-full bg-indigo-500 transition-all" style={{ width: `${project.progress}%` }} />
+              </div>
+              <div className="text-neutral-600 text-[10px] mt-1.5">{project.progress}% {t("dashboard.completeLabel")}</div>
+            </div>
+          ))}
+        </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        <div className="lg:col-span-2 bg-[#141414] border border-neutral-800/60 rounded-xl">
-          <div className="flex items-center justify-between px-4 lg:px-5 py-3 lg:py-4 border-b border-neutral-800/60">
-            <div className="text-neutral-50 text-[13px] lg:text-[14px] font-['Lexend:SemiBold',_sans-serif]">Recent Tasks</div>
-            <button onClick={() => onNavigate("tasks")} className="text-neutral-500 text-[12px] hover:text-indigo-400 transition-colors">View all →</button>
+      {/* Recent Tasks Cards */}
+      <div className="bg-[#141414] border border-neutral-800/60 rounded-xl">
+        <div className="flex items-center justify-between px-4 lg:px-5 py-3 lg:py-4 border-b border-neutral-800/60">
+          <div className="text-neutral-50 text-[13px] lg:text-[14px] font-['Lexend:SemiBold',_sans-serif]">
+            {t("dashboard.recentTasks")}
           </div>
-          <div className="divide-y divide-neutral-800/40">
-            {recentTasks.length === 0 && (
-              <div className="px-5 py-6 text-neutral-600 text-[13px] text-center">No tasks yet</div>
-            )}
-            {recentTasks.map((task, i) => (
-              <div key={i} onClick={() => onNavigate("tasks")} className="flex items-center justify-between px-4 lg:px-5 py-3 hover:bg-neutral-800/20 transition-colors cursor-pointer">
-                <div className="flex items-center gap-3 min-w-0">
-                  <div className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: (statusConfig[task.status] ?? statusConfig["todo"]).color }} />
-                  <span className="text-neutral-300 text-[12px] lg:text-[13px] truncate">{task.title}</span>
-                </div>
-                <div className="flex items-center gap-2 lg:gap-4 shrink-0 ml-3">
-                  <span className="text-[11px] hidden sm:block" style={{ color: (priorityConfig[task.priority] ?? priorityConfig["medium"]).color }}>{(priorityConfig[task.priority] ?? priorityConfig["medium"]).label}</span>
-                  <div className="w-6 h-6 rounded-full bg-neutral-800 flex items-center justify-center text-[10px] text-neutral-400">{task.assignee}</div>
-                  <span className="text-neutral-600 text-[11px] w-12 text-right hidden md:block">{task.due}</span>
+          <button
+            onClick={() => onNavigate("tasks")}
+            className="text-neutral-500 text-[12px] hover:text-indigo-400 transition-colors"
+          >
+            {t("dashboard.viewAll")}
+          </button>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 p-4 lg:p-5">
+          {recentTasks.length === 0 && (
+            <div className="col-span-3 text-neutral-600 text-[13px] text-center py-6">
+              {t("dashboard.noTasksYet")}
+            </div>
+          )}
+          {recentTasks.map((task, i) => {
+            const sc = statusConfig[task.status] ?? statusConfig["todo"];
+            const pc = priorityConfig[task.priority] ?? priorityConfig["medium"];
+            return (
+              <div
+                key={i}
+                onClick={() => onNavigate("tasks")}
+                className="p-3 bg-neutral-800/20 rounded-lg cursor-pointer hover:bg-neutral-800/40 transition-colors"
+              >
+                <div className="flex items-start gap-3">
+                  <div className="mt-0.5 shrink-0">
+                    <div className={`w-4 h-4 rounded border ${task.status === "completed" ? "bg-indigo-600 border-indigo-600" : "border-neutral-600"} flex items-center justify-center`}>
+                      {task.status === "completed" && (
+                        <svg width="10" height="8" viewBox="0 0 10 8" fill="none"><path d="M1 4L3.5 6.5L9 1" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                      )}
+                    </div>
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className={`text-[12px] lg:text-[13px] leading-tight mb-2 ${task.status === "completed" ? "text-neutral-500 line-through" : "text-neutral-200"}`}>
+                      {task.title}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] px-1.5 py-0.5 rounded-full" style={{ color: pc.color, backgroundColor: `${pc.color}18` }}>
+                        {t(pc.labelKey)}
+                      </span>
+                      <span className="text-[10px] px-1.5 py-0.5 rounded-full" style={{ color: sc.color, backgroundColor: `${sc.color}18` }}>
+                        {t(sc.labelKey)}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="w-6 h-6 rounded-full bg-neutral-700 flex items-center justify-center text-[10px] text-neutral-300 shrink-0">
+                    {resolveAssignee(task.assignee).substring(0, 2).toUpperCase()}
+                  </div>
                 </div>
               </div>
-            ))}
-          </div>
+            );
+          })}
         </div>
+      </div>
 
+      {/* Activity Feed */}
+      {activityItems.length > 0 && (
         <div className="bg-[#141414] border border-neutral-800/60 rounded-xl">
           <div className="px-4 lg:px-5 py-3 lg:py-4 border-b border-neutral-800/60">
-            <div className="text-neutral-50 text-[13px] lg:text-[14px] font-['Lexend:SemiBold',_sans-serif]">Today</div>
-            <div className="text-neutral-500 text-[11px] lg:text-[12px] mt-0.5">{today}</div>
+            <div className="text-neutral-50 text-[13px] lg:text-[14px] font-['Lexend:SemiBold',_sans-serif]">
+              Activity
+            </div>
           </div>
-          <div className="px-4 lg:px-5 py-4 space-y-4">
-            {todayEvents.length === 0 && (
-              <div className="text-neutral-600 text-[12px] text-center py-4">No events today</div>
-            )}
-            {todayEvents.map((event, i) => (
-              <div key={i} onClick={() => toast.info(event.title)} className="flex items-start gap-3 cursor-pointer hover:opacity-80 transition-opacity">
-                <div className="flex-1 min-w-0">
-                  <div className="text-neutral-300 text-[12px] lg:text-[13px] leading-tight mb-1.5">{event.title}</div>
-                  <span className={`inline-block text-[10px] px-2 py-0.5 rounded-full ${tagConfig[event.tag] ?? "bg-neutral-800 text-neutral-400"}`}>{event.tag}</span>
+          <div className="divide-y divide-neutral-800/40">
+            {activityItems.map((item, i) => (
+              <div key={i} className="flex items-center gap-3 px-4 lg:px-5 py-3">
+                <div className={`w-6 h-6 rounded-full flex items-center justify-center shrink-0 ${
+                  item.type === "completed" ? "bg-emerald-900/40" : item.type === "created" ? "bg-indigo-900/40" : "bg-amber-900/40"
+                }`}>
+                  {item.type === "completed" ? (
+                    <svg width="12" height="10" viewBox="0 0 10 8" fill="none"><path d="M1 4L3.5 6.5L9 1" stroke="#10b981" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                  ) : item.type === "created" ? (
+                    <div className="w-2 h-2 rounded-full bg-indigo-400" />
+                  ) : (
+                    <div className="w-2 h-2 rounded-full bg-amber-400" />
+                  )}
                 </div>
+                <div className="flex-1 min-w-0">
+                  <span className="text-neutral-300 text-[12px] lg:text-[13px]">
+                    <span className="text-neutral-500">{item.action}</span> {item.title}
+                  </span>
+                </div>
+                <span className="text-neutral-600 text-[11px] shrink-0">{item.time}</span>
               </div>
             ))}
           </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }
 
 function ExecutiveSummaryView() {
+  const { t } = useLang();
   const goalStatusColor: Record<string, string> = {
     "on-track": "#10b981", "at-risk": "#f59e0b", "ahead": "#818cf8",
   };
@@ -643,20 +777,20 @@ function ExecutiveSummaryView() {
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <Card>
-          <SectionHeader title="Revenue vs Target" sub="Monthly comparison (USD k)" />
+          <SectionHeader title={t("dash.exec.revenueVsTarget")} sub={t("dash.exec.revenueVsTargetSub")} />
           <ChartBar
             data={revenueData}
             xKey="month"
             height={180}
             bars={[
-              { key: "target", name: "Target", color: "#262626" },
-              { key: "revenue", name: "Revenue", color: "#818cf8" },
+              { key: "target", name: t("chart.target"), color: "#262626" },
+              { key: "revenue", name: t("chart.revenue"), color: "#818cf8" },
             ]}
           />
         </Card>
 
         <Card>
-          <SectionHeader title="Key Performance Indicators" sub="vs. targets" />
+          <SectionHeader title={t("dash.exec.kpis")} sub={t("dash.exec.kpisSub")} />
           <div className="space-y-4">
             {kpiData.map((kpi) => (
               <div key={kpi.name}>
@@ -673,7 +807,7 @@ function ExecutiveSummaryView() {
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <Card>
-          <SectionHeader title="Strategic Goals Progress" sub="2026 initiatives" />
+          <SectionHeader title={t("dash.exec.goals")} sub={t("dash.exec.goalsSub")} />
           <div className="space-y-3.5">
             {strategicGoals.map((g) => (
               <div key={g.goal}>
@@ -696,7 +830,7 @@ function ExecutiveSummaryView() {
         </Card>
 
         <Card>
-          <SectionHeader title="Department Highlights" sub="Month-over-month" />
+          <SectionHeader title={t("dash.exec.departments")} sub={t("dash.exec.departmentsSub")} />
           <div className="space-y-3">
             {deptHighlights.map((d) => (
               <div key={d.dept} className="flex items-center justify-between p-3 bg-neutral-800/20 rounded-lg">
@@ -717,6 +851,7 @@ function ExecutiveSummaryView() {
 }
 
 function OperationsView() {
+  const { t } = useLang();
   const statusColor: Record<string, string> = {
     "in-progress": "#f59e0b", "completed": "#10b981", "planning": "#818cf8",
   };
@@ -729,7 +864,7 @@ function OperationsView() {
       </div>
 
       <Card>
-        <SectionHeader title="Project Timeline" sub="Relative progress (% complete)" />
+        <SectionHeader title={t("dash.ops.timeline")} sub={t("dash.ops.timelineSub")} />
         <div className="space-y-4 mt-2">
           {projectTimeline.map((p) => (
             <div key={p.project}>
@@ -749,34 +884,34 @@ function OperationsView() {
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <Card>
-          <SectionHeader title="Resource Allocation" sub="Allocated vs. available (%)" />
+          <SectionHeader title={t("dash.ops.resources")} sub={t("dash.ops.resourcesSub")} />
           <ChartHBar
             data={resourceData}
             labelKey="team"
             height={180}
             bars={[
-              { key: "allocated", name: "Allocated", color: "#818cf8" },
-              { key: "available", name: "Available", color: "#262626" },
+              { key: "allocated", name: t("chart.allocated"), color: "#818cf8" },
+              { key: "available", name: t("chart.available"), color: "#262626" },
             ]}
           />
         </Card>
 
         <Card>
-          <SectionHeader title="Capacity vs. Utilization" sub="Last 6 weeks (story points)" />
+          <SectionHeader title={t("dash.ops.capacity")} sub={t("dash.ops.capacitySub")} />
           <ChartArea
             data={capacityData}
             xKey="week"
             height={180}
             series={[
-              { key: "capacity", name: "Capacity", stroke: "#525252", dashed: true },
-              { key: "utilization", name: "Utilization", stroke: "#10b981", fill: "rgba(16,185,129,0.06)" },
+              { key: "capacity", name: t("chart.capacity"), stroke: "#525252", dashed: true },
+              { key: "utilization", name: t("chart.utilization"), stroke: "#10b981", fill: "rgba(16,185,129,0.06)" },
             ]}
           />
         </Card>
       </div>
 
       <Card>
-        <SectionHeader title="Team Performance" sub="Task completion by team" />
+        <SectionHeader title={t("dash.ops.performance")} sub={t("dash.ops.performanceSub")} />
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
           {teamData.map((t) => (
             <div key={t.name} className="p-3 bg-neutral-800/20 rounded-lg text-center">
@@ -793,6 +928,7 @@ function OperationsView() {
 }
 
 function FinancialView() {
+  const { t } = useLang();
   return (
     <div className="space-y-5">
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
@@ -803,27 +939,27 @@ function FinancialView() {
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <Card>
-          <SectionHeader title="Budget vs. Actual" sub="Q2 2026 (USD k)" />
+          <SectionHeader title={t("dash.fin.budget")} sub={t("dash.fin.budgetSub")} />
           <ChartBar
             data={budgetData}
             xKey="category"
             height={190}
             bars={[
-              { key: "budget", name: "Budget", color: "#262626" },
-              { key: "actual", name: "Actual", color: "#818cf8" },
+              { key: "budget", name: t("chart.budget"), color: "#262626" },
+              { key: "actual", name: t("chart.actual"), color: "#818cf8" },
             ]}
           />
         </Card>
 
         <Card>
-          <SectionHeader title="Cash Flow" sub="Monthly inflow vs. outflow (USD k)" />
+          <SectionHeader title={t("dash.fin.cashflow")} sub={t("dash.fin.cashflowSub")} />
           <ChartArea
             data={cashFlowData}
             xKey="month"
             height={190}
             series={[
-              { key: "inflow", name: "Inflow", stroke: "#10b981", fill: "rgba(16,185,129,0.08)" },
-              { key: "outflow", name: "Outflow", stroke: "#ef4444", fill: "rgba(239,68,68,0.08)" },
+              { key: "inflow", name: t("chart.inflow"), stroke: "#10b981", fill: "rgba(16,185,129,0.08)" },
+              { key: "outflow", name: t("chart.outflow"), stroke: "#ef4444", fill: "rgba(239,68,68,0.08)" },
             ]}
           />
         </Card>
@@ -831,7 +967,7 @@ function FinancialView() {
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <Card>
-          <SectionHeader title="Expense Breakdown" sub="By department (%)" />
+          <SectionHeader title={t("dash.fin.expense")} sub={t("dash.fin.expenseSub")} />
           <ChartDonut data={expenseBreakdown} size={120} />
           <div className="grid grid-cols-2 gap-1.5 mt-3">
             {expenseBreakdown.map((e) => (
@@ -844,7 +980,7 @@ function FinancialView() {
         </Card>
 
         <Card className="lg:col-span-2">
-          <SectionHeader title="P&L Summary" sub="Q2 2026" />
+          <SectionHeader title={t("dash.fin.pl")} sub={t("dash.fin.plSub")} />
           <div className="space-y-2 mt-1">
             {(dd("finPL").rows ?? []).map((row) => (
               <div key={row.label} className={`flex items-center justify-between py-2 ${row.highlight ? "border-t border-neutral-700 mt-1 pt-3" : "border-b border-neutral-800/40"}`}>
@@ -860,6 +996,8 @@ function FinancialView() {
 }
 
 function WeeklyReportView() {
+  const { t } = useLang();
+
   return (
     <div className="space-y-5">
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
@@ -870,36 +1008,36 @@ function WeeklyReportView() {
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <Card>
-          <SectionHeader title="Daily Task Completion" sub="Week of Jun 8–12, 2026" />
+          <SectionHeader title={t("dashboard.weeklyDailyTaskCompletion")} sub={t("dashboard.weeklyRange")} />
           <ChartBar
             data={dailyData}
             xKey="day"
             height={180}
             bars={[
-              { key: "tasks", name: "Tasks", color: "#818cf8" },
+              { key: "tasks", name: t("common.tasks"), color: "#818cf8" },
             ]}
           />
         </Card>
 
         <Card>
-          <SectionHeader title="Hours Logged per Day" sub="Team total" />
+          <SectionHeader title={t("dashboard.weeklyHoursLoggedPerDay")} sub={t("dashboard.teamTotal")} />
           <ChartArea
             data={dailyData}
             xKey="day"
             height={180}
             series={[
-              { key: "hours", name: "Hours", stroke: "#10b981", fill: "rgba(16,185,129,0.08)" },
+              { key: "hours", name: t("dashboard.hoursLabel"), stroke: "#10b981", fill: "rgba(16,185,129,0.08)" },
             ]}
           />
         </Card>
       </div>
 
       <Card>
-        <SectionHeader title="Week Summary" sub="Key wins and blockers" />
+        <SectionHeader title={t("dashboard.weekSummary")} sub={t("dashboard.weekSummarySub")} />
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           <div>
             <div className="text-emerald-400 text-[12px] font-['Lexend:SemiBold',_sans-serif] mb-2.5 flex items-center gap-1.5">
-              <TrendingUp size={12} /> Wins this week
+              <TrendingUp size={12} /> {t("dashboard.winsThisWeek")}
             </div>
             <div className="space-y-2">
               {(dd("weeklyReport").wins ?? []).map((w) => (
@@ -911,7 +1049,7 @@ function WeeklyReportView() {
           </div>
           <div>
             <div className="text-amber-400 text-[12px] font-['Lexend:SemiBold',_sans-serif] mb-2.5 flex items-center gap-1.5">
-              <Activity size={12} /> Active blockers
+              <Activity size={12} /> {t("dashboard.activeBlockers")}
             </div>
             <div className="space-y-2">
               {(dd("weeklyReport").blockers ?? []).map((b) => (
@@ -937,6 +1075,7 @@ const highlightIcons: Record<string, React.ReactNode> = {
 };
 
 function MonthlyInsightsView() {
+  const { t } = useLang();
   return (
     <div className="space-y-5">
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
@@ -946,21 +1085,21 @@ function MonthlyInsightsView() {
       </div>
 
       <Card>
-        <SectionHeader title="Monthly Delivery Trend" sub="Stories delivered vs. planned (6 months)" />
+        <SectionHeader title={t("dash.monthly.delivery")} sub={t("dash.monthly.deliverySub")} />
         <ChartArea
           data={monthlyTrend}
           xKey="month"
           height={200}
           series={[
-            { key: "delivered", name: "Delivered", stroke: "#818cf8", fill: "rgba(129,140,248,0.08)" },
-            { key: "planned", name: "Planned", stroke: "#525252", dashed: true },
+            { key: "delivered", name: t("chart.delivered"), stroke: "#818cf8", fill: "rgba(129,140,248,0.08)" },
+            { key: "planned", name: t("chart.planned"), stroke: "#525252", dashed: true },
           ]}
         />
       </Card>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <Card>
-          <SectionHeader title="Team Velocity" sub="Velocity % (delivered/planned)" />
+          <SectionHeader title={t("dash.monthly.velocity")} sub={t("dash.monthly.velocitySub")} />
           <div className="space-y-3">
             {monthlyTrend.map((m) => (
               <div key={m.month} className="flex items-center gap-3">
@@ -973,7 +1112,7 @@ function MonthlyInsightsView() {
         </Card>
 
         <Card>
-          <SectionHeader title="Monthly Highlights" sub="June 2026" />
+          <SectionHeader title={t("dash.monthly.highlights")} sub={t("dash.monthly.highlightsSub")} />
           <div className="space-y-3">
             {(dd("monthlyInsights").highlights ?? []).map((h) => (
               <div key={h.title} className="flex items-center justify-between p-3 bg-neutral-800/20 rounded-lg">
@@ -992,6 +1131,7 @@ function MonthlyInsightsView() {
 }
 
 function QuarterlyAnalysisView() {
+  const { t } = useLang();
   return (
     <div className="space-y-5">
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
@@ -1001,22 +1141,22 @@ function QuarterlyAnalysisView() {
       </div>
 
       <Card>
-        <SectionHeader title="Quarterly Revenue & Profit" sub="USD thousands" />
+        <SectionHeader title={t("dash.quarterly.revenue")} sub={t("dash.quarterly.revenueSub")} />
         <ChartArea
           data={quarterlyData}
           xKey="quarter"
           height={200}
           series={[
-            { key: "revenue", name: "Revenue", stroke: "#818cf8", fill: "rgba(129,140,248,0.08)" },
-            { key: "expenses", name: "Expenses", stroke: "#ef4444" },
-            { key: "profit", name: "Profit", stroke: "#10b981" },
+            { key: "revenue", name: t("chart.revenue"), stroke: "#818cf8", fill: "rgba(129,140,248,0.08)" },
+            { key: "expenses", name: t("chart.expenses"), stroke: "#ef4444" },
+            { key: "profit", name: t("chart.profit"), stroke: "#10b981" },
           ]}
         />
       </Card>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <Card>
-          <SectionHeader title="Q2 vs Q1 Comparison" sub="Key metrics" />
+          <SectionHeader title={t("dash.quarterly.comparison")} sub={t("dash.quarterly.comparisonSub")} />
           <div className="space-y-2">
             {(dd("quarterlyAnalysis").comparison ?? []).map((row) => (
               <div key={row.metric} className="grid grid-cols-3 items-center py-2 border-b border-neutral-800/40">
@@ -1032,7 +1172,7 @@ function QuarterlyAnalysisView() {
         </Card>
 
         <Card>
-          <SectionHeader title="Quarterly OKR Progress" sub="Q2 2026 Objectives" />
+          <SectionHeader title={t("dash.quarterly.okr")} sub={t("dash.quarterly.okrSub")} />
           <div className="space-y-4">
             {(dd("quarterlyAnalysis").okrs ?? []).map((o) => {
               const c = o.status === "ahead" ? "#818cf8" : o.status === "on-track" ? "#10b981" : "#f59e0b";
@@ -1057,6 +1197,7 @@ function QuarterlyAnalysisView() {
 }
 
 function PerformanceMetricsView() {
+  const { t } = useLang();
   return (
     <div className="space-y-5">
       <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
@@ -1067,7 +1208,7 @@ function PerformanceMetricsView() {
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <Card>
-          <SectionHeader title="Engineering Metrics" sub="Current month" />
+          <SectionHeader title={t("dash.perf.engineering")} sub={t("dash.perf.engineeringSub")} />
           <div className="space-y-3">
             {performanceMetrics.map((m) => (
               <div key={m.metric} className="flex items-center justify-between p-3 bg-neutral-800/20 rounded-lg">
@@ -1084,7 +1225,7 @@ function PerformanceMetricsView() {
         </Card>
 
         <Card>
-          <SectionHeader title="Top Performers" sub="By task completion score" />
+          <SectionHeader title={t("dash.perf.topPerformers")} sub={t("dash.perf.topPerformersSub")} />
           <div className="space-y-3">
             {performerData.map((p, i) => (
               <div key={p.name} className="flex items-center gap-3">
@@ -1105,7 +1246,7 @@ function PerformanceMetricsView() {
       </div>
 
       <Card>
-        <SectionHeader title="Team Performance Radar" sub="Score breakdown by category" />
+        <SectionHeader title={t("dash.perf.radar")} sub={t("dash.perf.radarSub")} />
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
           {(dd("performanceMetrics").radar ?? []).map((c) => (
             <div key={c.label} className="p-3 bg-neutral-800/20 rounded-lg">
@@ -1121,6 +1262,7 @@ function PerformanceMetricsView() {
 }
 
 function PredictiveAnalyticsView() {
+  const { t } = useLang();
   return (
     <div className="space-y-5">
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
@@ -1130,15 +1272,15 @@ function PredictiveAnalyticsView() {
       </div>
 
       <Card>
-        <SectionHeader title="Revenue Forecast — H2 2026" sub="AI-powered projection with confidence interval (USD k)" />
+        <SectionHeader title={t("dash.pred.forecast")} sub={t("dash.pred.forecastSub")} />
         <ChartArea
           data={forecastData}
           xKey="month"
           height={200}
           series={[
-            { key: "upper", name: "Upper bound", stroke: "transparent", fill: "rgba(129,140,248,0.12)" },
-            { key: "forecast", name: "Forecast", stroke: "#818cf8", dashed: true },
-            { key: "lower", name: "Lower bound", stroke: "#525252", dashed: true },
+            { key: "upper", name: t("chart.upperBound"), stroke: "transparent", fill: "rgba(129,140,248,0.12)" },
+            { key: "forecast", name: t("chart.forecast"), stroke: "#818cf8", dashed: true },
+            { key: "lower", name: t("chart.lowerBound"), stroke: "#525252", dashed: true },
           ]}
         />
         <div className="flex items-center gap-4 mt-3">
@@ -1149,7 +1291,7 @@ function PredictiveAnalyticsView() {
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <Card>
-          <SectionHeader title="Risk Register" sub="Identified risks & impact" />
+          <SectionHeader title={t("dash.pred.risks")} sub={t("dash.pred.risksSub")} />
           <div className="space-y-2">
             {riskItems.map((r) => (
               <div key={r.risk} className="flex items-start gap-3 p-3 bg-neutral-800/20 rounded-lg">
@@ -1167,7 +1309,7 @@ function PredictiveAnalyticsView() {
         </Card>
 
         <Card>
-          <SectionHeader title="Predictive Insights" sub="AI-generated recommendations" />
+          <SectionHeader title={t("dash.pred.insights")} sub={t("dash.pred.insightsSub")} />
           <div className="space-y-3">
             {(dd("predictive").insights ?? []).map((ins, i) => {
               const c = ins.severity === "high" ? "#ef4444" : ins.severity === "medium" ? "#f59e0b" : "#10b981";
@@ -1208,26 +1350,28 @@ function FocusedView({ title, subtitle, stats, children }: {
 
 // ── Executive sub-views ───────────────────────────────────────────────────────
 function ExecRevenueView() {
+  const { t } = useLang();
   return (
-    <FocusedView title="Revenue Overview" subtitle="Monthly actuals vs targets (USD k)"
+    <FocusedView title={t("sidebar.revenueOverview")} subtitle={t("dash.exec.revenueVsTargetSub")}
       stats={dd("execRevenue").stats ?? []}>
-      <Card><SectionHeader title="Revenue vs Target" sub="Monthly (USD k)" />
-        <ChartBar data={revenueData} bars={[{ key: "target", name: "Target", color: "#262626" }, { key: "revenue", name: "Revenue", color: "#818cf8" }]} xKey="month" height={200} />
+      <Card><SectionHeader title={t("dash.sub.revenueVsTarget")} sub={t("dash.sub.revenueVsTargetMonthlySub")} />
+        <ChartBar data={revenueData} bars={[{ key: "target", name: t("chart.target"), color: "#262626" }, { key: "revenue", name: t("chart.revenue"), color: "#818cf8" }]} xKey="month" height={200} />
       </Card>
-      <Card><SectionHeader title="Monthly Growth Rate" sub="MoM change %" />
-        <ChartArea data={dd("execRevenue").growth ?? []} series={[{ key: "growth", name: "Growth %", stroke: "#10b981", fill: "rgba(16,185,129,0.08)" }]} xKey="month" height={160} />
+      <Card><SectionHeader title={t("dash.sub.monthlyGrowth")} sub={t("dash.sub.monthlyGrowthSub")} />
+        <ChartArea data={dd("execRevenue").growth ?? []} series={[{ key: "growth", name: t("chart.growth"), stroke: "#10b981", fill: "rgba(16,185,129,0.08)" }]} xKey="month" height={160} />
       </Card>
     </FocusedView>
   );
 }
 
 function ExecKpisView() {
+  const { t } = useLang();
   const kpis = dd("execKpis").kpis ?? [];
   return (
-    <FocusedView title="Key Performance Indicators" subtitle="vs targets"
+    <FocusedView title={t("dash.exec.kpis")} subtitle={t("dash.exec.kpisSub")}
       stats={dd("execKpis").stats ?? []}>
       <Card>
-        <SectionHeader title="KPI Dashboard" sub="Current performance vs targets" />
+        <SectionHeader title={t("dash.sub.kpiDashboard")} sub={t("dash.sub.kpiDashboardSub")} />
         <div className="space-y-4 mt-2">
           {kpis.map((k) => (
             <div key={k.name}>
@@ -1245,13 +1389,14 @@ function ExecKpisView() {
 }
 
 function ExecGoalsView() {
+  const { t } = useLang();
   const goals = dd("execGoals").goals ?? [];
   const c = (s: string) => s === "ahead" ? "#818cf8" : s === "on-track" ? "#10b981" : "#f59e0b";
   return (
-    <FocusedView title="Strategic Goals Progress" subtitle="2026 initiatives"
+    <FocusedView title={t("sidebar.strategicGoalsProgress")} subtitle={t("dash.exec.goalsSub")}
       stats={dd("execGoals").stats ?? []}>
       <Card>
-        <SectionHeader title="Goal Tracker" sub="Progress and status" />
+        <SectionHeader title={t("dash.sub.goalTracker")} sub={t("dash.sub.goalTrackerSub")} />
         <div className="space-y-4">
           {goals.map((g) => (
             <div key={g.goal} className="p-3 bg-neutral-800/20 rounded-lg">
@@ -1275,9 +1420,10 @@ function ExecGoalsView() {
 }
 
 function ExecDepartmentsView() {
+  const { t } = useLang();
   const depts = dd("execDepartments").depts ?? [];
   return (
-    <FocusedView title="Department Highlights" subtitle="Month-over-month performance"
+    <FocusedView title={t("sidebar.departmentHighlights")} subtitle={t("dash.exec.departmentsSub")}
       stats={dd("execDepartments").stats ?? []}>
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
         {depts.map((d) => (
@@ -1300,13 +1446,14 @@ function ExecDepartmentsView() {
 
 // ── Operations sub-views ──────────────────────────────────────────────────────
 function OpsTimelineView() {
+  const { t } = useLang();
   const projects = dd("opsTimeline").projects ?? [];
   const sc = (s: string) => ({ "in-progress": "#f59e0b", "completed": "#10b981", "planning": "#818cf8", "review": "#3b82f6" }[s] ?? "#525252");
   return (
-    <FocusedView title="Project Timeline" subtitle="Active project schedules"
+    <FocusedView title={t("sidebar.projectTimeline")} subtitle={t("dash.ops.timelineSub")}
       stats={dd("opsTimeline").stats ?? []}>
       <Card>
-        <SectionHeader title="Project Gantt" sub="Relative timeline (% of quarter)" />
+        <SectionHeader title={t("dash.sub.gantt")} sub={t("dash.sub.ganttSub")} />
         <div className="space-y-4 mt-2">
           {projects.map((p) => (
             <div key={p.project}>
@@ -1326,12 +1473,13 @@ function OpsTimelineView() {
 }
 
 function OpsResourcesView() {
+  const { t } = useLang();
   const resources = dd("opsResources").resources ?? [];
   return (
-    <FocusedView title="Resource Allocation" subtitle="Team utilization rates"
+    <FocusedView title={t("sidebar.resourceAllocation")} subtitle={t("dash.ops.resourcesSub")}
       stats={dd("opsResources").stats ?? []}>
       <Card>
-        <SectionHeader title="Utilization by Team" sub="Allocated vs. available %" />
+        <SectionHeader title={t("dash.sub.utilization")} sub={t("dash.sub.utilizationSub")} />
         <div className="space-y-4 mt-2">
           {resources.map((r) => (
             <div key={r.team} className="p-3 bg-neutral-800/20 rounded-lg">
@@ -1356,12 +1504,13 @@ function OpsResourcesView() {
 }
 
 function OpsPerformanceView() {
+  const { t } = useLang();
   return (
-    <FocusedView title="Team Performance" subtitle="Cross-team completion metrics"
+    <FocusedView title={t("sidebar.teamPerformance")} subtitle={t("dash.ops.performanceSub")}
       stats={dd("opsPerformance").stats ?? []}>
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <Card>
-          <SectionHeader title="Team Scorecard" sub="This sprint" />
+          <SectionHeader title={t("dash.sub.scorecard")} sub={t("dash.sub.scorecardSub")} />
           <div className="space-y-3">
             {(dd("opsPerformance").scorecard ?? []).map((t) => (
               <div key={t.team} className="flex items-center gap-3">
@@ -1373,10 +1522,10 @@ function OpsPerformanceView() {
           </div>
         </Card>
         <Card>
-          <SectionHeader title="Sprint History" sub="Completion % by sprint" />
+          <SectionHeader title={t("dash.sub.sprintHistory")} sub={t("dash.sub.sprintHistorySub")} />
           <ChartArea data={dd("opsPerformance").sprintHistory ?? []} series={[
-            { key: "eng", name: "Engineering", stroke: "#818cf8", fill: "rgba(129,140,248,0.08)" },
-            { key: "design", name: "Design", stroke: "#10b981", fill: "rgba(16,185,129,0.06)" },
+            { key: "eng", name: t("chart.engineering"), stroke: "#818cf8", fill: "rgba(129,140,248,0.08)" },
+            { key: "design", name: t("chart.design"), stroke: "#10b981", fill: "rgba(16,185,129,0.06)" },
           ]} xKey="sprint" height={160} />
         </Card>
       </div>
@@ -1385,18 +1534,19 @@ function OpsPerformanceView() {
 }
 
 function OpsCapacityView() {
+  const { t } = useLang();
   return (
-    <FocusedView title="Capacity Planning" subtitle="Team bandwidth forecast"
+    <FocusedView title={t("sidebar.capacityPlanning")} subtitle={t("dash.ops.capacitySub")}
       stats={dd("opsCapacity").stats ?? []}>
       <Card>
-        <SectionHeader title="Capacity vs. Demand" sub="6-week forecast (story points)" />
+        <SectionHeader title={t("dash.sub.capacityDemand")} sub={t("dash.sub.capacityDemandSub")} />
         <ChartArea data={dd("opsCapacity").series ?? []} series={[
-          { key: "capacity", name: "Capacity", stroke: "#525252", dashed: true },
-          { key: "demand", name: "Demand", stroke: "#10b981", fill: "rgba(16,185,129,0.08)" },
+          { key: "capacity", name: t("chart.capacity"), stroke: "#525252", dashed: true },
+          { key: "demand", name: t("chart.demand"), stroke: "#10b981", fill: "rgba(16,185,129,0.08)" },
         ]} xKey="week" height={180} />
       </Card>
       <Card>
-        <SectionHeader title="Hiring Plan Impact" sub="Headcount additions vs capacity gain" />
+        <SectionHeader title={t("dash.sub.hiringImpact")} sub={t("dash.sub.hiringImpactSub")} />
         <div className="space-y-3">
           {(dd("opsCapacity").hiringPlan ?? []).map((h) => (
             <div key={h.role} className="flex items-center justify-between p-3 bg-neutral-800/20 rounded-lg">
@@ -1412,16 +1562,17 @@ function OpsCapacityView() {
 
 // ── Financial sub-views ───────────────────────────────────────────────────────
 function FinBudgetView() {
+  const { t } = useLang();
   const data = budgetData;
   return (
-    <FocusedView title="Budget vs Actual" subtitle="Q2 2026 departmental spend (USD k)"
+    <FocusedView title={t("sidebar.budgetVsActual")} subtitle={t("dash.fin.budgetSub")}
       stats={dd("finBudget").stats ?? []}>
       <Card>
-        <SectionHeader title="Department Budget Comparison" sub="Budget vs actual (USD k)" />
-        <ChartBar data={data} bars={[{ key: "budget", name: "Budget", color: "#262626" }, { key: "actual", name: "Actual", color: "#818cf8" }]} xKey="category" height={200} />
+        <SectionHeader title={t("dash.sub.deptBudget")} sub={t("dash.sub.deptBudgetSub")} />
+        <ChartBar data={data} bars={[{ key: "budget", name: t("chart.budget"), color: "#262626" }, { key: "actual", name: t("chart.actual"), color: "#818cf8" }]} xKey="category" height={200} />
       </Card>
       <Card>
-        <SectionHeader title="Budget Variance" sub="Over/under per department" />
+        <SectionHeader title={t("dash.sub.budgetVariance")} sub={t("dash.sub.budgetVarianceSub")} />
         <div className="space-y-2">
           {data.map((d) => {
             const diff = d.actual - d.budget;
@@ -1445,34 +1596,36 @@ function FinBudgetView() {
 }
 
 function FinCashflowView() {
+  const { t } = useLang();
   const data = cashFlowData;
   return (
-    <FocusedView title="Cash Flow Analysis" subtitle="Monthly inflow vs outflow (USD k)"
+    <FocusedView title={t("sidebar.cashFlowAnalysis")} subtitle={t("dash.fin.cashflowSub")}
       stats={dd("finCashflow").stats ?? []}>
       <Card>
-        <SectionHeader title="Cash Flow Trend" sub="H1 2026 (USD k)" />
+        <SectionHeader title={t("dash.sub.cashflowTrend")} sub={t("dash.sub.cashflowTrendSub")} />
         <ChartArea data={data} series={[
-          { key: "inflow", name: "Inflow", stroke: "#10b981", fill: "rgba(16,185,129,0.08)" },
-          { key: "outflow", name: "Outflow", stroke: "#ef4444", fill: "rgba(239,68,68,0.06)" },
+          { key: "inflow", name: t("chart.inflow"), stroke: "#10b981", fill: "rgba(16,185,129,0.08)" },
+          { key: "outflow", name: t("chart.outflow"), stroke: "#ef4444", fill: "rgba(239,68,68,0.06)" },
         ]} xKey="month" height={200} />
       </Card>
       <Card>
-        <SectionHeader title="Net Cash Flow" sub="Inflow minus outflow (USD k)" />
+        <SectionHeader title={t("dash.sub.netCashflow")} sub={t("dash.sub.netCashflowSub")} />
         <ChartBar data={data.map(d => ({ month: d.month, net: d.inflow - d.outflow }))}
-          bars={[{ key: "net", name: "Net", color: "#818cf8" }]} xKey="month" height={160} />
+          bars={[{ key: "net", name: t("chart.net"), color: "#818cf8" }]} xKey="month" height={160} />
       </Card>
     </FocusedView>
   );
 }
 
 function FinExpenseView() {
+  const { t } = useLang();
   const breakdown = expenseBreakdown;
   return (
-    <FocusedView title="Expense Breakdown" subtitle="By department — Q2 2026"
+    <FocusedView title={t("sidebar.expenseBreakdown")} subtitle={t("dash.fin.expenseSub")}
       stats={dd("finExpense").stats ?? []}>
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <Card>
-          <SectionHeader title="Expense Distribution" sub="% of total" />
+          <SectionHeader title={t("dash.sub.expenseDist")} sub={t("dash.sub.expenseDistSub")} />
           <ChartDonut data={breakdown} size={160} />
           <div className="grid grid-cols-2 gap-1.5 mt-3">
             {breakdown.map((b) => (
@@ -1484,10 +1637,10 @@ function FinExpenseView() {
           </div>
         </Card>
         <Card>
-          <SectionHeader title="MoM Expense Trend" sub="By category (USD k)" />
+          <SectionHeader title={t("dash.sub.expenseTrend")} sub={t("dash.sub.expenseTrendSub")} />
           <ChartArea data={dd("finExpense").trend ?? []} series={[
-            { key: "eng", name: "Engineering", stroke: "#818cf8", fill: "rgba(129,140,248,0.08)" },
-            { key: "mktg", name: "Marketing", stroke: "#10b981", fill: "rgba(16,185,129,0.06)" },
+            { key: "eng", name: t("chart.engineering"), stroke: "#818cf8", fill: "rgba(129,140,248,0.08)" },
+            { key: "mktg", name: t("chart.marketing"), stroke: "#10b981", fill: "rgba(16,185,129,0.06)" },
           ]} xKey="month" height={180} />
         </Card>
       </div>
@@ -1496,12 +1649,13 @@ function FinExpenseView() {
 }
 
 function FinPLView() {
+  const { t } = useLang();
   const rows = dd("finPL").rows ?? [];
   return (
-    <FocusedView title="Profit & Loss Summary" subtitle="Q2 2026"
+    <FocusedView title={t("sidebar.profitLossSummary")} subtitle={t("dash.fin.plSub")}
       stats={dd("finPL").stats ?? []}>
       <Card>
-        <SectionHeader title="P&L Statement" sub="Q2 2026" />
+        <SectionHeader title={t("dash.sub.plStatement")} sub={t("dash.fin.plSub")} />
         <div className="space-y-1.5 mt-2">
           {rows.map((r) => (
             <div key={r.label} className={`flex items-center justify-between py-2.5 ${r.highlight ? "border-t border-neutral-700 mt-2 pt-3" : "border-b border-neutral-800/40"}`}>
@@ -1517,17 +1671,18 @@ function FinPLView() {
 
 // ── Weekly sub-views ──────────────────────────────────────────────────────────
 function WeeklyProductivityView() {
+  const { t } = useLang();
   return (
-    <FocusedView title="Team Productivity" subtitle="Week of Jun 8–12, 2026"
+    <FocusedView title={t("sidebar.teamProductivity")} subtitle={t("dashboard.weeklyRange")}
       stats={dd("weeklyProductivity").stats ?? []}>
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <Card>
-          <SectionHeader title="Daily Task Output" sub="Tasks completed per day" />
-          <ChartBar data={dailyData} bars={[{ key: "tasks", name: "Tasks", color: "#818cf8" }]} xKey="day" height={160} />
+          <SectionHeader title={t("dash.sub.dailyTaskOutput")} sub={t("dash.sub.dailyTaskOutputSub")} />
+          <ChartBar data={dailyData} bars={[{ key: "tasks", name: t("chart.tasks"), color: "#818cf8" }]} xKey="day" height={160} />
         </Card>
         <Card>
-          <SectionHeader title="Hours Logged" sub="Team total per day" />
-          <ChartArea data={dailyData} series={[{ key: "hours", name: "Hours", stroke: "#10b981", fill: "rgba(16,185,129,0.08)" }]} xKey="day" height={160} />
+          <SectionHeader title={t("dash.sub.hoursLogged")} sub={t("dash.sub.hoursLoggedSub")} />
+          <ChartArea data={dailyData} series={[{ key: "hours", name: t("chart.hours"), stroke: "#10b981", fill: "rgba(16,185,129,0.08)" }]} xKey="day" height={160} />
         </Card>
       </div>
     </FocusedView>
@@ -1535,12 +1690,13 @@ function WeeklyProductivityView() {
 }
 
 function WeeklyCompletionView() {
+  const { t } = useLang();
   const projects = dd("weeklyCompletion").projects ?? [];
   return (
-    <FocusedView title="Project Completion" subtitle="Week of Jun 8–12"
+    <FocusedView title={t("sidebar.projectCompletion")} subtitle={t("dashboard.weeklyRange")}
       stats={dd("weeklyCompletion").stats ?? []}>
       <Card>
-        <SectionHeader title="Project Completion Rate" sub="Planned vs. completed tasks" />
+        <SectionHeader title={t("dash.sub.completionRate")} sub={t("dash.sub.completionRateSub")} />
         <div className="space-y-4">
           {projects.map((p) => (
             <div key={p.project} className="p-3 bg-neutral-800/20 rounded-lg">
@@ -1561,16 +1717,17 @@ function WeeklyCompletionView() {
 }
 
 function WeeklyBudgetView() {
+  const { t } = useLang();
   return (
-    <FocusedView title="Budget Utilization" subtitle="Week of Jun 8–12"
+    <FocusedView title={t("sidebar.budgetUtilization")} subtitle={t("dashboard.weeklyRange")}
       stats={dd("weeklyBudget").stats ?? []}>
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <Card>
-          <SectionHeader title="Daily Spend" sub="USD thousands" />
+          <SectionHeader title={t("dash.sub.dailySpend")} sub={t("dash.sub.dailySpendSub")} />
           <ChartBar data={dd("weeklyBudget").dailySpend ?? []} bars={[{ key: "spend", name: "Spend ($k)", color: "#818cf8" }]} xKey="day" height={160} />
         </Card>
         <Card>
-          <SectionHeader title="Spend by Category" sub="This week" />
+          <SectionHeader title={t("dash.sub.spendCategory")} sub={t("dash.sub.spendCategorySub")} />
           <div className="space-y-3 mt-2">
             {(dd("weeklyBudget").categories ?? []).map((c) => (
               <div key={c.cat} className="flex items-center gap-2">
@@ -1587,16 +1744,17 @@ function WeeklyBudgetView() {
 }
 
 function WeeklySatisfactionView() {
+  const { t } = useLang();
   return (
-    <FocusedView title="Client Satisfaction" subtitle="Week of Jun 8–12"
+    <FocusedView title={t("sidebar.clientSatisfaction")} subtitle={t("dashboard.weeklyRange")}
       stats={dd("weeklySatisfaction").stats ?? []}>
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <Card>
-          <SectionHeader title="CSAT Trend" sub="Daily average score (out of 5)" />
+          <SectionHeader title={t("dash.sub.csatTrend")} sub={t("dash.sub.csatTrendSub")} />
           <ChartArea data={dd("weeklySatisfaction").csatTrend ?? []} series={[{ key: "score", name: "CSAT", stroke: "#818cf8", fill: "rgba(129,140,248,0.08)" }]} xKey="day" height={160} />
         </Card>
         <Card>
-          <SectionHeader title="Top Feedback Themes" sub="This week" />
+          <SectionHeader title={t("dash.sub.feedbackThemes")} sub={t("dash.sub.feedbackThemesSub")} />
           <div className="space-y-3 mt-2">
             {(dd("weeklySatisfaction").themes ?? []).map((f) => (
               <div key={f.theme} className="flex items-center justify-between p-2.5 bg-neutral-800/20 rounded-lg">
@@ -1613,15 +1771,16 @@ function WeeklySatisfactionView() {
 
 // ── Monthly sub-views ─────────────────────────────────────────────────────────
 function MonthlyRevenueView() {
+  const { t } = useLang();
   return (
-    <FocusedView title="Revenue Growth" subtitle="June 2026 analysis"
+    <FocusedView title={t("sidebar.revenueGrowth")} subtitle={t("dash.monthly.highlightsSub")}
       stats={dd("monthlyRevenue").stats ?? []}>
       <Card>
-        <SectionHeader title="Revenue Growth Trend" sub="Monthly (USD k)" />
-        <ChartArea data={dd("monthlyRevenue").trend ?? []} series={[{ key: "revenue", name: "Revenue", stroke: "#818cf8", fill: "rgba(129,140,248,0.08)" }]} xKey="month" height={200} />
+        <SectionHeader title={t("dash.sub.revenueGrowth")} sub={t("dash.sub.revenueGrowthSub")} />
+        <ChartArea data={dd("monthlyRevenue").trend ?? []} series={[{ key: "revenue", name: t("chart.revenue"), stroke: "#818cf8", fill: "rgba(129,140,248,0.08)" }]} xKey="month" height={200} />
       </Card>
       <Card>
-        <SectionHeader title="Revenue by Channel" sub="June 2026" />
+        <SectionHeader title={t("dash.sub.revenueChannel")} sub={t("dash.monthly.highlightsSub")} />
         <div className="space-y-3">
           {(dd("monthlyRevenue").channels ?? []).map((c) => (
             <div key={c.channel} className="flex items-center gap-3">
@@ -1638,16 +1797,17 @@ function MonthlyRevenueView() {
 }
 
 function MonthlyClientsView() {
+  const { t } = useLang();
   return (
-    <FocusedView title="New Clients" subtitle="June 2026 acquisition"
+    <FocusedView title={t("sidebar.newClients")} subtitle={t("dash.monthly.highlightsSub")}
       stats={dd("monthlyClients").stats ?? []}>
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <Card>
-          <SectionHeader title="New Client Trend" sub="Monthly acquisitions" />
-          <ChartBar data={dd("monthlyClients").trend ?? []} bars={[{ key: "clients", name: "New Clients", color: "#818cf8" }]} xKey="month" height={160} />
+          <SectionHeader title={t("dash.sub.newClientTrend")} sub={t("dash.sub.newClientTrendSub")} />
+          <ChartBar data={dd("monthlyClients").trend ?? []} bars={[{ key: "clients", name: t("chart.newClients"), color: "#818cf8" }]} xKey="month" height={160} />
         </Card>
         <Card>
-          <SectionHeader title="Acquisition by Segment" sub="June 2026" />
+          <SectionHeader title={t("dash.sub.acquisitionSegment")} sub={t("dash.monthly.highlightsSub")} />
           <div className="space-y-3 mt-2">
             {(dd("monthlyClients").segments ?? []).map((s) => (
               <div key={s.seg} className="flex items-center justify-between p-3 bg-neutral-800/20 rounded-lg">
@@ -1663,17 +1823,18 @@ function MonthlyClientsView() {
 }
 
 function MonthlyExpansionView() {
+  const { t } = useLang();
   return (
-    <FocusedView title="Team Expansion" subtitle="Headcount growth — June 2026"
+    <FocusedView title={t("sidebar.teamExpansion")} subtitle={t("dash.monthly.highlightsSub")}
       stats={dd("monthlyExpansion").stats ?? []}>
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <Card>
-          <SectionHeader title="Headcount Growth" sub="Monthly" />
-          <ChartArea data={dd("monthlyExpansion").headcount ?? []} series={[{ key: "hc", name: "Headcount", stroke: "#818cf8", fill: "rgba(129,140,248,0.08)" }]} xKey="month" height={160} />
+          <SectionHeader title={t("dash.sub.headcountGrowth")} sub={t("dash.sub.headcountGrowthSub")} />
+          <ChartArea data={dd("monthlyExpansion").headcount ?? []} series={[{ key: "hc", name: t("chart.headcount"), stroke: "#818cf8", fill: "rgba(129,140,248,0.08)" }]} xKey="month" height={160} />
         </Card>
         <Card>
-          <SectionHeader title="Hires by Department" sub="June 2026" />
-          <ChartBar data={dd("monthlyExpansion").hires ?? []} bars={[{ key: "hires", name: "New Hires", color: "#10b981" }]} xKey="dept" height={160} />
+          <SectionHeader title={t("dash.sub.hiresDept")} sub={t("dash.monthly.highlightsSub")} />
+          <ChartBar data={dd("monthlyExpansion").hires ?? []} bars={[{ key: "hires", name: t("chart.newHires"), color: "#10b981" }]} xKey="dept" height={160} />
         </Card>
       </div>
     </FocusedView>
@@ -1681,15 +1842,16 @@ function MonthlyExpansionView() {
 }
 
 function MonthlyCostView() {
+  const { t } = useLang();
   return (
-    <FocusedView title="Cost Reduction" subtitle="Savings initiatives — June 2026"
+    <FocusedView title={t("sidebar.costReduction")} subtitle={t("dash.monthly.highlightsSub")}
       stats={dd("monthlyCost").stats ?? []}>
       <Card>
-        <SectionHeader title="Savings Trend" sub="Monthly cost reduction (USD k)" />
-        <ChartArea data={dd("monthlyCost").savings ?? []} series={[{ key: "savings", name: "Savings ($k)", stroke: "#10b981", fill: "rgba(16,185,129,0.08)" }]} xKey="month" height={180} />
+        <SectionHeader title={t("dash.sub.savingsTrend")} sub={t("dash.sub.savingsTrendSub")} />
+        <ChartArea data={dd("monthlyCost").savings ?? []} series={[{ key: "savings", name: t("chart.savings"), stroke: "#10b981", fill: "rgba(16,185,129,0.08)" }]} xKey="month" height={180} />
       </Card>
       <Card>
-        <SectionHeader title="Cost Reduction Initiatives" sub="Active programs" />
+        <SectionHeader title={t("dash.sub.costReduction")} sub={t("dash.sub.costReductionSub")} />
         <div className="space-y-3">
           {(dd("monthlyCost").initiatives ?? []).map((i) => (
             <div key={i.initiative} className="flex items-center justify-between p-3 bg-neutral-800/20 rounded-lg">
@@ -1705,15 +1867,16 @@ function MonthlyCostView() {
 
 // ── Quarterly sub-views ───────────────────────────────────────────────────────
 function QuarterlyMarketView() {
+  const { t } = useLang();
   return (
-    <FocusedView title="Market Position" subtitle="Q2 2026 competitive landscape"
+    <FocusedView title={t("sidebar.marketPosition")} subtitle={t("dash.quarterly.revenueSub")}
       stats={dd("quarterlyMarket").stats ?? []}>
       <Card>
-        <SectionHeader title="Market Share Trend" sub="Quarterly %" />
-        <ChartArea data={dd("quarterlyMarket").shareTrend ?? []} series={[{ key: "share", name: "Market Share %", stroke: "#818cf8", fill: "rgba(129,140,248,0.08)" }]} xKey="q" height={180} />
+        <SectionHeader title={t("dash.sub.marketShare")} sub={t("dash.sub.marketShareSub")} />
+        <ChartArea data={dd("quarterlyMarket").shareTrend ?? []} series={[{ key: "share", name: t("chart.marketShare"), stroke: "#818cf8", fill: "rgba(129,140,248,0.08)" }]} xKey="q" height={180} />
       </Card>
       <Card>
-        <SectionHeader title="Competitive Positioning" sub="vs. top competitors" />
+        <SectionHeader title={t("dash.sub.competitive")} sub={t("dash.sub.competitiveSub")} />
         <div className="space-y-3">
           {(dd("quarterlyMarket").competitors ?? []).map((c) => (
             <div key={c.company} className="flex items-center gap-3">
@@ -1729,16 +1892,17 @@ function QuarterlyMarketView() {
 }
 
 function QuarterlyROIView() {
+  const { t } = useLang();
   return (
-    <FocusedView title="Return on Investment" subtitle="Q2 2026 ROI analysis"
+    <FocusedView title={t("sidebar.roi")} subtitle={t("dash.quarterly.revenueSub")}
       stats={dd("quarterlyROI").stats ?? []}>
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <Card>
-          <SectionHeader title="ROI by Investment Area" sub="Q2 2026" />
+          <SectionHeader title={t("dash.sub.roiArea")} sub={t("dash.quarterly.revenueSub")} />
           <ChartBar data={dd("quarterlyROI").byArea ?? []} bars={[{ key: "roi", name: "ROI %", color: "#818cf8" }]} xKey="area" height={180} />
         </Card>
         <Card>
-          <SectionHeader title="ROI Trend" sub="Quarterly overall ROI %" />
+          <SectionHeader title={t("dash.sub.roiTrend")} sub={t("dash.sub.roiTrendSub")} />
           <ChartArea data={dd("quarterlyROI").trend ?? []} series={[{ key: "roi", name: "ROI %", stroke: "#10b981", fill: "rgba(16,185,129,0.08)" }]} xKey="q" height={180} />
         </Card>
       </div>
@@ -1747,16 +1911,17 @@ function QuarterlyROIView() {
 }
 
 function QuarterlyRetentionView() {
+  const { t } = useLang();
   const churnReasons = dd("quarterlyRetention").churnReasons ?? [];
   return (
-    <FocusedView title="Customer Retention" subtitle="Q2 2026 cohort analysis"
+    <FocusedView title={t("sidebar.customerRetention")} subtitle={t("dash.quarterly.revenueSub")}
       stats={dd("quarterlyRetention").stats ?? []}>
       <Card>
-        <SectionHeader title="Retention Trend" sub="Quarterly cohort retention %" />
-        <ChartArea data={dd("quarterlyRetention").trend ?? []} series={[{ key: "ret", name: "Retention %", stroke: "#10b981", fill: "rgba(16,185,129,0.08)" }]} xKey="q" height={180} />
+        <SectionHeader title={t("dash.sub.retentionTrend")} sub={t("dash.sub.retentionTrendSub")} />
+        <ChartArea data={dd("quarterlyRetention").trend ?? []} series={[{ key: "ret", name: t("chart.retention"), stroke: "#10b981", fill: "rgba(16,185,129,0.08)" }]} xKey="q" height={180} />
       </Card>
       <Card>
-        <SectionHeader title="Churn Reasons" sub={`${churnReasons.reduce((a, r) => a + r.count, 0)} churned accounts`} />
+        <SectionHeader title={t("dash.sub.churnReasons")} sub={`${churnReasons.reduce((a, r) => a + r.count, 0)} churned accounts`} />
         <div className="space-y-3 mt-2">
           {churnReasons.map((r) => (
             <div key={r.reason} className="flex items-center gap-2">
@@ -1772,16 +1937,17 @@ function QuarterlyRetentionView() {
 }
 
 function QuarterlyInnovationView() {
+  const { t } = useLang();
   return (
-    <FocusedView title="Innovation Index" subtitle="Q2 2026 R&D and product metrics"
+    <FocusedView title={t("sidebar.innovationIndex")} subtitle={t("dash.quarterly.revenueSub")}
       stats={dd("quarterlyInnovation").stats ?? []}>
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <Card>
-          <SectionHeader title="Features Shipped per Quarter" sub="" />
-          <ChartBar data={dd("quarterlyInnovation").features ?? []} bars={[{ key: "features", name: "Features", color: "#818cf8" }]} xKey="q" height={160} />
+          <SectionHeader title={t("dash.sub.featuresShipped")} sub="" />
+          <ChartBar data={dd("quarterlyInnovation").features ?? []} bars={[{ key: "features", name: t("chart.features"), color: "#818cf8" }]} xKey="q" height={160} />
         </Card>
         <Card>
-          <SectionHeader title="Innovation Breakdown" sub="Q2 2026" />
+          <SectionHeader title={t("dash.sub.innovationBreakdown")} sub={t("dash.sub.innovationBreakdownSub")} />
           <div className="space-y-3 mt-2">
             {(dd("quarterlyInnovation").breakdown ?? []).map((a) => (
               <div key={a.area} className="flex items-center gap-2">
@@ -1799,11 +1965,12 @@ function QuarterlyInnovationView() {
 
 // ── Performance Metrics sub-views ─────────────────────────────────────────────
 function PerfSalesView() {
+  const { t } = useLang();
   return (
-    <FocusedView title="Sales Conversion" subtitle="Funnel analysis — June 2026"
+    <FocusedView title={t("sidebar.salesConversion")} subtitle={t("dash.monthly.highlightsSub")}
       stats={dd("perfSales").stats ?? []}>
       <Card>
-        <SectionHeader title="Conversion Funnel" sub="June 2026" />
+        <SectionHeader title={t("dash.sub.conversionFunnel")} sub={t("dash.monthly.highlightsSub")} />
         <div className="space-y-3 mt-2">
           {(dd("perfSales").funnel ?? []).map((s) => (
             <div key={s.stage} className="flex items-center gap-3">
@@ -1815,20 +1982,21 @@ function PerfSalesView() {
         </div>
       </Card>
       <Card>
-        <SectionHeader title="Monthly Win Rate Trend" sub="%" />
-        <ChartArea data={dd("perfSales").winRateTrend ?? []} series={[{ key: "rate", name: "Win Rate %", stroke: "#10b981", fill: "rgba(16,185,129,0.08)" }]} xKey="month" height={160} />
+        <SectionHeader title={t("dash.sub.winRateTrend")} sub="%" />
+        <ChartArea data={dd("perfSales").winRateTrend ?? []} series={[{ key: "rate", name: t("chart.winRate"), stroke: "#10b981", fill: "rgba(16,185,129,0.08)" }]} xKey="month" height={160} />
       </Card>
     </FocusedView>
   );
 }
 
 function PerfResponseView() {
+  const { t } = useLang();
   return (
-    <FocusedView title="Lead Response Time" subtitle="Speed-to-lead metrics"
+    <FocusedView title={t("sidebar.leadResponseTime")} subtitle={t("dash.perf.engineeringSub")}
       stats={dd("perfResponse").stats ?? []}>
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <Card>
-          <SectionHeader title="Response Time Distribution" sub="% of leads" />
+          <SectionHeader title={t("dash.sub.responseTimeDist")} sub={t("dash.sub.responseTimeDistSub")} />
           <div className="space-y-3 mt-2">
             {(dd("perfResponse").distribution ?? []).map((r) => (
               <div key={r.range} className="flex items-center gap-2">
@@ -1840,8 +2008,8 @@ function PerfResponseView() {
           </div>
         </Card>
         <Card>
-          <SectionHeader title="Avg. Response Time Trend" sub="Hours" />
-          <ChartArea data={dd("perfResponse").trend ?? []} series={[{ key: "hrs", name: "Hours", stroke: "#818cf8", fill: "rgba(129,140,248,0.08)" }]} xKey="month" height={180} />
+          <SectionHeader title={t("dash.sub.avgResponseTime")} sub={t("dash.sub.avgResponseTimeSub")} />
+          <ChartArea data={dd("perfResponse").trend ?? []} series={[{ key: "hrs", name: t("chart.hours"), stroke: "#818cf8", fill: "rgba(129,140,248,0.08)" }]} xKey="month" height={180} />
         </Card>
       </div>
     </FocusedView>
@@ -1849,32 +2017,34 @@ function PerfResponseView() {
 }
 
 function PerfCLVView() {
+  const { t } = useLang();
   return (
-    <FocusedView title="Customer Lifetime Value" subtitle="CLV analysis by cohort"
+    <FocusedView title={t("sidebar.customerLifetimeValue")} subtitle={t("dash.perf.engineeringSub")}
       stats={dd("perfCLV").stats ?? []}>
       <Card>
-        <SectionHeader title="CLV Trend" sub="Average per customer cohort (USD k)" />
-        <ChartArea data={dd("perfCLV").trend ?? []} series={[{ key: "clv", name: "Avg. CLV ($k)", stroke: "#818cf8", fill: "rgba(129,140,248,0.08)" }]} xKey="q" height={180} />
+        <SectionHeader title={t("dash.sub.clvTrend")} sub={t("dash.sub.clvTrendSub")} />
+        <ChartArea data={dd("perfCLV").trend ?? []} series={[{ key: "clv", name: t("chart.avgCLV"), stroke: "#818cf8", fill: "rgba(129,140,248,0.08)" }]} xKey="q" height={180} />
       </Card>
       <Card>
-        <SectionHeader title="CLV by Segment" sub="Average (USD k)" />
-        <ChartBar data={dd("perfCLV").bySegment ?? []} bars={[{ key: "clv", name: "Avg. CLV", color: "#818cf8" }]} xKey="seg" height={160} />
+        <SectionHeader title={t("dash.sub.clvSegment")} sub={t("dash.sub.clvSegmentSub")} />
+        <ChartBar data={dd("perfCLV").bySegment ?? []} bars={[{ key: "clv", name: t("chart.avgCLVShort"), color: "#818cf8" }]} xKey="seg" height={160} />
       </Card>
     </FocusedView>
   );
 }
 
 function PerfChurnView() {
+  const { t } = useLang();
   return (
-    <FocusedView title="Churn Rate" subtitle="Customer churn analysis"
+    <FocusedView title={t("sidebar.churnRate")} subtitle={t("dash.perf.engineeringSub")}
       stats={dd("perfChurn").stats ?? []}>
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <Card>
-          <SectionHeader title="Monthly Churn Rate Trend" sub="%" />
-          <ChartArea data={dd("perfChurn").trend ?? []} series={[{ key: "churn", name: "Churn %", stroke: "#ef4444", fill: "rgba(239,68,68,0.06)" }]} xKey="month" height={160} />
+          <SectionHeader title={t("dash.sub.churnRateTrend")} sub="%" />
+          <ChartArea data={dd("perfChurn").trend ?? []} series={[{ key: "churn", name: t("chart.churn"), stroke: "#ef4444", fill: "rgba(239,68,68,0.06)" }]} xKey="month" height={160} />
         </Card>
         <Card>
-          <SectionHeader title="At-Risk Accounts" sub="By health score" />
+          <SectionHeader title={t("dash.sub.atRiskAccounts")} sub={t("dash.sub.atRiskAccountsSub")} />
           <div className="space-y-2 mt-2">
             {(dd("perfChurn").atRisk ?? []).map((a) => (
               <div key={a.name} className="flex items-center gap-3 p-2.5 bg-neutral-800/20 rounded-lg">
@@ -1894,19 +2064,20 @@ function PerfChurnView() {
 
 // ── Predictive Analytics sub-views ────────────────────────────────────────────
 function PredForecastView() {
+  const { t } = useLang();
   return (
-    <FocusedView title="Q4 Revenue Forecast" subtitle="Oct–Dec 2026 projection"
+    <FocusedView title={t("sidebar.q4RevenueForecast")} subtitle={t("dash.perf.engineeringSub")}
       stats={dd("predForecast").stats ?? []}>
       <Card>
-        <SectionHeader title="Q4 Monthly Revenue Forecast" sub="USD k with confidence range" />
+        <SectionHeader title={t("dash.sub.q4Forecast")} sub={t("dash.sub.q4ForecastSub")} />
         <ChartArea data={dd("predForecast").series ?? []} series={[
-          { key: "upper", name: "Upper", stroke: "transparent", fill: "rgba(129,140,248,0.1)" },
-          { key: "forecast", name: "Forecast", stroke: "#818cf8" },
-          { key: "lower", name: "Lower", stroke: "#525252", dashed: true },
+          { key: "upper", name: t("chart.upper"), stroke: "transparent", fill: "rgba(129,140,248,0.1)" },
+          { key: "forecast", name: t("chart.forecast"), stroke: "#818cf8" },
+          { key: "lower", name: t("chart.lower"), stroke: "#525252", dashed: true },
         ]} xKey="month" height={200} />
       </Card>
       <Card>
-        <SectionHeader title="Forecast Assumptions" sub="Key inputs" />
+        <SectionHeader title={t("dash.sub.forecastAssumptions")} sub={t("dash.sub.forecastAssumptionsSub")} />
         <div className="space-y-2">
           {(dd("predForecast").assumptions ?? []).map((a) => (
             <div key={a.label} className="flex items-center justify-between py-2 border-b border-neutral-800/40">
@@ -1921,18 +2092,19 @@ function PredForecastView() {
 }
 
 function PredResourcesView() {
+  const { t } = useLang();
   return (
-    <FocusedView title="Resource Demand" subtitle="Workforce demand forecast — H2 2026"
+    <FocusedView title={t("sidebar.resourceDemand")} subtitle={t("dash.perf.engineeringSub")}
       stats={dd("predResources").stats ?? []}>
       <Card>
-        <SectionHeader title="Headcount Demand vs. Supply" sub="H2 2026 forecast" />
+        <SectionHeader title={t("dash.sub.headcountDemand")} sub={t("dash.sub.headcountDemandSub")} />
         <ChartArea data={dd("predResources").series ?? []} series={[
-          { key: "supply", name: "Supply", stroke: "#818cf8", fill: "rgba(129,140,248,0.06)" },
-          { key: "demand", name: "Demand", stroke: "#f59e0b", fill: "rgba(245,158,11,0.06)" },
+          { key: "supply", name: t("chart.supply"), stroke: "#818cf8", fill: "rgba(129,140,248,0.06)" },
+          { key: "demand", name: t("chart.demand"), stroke: "#f59e0b", fill: "rgba(245,158,11,0.06)" },
         ]} xKey="month" height={200} />
       </Card>
       <Card>
-        <SectionHeader title="Critical Roles to Fill" sub="By priority" />
+        <SectionHeader title={t("dash.sub.criticalRoles")} sub={t("dash.sub.criticalRolesSub")} />
         <div className="space-y-3">
           {(dd("predResources").roles ?? []).map((r) => (
             <div key={r.role} className="flex items-center justify-between p-3 bg-neutral-800/20 rounded-lg">
@@ -1947,15 +2119,16 @@ function PredResourcesView() {
 }
 
 function PredTrendsView() {
+  const { t } = useLang();
   return (
-    <FocusedView title="Market Trends" subtitle="Industry signals — H2 2026"
+    <FocusedView title={t("sidebar.marketTrends")} subtitle={t("dash.perf.engineeringSub")}
       stats={dd("predTrends").stats ?? []}>
       <Card>
-        <SectionHeader title="Industry Growth Trend" sub="Market size index (2023 = 100)" />
-        <ChartArea data={dd("predTrends").series ?? []} series={[{ key: "idx", name: "Market Index", stroke: "#818cf8", fill: "rgba(129,140,248,0.08)" }]} xKey="q" height={180} />
+        <SectionHeader title={t("dash.sub.industryGrowth")} sub={t("dash.sub.industryGrowthSub")} />
+        <ChartArea data={dd("predTrends").series ?? []} series={[{ key: "idx", name: t("chart.marketIndex"), stroke: "#818cf8", fill: "rgba(129,140,248,0.08)" }]} xKey="q" height={180} />
       </Card>
       <Card>
-        <SectionHeader title="Key Market Signals" sub="AI-monitored trends" />
+        <SectionHeader title={t("dash.sub.marketSignals")} sub={t("dash.sub.marketSignalsSub")} />
         <div className="space-y-3">
           {(dd("predTrends").signals ?? []).map((s, i) => (
             <div key={i} className={`flex items-start gap-2.5 p-3 rounded-lg border-l-2 ${s.type === "tailwind" ? "border-emerald-500/40 bg-emerald-950/10" : "border-amber-500/40 bg-amber-950/10"}`}>
@@ -1970,12 +2143,13 @@ function PredTrendsView() {
 }
 
 function PredRisksView() {
+  const { t } = useLang();
   const risks = dd("predRisks").risks ?? [];
   return (
-    <FocusedView title="Risk Assessment" subtitle="Identified risks by severity"
+    <FocusedView title={t("sidebar.riskAssessment")} subtitle={t("dash.perf.engineeringSub")}
       stats={dd("predRisks").stats ?? []}>
       <Card>
-        <SectionHeader title="Risk Register" sub="All active risks" />
+        <SectionHeader title={t("dash.sub.riskRegister")} sub={t("dash.sub.riskRegisterSub")} />
         <div className="space-y-3">
           {risks.map((r) => (
             <div key={r.risk} className="p-3 bg-neutral-800/20 rounded-lg">
@@ -2792,10 +2966,26 @@ export function DashboardPage() {
   const [showNewTask, setShowNewTask] = useState(false);
   const [recentTasks, setRecentTasks] = useState<{ title: string; status: string; priority: string; assignee: string; due: string }[]>([]);
   const [taskStats, setTaskStats] = useState({ total: 0, completed: 0, inProgress: 0, members: 0 });
+  const [membersMap, setMembersMap] = useState<Map<string, string>>(new Map());
+
+  // Fetch workspace members for resolving user_ids to display names
+  useEffect(() => {
+    api.getWorkspaceMembers().then(({ members }) => {
+      const map = new Map<string, string>();
+      for (const m of members) if (m.user_id) map.set(m.user_id, m.name || m.email);
+      setMembersMap(map);
+    }).catch(() => {});
+  }, []);
   const [todayEvents, setTodayEvents] = useState<{ title: string; tag: string; color?: string }[]>([]);
   const [teamChartData, setTeamChartData] = useState<{ name: string; tasks: number; done: number }[]>([]);
+  const [teamPerformance, setTeamPerformance] = useState<{ name: string; initials: string; role: string; done: number; total: number }[]>([]);
+  const [overdueCount, setOverdueCount] = useState(0);
+  const [projects, setProjects] = useState<{ name: string; description: string; status: string; progress: number }[]>([]);
+  const [fullProjects, setFullProjects] = useState<api.Project[]>([]);
+  const [selectedProject, setSelectedProject] = useState<api.Project | null>(null);
+  const [activityItems, setActivityItems] = useState<{ action: string; title: string; time: string; type: "completed" | "created" | "updated" }[]>([]);
   const [, forceUpdate] = useState(0); // trigger re-render after module vars populated
-  const { t } = useLang();
+  const { t, lang } = useLang();
 
   const getViewLabel = (view: DashView): string => {
     switch (view) {
@@ -2844,7 +3034,7 @@ export function DashboardPage() {
     }
   };
 
-  useEffect(() => {
+  const loadData = useCallback(() => {
     const today = new Date();
     const todayKey = `${today.getFullYear()}-${today.getMonth() + 1}-${today.getDate()}`;
 
@@ -2854,6 +3044,9 @@ export function DashboardPage() {
       const completed = tasks.filter((t) => t.completed || t.status === "completed").length;
       const inProgress = tasks.filter((t) => t.status === "in-progress").length;
       setTaskStats((prev) => ({ ...prev, total, completed, inProgress }));
+      // Compute overdue count for KPI card
+      const overdue = tasks.filter((t) => !t.completed && t.status !== "completed" && t.due && t.due !== "No due date" && new Date(t.due) < new Date()).length;
+      setOverdueCount(overdue);
       const sorted = [...tasks].sort((a, b) => (a.completed ? 1 : 0) - (b.completed ? 1 : 0));
       setRecentTasks(sorted.slice(0, 5).map((t) => ({ title: t.title, status: t.status, priority: t.priority, assignee: t.assignee, due: t.due })));
 
@@ -2880,13 +3073,29 @@ export function DashboardPage() {
         assigneeCounts[t.assignee].tasks++;
         if (t.completed || t.status === "completed") assigneeCounts[t.assignee].done++;
       });
-      performerData = Object.entries(assigneeCounts).slice(0, 5).map(([name, v]) => ({
-        name,
+      performerData = Object.entries(assigneeCounts).slice(0, 5).map(([id, v]) => ({
+        name: membersMap.get(id) || id,
         tasks: v.tasks,
         rate: v.tasks > 0 ? Math.round((v.done / v.tasks) * 100) : 0,
         score: v.tasks > 0 ? Math.round(((v.done / v.tasks) * 0.7 + 0.3) * 100) : 70,
       }));
-    }).catch((e) => console.log("Dashboard failed to load tasks:", e));
+
+      // Build activity feed from tasks
+      const completedTasks = tasks.filter((t) => t.completed || t.status === "completed");
+      const recentCreated = tasks.slice(0, 3).map((t) => ({
+        action: "Created",
+        title: t.title,
+        time: t.due || "Recently",
+        type: "created" as const,
+      }));
+      const recentCompleted = completedTasks.slice(0, 3).map((t) => ({
+        action: "Completed",
+        title: t.title,
+        time: t.due || "Recently",
+        type: "completed" as const,
+      }));
+      setActivityItems([...recentCompleted, ...recentCreated].slice(0, 6));
+    }).catch((e) => logger.error("app", "Dashboard failed to load tasks:", e));
 
     // Track loaded data for derived computation
     let loadedTasks: api.Task[] | null = null;
@@ -2909,19 +3118,38 @@ export function DashboardPage() {
       setTeamChartData(chart);
       teamData = chart;
       setTaskStats((prev) => ({ ...prev, members: teams.reduce((acc, t) => acc + t.members.length, 0) }));
+
+      // Build team performance data for overview cards
+      const perf = teams.flatMap((t) =>
+        t.members.map((m) => ({
+          name: m.name || m.initials,
+          initials: m.initials || (m.name?.[0] ?? "?").toUpperCase(),
+          role: m.role || t.name,
+          done: Math.round(m.tasks * 0.6),
+          total: m.tasks,
+        }))
+      ).sort((a, b) => b.done - a.done).slice(0, 6);
+      setTeamPerformance(perf);
+
       tryCompute();
-    }).catch((e) => console.log("Dashboard failed to load teams:", e));
+    }).catch((e) => logger.error("app", "Dashboard failed to load teams:", e));
 
     api.getProjects().then((projects) => {
       loadedProjects = projects;
+      setFullProjects(projects);
+      setProjects(projects.map((p) => ({ name: p.name, description: p.team?.[0] ?? p.status, status: p.status, progress: p.progress })));
       tryCompute();
-    }).catch((e) => console.log("Dashboard failed to load projects:", e));
+    }).catch((e) => logger.error("app", "Dashboard failed to load projects:", e));
 
     api.getCalendarEvents().then((events) => {
       const todayEvts = events[todayKey] ?? [];
       setTodayEvents(todayEvts);
-    }).catch((e) => console.log("Dashboard failed to load calendar:", e));
+    }).catch((e) => logger.error("app", "Dashboard failed to load calendar:", e));
   }, []);
+
+  useEffect(() => { loadData(); }, [loadData]);
+
+  useRealtimeSync(["tasks", "projects", "calendar_events", "workspace_teams", "workspace_team_members"], loadData);
 
   useEffect(() => {
     const mapped = subSectionMap[subSection];
@@ -2931,7 +3159,7 @@ export function DashboardPage() {
   const handleAddTask = async (task: { title: string; priority: string; assignee: string; due: string; status: string; description?: string; project?: string; completed?: boolean }) => {
     try {
       await api.createTask({ title: task.title, description: task.description ?? "", status: task.status, priority: task.priority, assignee: task.assignee, project: task.project ?? "Internal", due: task.due, completed: false });
-    } catch (e) { console.log("Failed to create task:", e); }
+    } catch (e) { logger.error("app", "Failed to create task:", e); toast.error(t("dashboard.failedToCreateTask")); }
     setRecentTasks((prev) => [
       { title: task.title, status: task.status, priority: task.priority, assignee: task.assignee, due: task.due },
       ...prev.slice(0, 4),
@@ -2952,40 +3180,9 @@ export function DashboardPage() {
 
   return (
     <div className="flex flex-col h-full font-['Lexend:Regular',_sans-serif]">
-      {/* Header */}
-      <div className="px-4 md:px-6 lg:px-8 pt-6 lg:pt-8 pb-0">
-        <div className="flex items-start justify-between gap-4 mb-4">
-          <div>
-            <h1 className="text-neutral-50 font-['Lexend:SemiBold',_sans-serif] text-[18px] lg:text-[22px] leading-tight mb-1">
-              {getViewLabel(dashView)}
-            </h1>
-            <p className="text-neutral-500 text-[12px] lg:text-[13px]">{new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" })}</p>
-          </div>
-          <button
-            onClick={() => setShowNewTask(true)}
-            className="bg-indigo-600 hover:bg-indigo-500 text-white text-[13px] px-4 py-2 rounded-lg transition-colors shrink-0"
-          >
-            {t("dashboard.newTaskBtn")}
-          </button>
-        </div>
-
-        {/* View tabs */}
-        <div className="flex items-center gap-0 border-b border-neutral-800/60 overflow-x-auto">
-          {navTabs.map((tab) => (
-            <button
-              key={tab.view}
-              onClick={() => setDashView(tab.view)}
-              className={`px-3 lg:px-4 py-2.5 text-[12px] lg:text-[13px] border-b-2 transition-colors -mb-px whitespace-nowrap ${dashView === tab.view ? "border-indigo-500 text-neutral-50" : "border-transparent text-neutral-500 hover:text-neutral-300"}`}
-            >
-              {tab.label}
-            </button>
-          ))}
-        </div>
-      </div>
-
       {/* Content */}
       <div className="flex-1 overflow-y-auto px-4 md:px-6 lg:px-8 py-5 lg:py-7">
-        {dashView === "overview" && <OverviewView recentTasks={recentTasks} onNavigate={navigate} showNewTask={() => setShowNewTask(true)} taskStats={taskStats} todayEvents={todayEvents} teamChartData={teamChartData} />}
+        {dashView === "overview" && <OverviewView recentTasks={recentTasks} onNavigate={navigate} showNewTask={() => setShowNewTask(true)} taskStats={taskStats} todayEvents={todayEvents} teamChartData={teamChartData} teamPerformance={teamPerformance} overdueCount={overdueCount} membersMap={membersMap} projects={projects} fullProjects={fullProjects} onProjectClick={setSelectedProject} activityItems={activityItems} />}
         {dashView === "executive-summary" && <ExecutiveSummaryView />}
         {dashView === "exec-revenue" && <ExecRevenueView />}
         {dashView === "exec-kpis" && <ExecKpisView />}
@@ -3029,6 +3226,28 @@ export function DashboardPage() {
       </div>
 
       <NewTaskModal open={showNewTask} onClose={() => setShowNewTask(false)} onAdd={handleAddTask} />
+      <ProjectDetailModal
+        open={!!selectedProject}
+        onClose={() => setSelectedProject(null)}
+        project={selectedProject}
+        onUpdate={async (id, patch) => {
+          setFullProjects((ps) => ps.map((p) => p.id === id ? { ...p, ...patch } : p));
+          setProjects((ps) => ps.map((p) => {
+            const fp = fullProjects.find((f) => f.name === p.name);
+            if (fp && fp.id === id) return { ...p, ...patch };
+            return p;
+          }));
+          try { await api.updateProject(id, patch); } catch (e) { logger.error("app", "Dashboard onUpdate failed:", e); toast.error(t("dashboard.failedToSaveProject")); throw e; }
+        }}
+        onDelete={async (id) => {
+          setFullProjects((ps) => ps.filter((p) => p.id !== id));
+          setProjects((ps) => ps.filter((p) => {
+            const fp = fullProjects.find((f) => f.name === p.name);
+            return !fp || fp.id !== id;
+          }));
+          try { await api.deleteProject(id); } catch (e) { logger.error("app", "Dashboard onDelete failed:", e); toast.error(t("dashboard.failedToDeleteProject")); throw e; }
+        }}
+      />
     </div>
   );
 }

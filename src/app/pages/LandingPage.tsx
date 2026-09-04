@@ -1,3 +1,4 @@
+import { logger } from "../utils/logger";
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router";
 import { ArrowRight, Check, Menu, ShieldCheck, X } from "lucide-react";
@@ -11,6 +12,9 @@ import { Button } from "@/components/cossui/button";
 import { useAuth } from "../auth/AuthContext";
 import { detectLang, LangToggle, persistLang, type Lang } from "../i18n";
 import { getPlans, type Plan } from "../utils/api";
+import { SEOHead } from "../components/SEOHead";
+import { AnimatedLogo } from "../components/AnimatedLogo";
+import { TestimonialSection } from "../components/TestimonialSection";
 
 const idr = new Intl.NumberFormat("id-ID", {
   style: "currency",
@@ -55,20 +59,17 @@ const STRINGS = {
       sub: "What early teams say after moving their projects into LokaSync.",
       items: [
         {
-          quote:
-            "We replaced three different tools with LokaSync. Now standups are just: open the dashboard, look at the board, done.",
+          quote: "We replaced three different tools with LokaSync. Now standups are just: open the dashboard, look at the board, done.",
           name: "Rizky Pratama",
           role: "Product Manager, creative studio",
         },
         {
-          quote:
-            "The free plan was enough to convince the whole team. We upgraded once the client projects started piling up.",
+          quote: "The free plan was enough to convince the whole team. We upgraded once the client projects started piling up.",
           name: "Sarah Nabila",
           role: "Founder, digital agency",
         },
         {
-          quote:
-            "Paying with a bank virtual account instead of a credit card made it easy to get this approved by finance.",
+          quote: "Paying with a bank virtual account instead of a credit card made it easy to get this approved by finance.",
           name: "Dimas Wijaya",
           role: "Engineering Lead, software house",
         },
@@ -80,6 +81,11 @@ const STRINGS = {
       seeFull: "See full pricing",
       perMonth: "/month",
       mostPopular: "Most popular",
+      desc: {
+        free: "For individuals getting started with LokaSync.",
+        pro: "For small teams that need the full toolkit.",
+        business: "For growing companies with advanced needs.",
+      },
     },
     payments: {
       secure: "Secure payments processed by Midtrans",
@@ -197,6 +203,11 @@ const STRINGS = {
       seeFull: "Lihat harga lengkap",
       perMonth: "/bulan",
       mostPopular: "Paling populer",
+      desc: {
+        free: "Untuk individu yang mulai menggunakan LokaSync.",
+        pro: "Untuk tim kecil yang butuh semua fitur.",
+        business: "Untuk perusahaan yang berkembang dengan kebutuhan lanjutan.",
+      },
     },
     payments: {
       secure: "Pembayaran aman diproses oleh Midtrans",
@@ -267,12 +278,12 @@ const DEMO_TASKS = [
 function Logo({ small = false }: { small?: boolean }) {
   return (
     <Link to="/" aria-label="LokaSync home">
-      <span
-        className={`font-bold tracking-[0.08em] text-[#fafafa] ${
-          small ? "text-[14px]" : "text-[17px]"
-        }`}
-      >
-        LOKASYNC
+      <span className="inline-flex items-center">
+        <img
+          src="/lokasynclogo.png"
+          alt="LokaSync"
+          className={`object-contain ${small ? "size-9" : "size-11"}`}
+        />
       </span>
     </Link>
   );
@@ -571,8 +582,48 @@ export function LandingPage() {
   useEffect(() => {
     getPlans()
       .then(setPlans)
-      .catch((e) => console.error("Failed to load plans:", e));
+      .catch((e) => logger.error("app", "Failed to load plans:", e));
   }, []);
+
+  // JSON-LD structured data
+  const jsonLd = [
+    {
+      "@context": "https://schema.org",
+      "@type": "SoftwareApplication",
+      name: "LokaSync",
+      applicationCategory: "ProjectManagementApplication",
+      operatingSystem: "Web",
+      description: "LokaSync brings your team's tasks, timelines, files, and reporting into one minimal workspace.",
+      url: "https://lokasync.app",
+      offers: plans
+        ? plans.filter((p) => p.monthly > 0).map((p) => ({
+            "@type": "Offer",
+            price: p.monthly,
+            priceCurrency: "IDR",
+            name: `LokaSync ${p.name}`,
+          }))
+        : [],
+    },
+    {
+      "@context": "https://schema.org",
+      "@type": "Organization",
+      name: "LokaSync",
+      url: "https://lokasync.app",
+      logo: "https://lokasync.app/lokasynclogo.png",
+    },
+    {
+      "@context": "https://schema.org",
+      "@type": "FAQPage",
+      mainEntity: t.faq.items.map((item: { q: string; a: string }) => ({
+        "@type": "Question",
+        name: item.q,
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: item.a,
+        },
+      })),
+    },
+  ];
 
   return (
     <div
@@ -671,6 +722,13 @@ export function LandingPage() {
         }
       `}</style>
 
+      <SEOHead
+        title="LokaSync — Project Management Workspace for Teams"
+        description="LokaSync brings your team's tasks, timelines, files, and reporting into one minimal workspace. Free for up to 3 projects. Pay in Rupiah via Midtrans."
+        ogType="website"
+        jsonLd={jsonLd}
+      />
+
       {/* Ambient glow background */}
       <div aria-hidden="true" className="absolute inset-0 overflow-hidden">
         <div className="loka-blob left-1/2 top-[-120px] h-[340px] w-[520px] -translate-x-1/2 bg-indigo-600/20" />
@@ -683,17 +741,7 @@ export function LandingPage() {
         {/* Hero — pt offsets the floating navbar */}
         <section className="mx-auto w-full max-w-5xl px-6 pb-24 pt-36 text-center sm:pt-40">
           <Reveal>
-            <p
-              className="text-[12px] tracking-wide text-neutral-500"
-              style={{
-                fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
-              }}
-            >
-              loka{" "}
-              <span className="text-neutral-600">
-                /ˈlo·ka/ — {t.hero.eyebrow}
-              </span>
-            </p>
+            <AnimatedLogo />
             <h1 className="mx-auto mt-5 max-w-2xl text-[40px] leading-[1.12] sm:text-[52px]">
               {t.hero.titleA}
               <br />
@@ -750,76 +798,46 @@ export function LandingPage() {
               </p>
             </Reveal>
             <div className="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              {t.features.items.map((feature, i) => (
-                <Reveal key={feature.name} delay={(i % 3) * 70}>
-                  <div className="group h-full rounded-2xl border border-white/[0.06] bg-[#1a1a1a]/80 p-5 transition-all duration-200 hover:-translate-y-0.5 hover:border-indigo-500/30 hover:bg-[#1d1d1f]">
-                    <h3 className="flex items-center gap-2 text-[14px] text-neutral-100">
-                      {feature.name}
-                      {"pro" in feature && feature.pro && (
-                        <span className="rounded-full bg-indigo-900/50 px-2 py-0.5 text-[10px] text-indigo-300">
-                          Pro
-                        </span>
-                      )}
-                    </h3>
-                    <p className="mt-1.5 text-[13px] leading-relaxed text-neutral-500 transition-colors group-hover:text-neutral-400">
-                      {feature.description}
-                    </p>
-                  </div>
-                </Reveal>
-              ))}
+              {t.features.items.map((feature, i) => {
+                const iconSvgs: React.ReactNode[] = [
+                  <svg key="tasks" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"/></svg>,
+                  <svg key="projects" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/><path d="M12 10v6m-3-3h6"/></svg>,
+                  <svg key="calendar" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>,
+                  <svg key="teams" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87m-4-12a4 4 0 010 7.75"/></svg>,
+                  <svg key="analytics" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>,
+                  <svg key="files" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14,2 14,8 20,8"/></svg>,
+                ];
+                return (
+                  <Reveal key={i} delay={(i % 3) * 70}>
+                    <div className="group h-full rounded-2xl border border-white/[0.06] bg-[#1a1a1a]/80 p-5 transition-all duration-200 hover:-translate-y-0.5 hover:border-indigo-500/30 hover:bg-[#1d1d1f]">
+                      <div className="flex items-center gap-3 mb-2">
+                        <div className="w-9 h-9 rounded-xl bg-indigo-500/10 flex items-center justify-center text-indigo-400 shrink-0">
+                          {iconSvgs[i]}
+                        </div>
+                        <h3 className="flex items-center gap-2 text-[14px] text-neutral-100">
+                          {feature.name}
+                          {"pro" in feature && feature.pro && (
+                            <span className="rounded-full bg-indigo-900/50 px-2 py-0.5 text-[10px] text-indigo-300">
+                              Pro
+                            </span>
+                          )}
+                        </h3>
+                      </div>
+                      <p className="mt-1.5 text-[13px] leading-relaxed text-neutral-500 transition-colors group-hover:text-neutral-400">
+                        {feature.description}
+                      </p>
+                    </div>
+                  </Reveal>
+                );
+              })}
             </div>
           </div>
         </section>
 
-        {/* Testimonials — dummy quotes until real customers replace them */}
-        <section className="border-t border-neutral-800/70">
-          <div className="mx-auto w-full max-w-5xl px-6 py-20">
-            <Reveal>
-              <h2 className="text-[22px] text-neutral-50">
-                {t.testimonials.title}
-              </h2>
-              <p className="mt-2 max-w-lg text-[14px] text-neutral-400">
-                {t.testimonials.sub}
-              </p>
-            </Reveal>
-            <div className="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              {t.testimonials.items.map((item, i) => (
-                <Reveal key={item.name} delay={i * 80}>
-                  <figure className="flex h-full flex-col rounded-2xl border border-white/[0.06] bg-[#1a1a1a]/80 p-5 transition-all duration-200 hover:-translate-y-0.5 hover:border-indigo-500/30">
-                    <span
-                      aria-hidden="true"
-                      className="text-[28px] leading-none text-indigo-400/70"
-                    >
-                      “
-                    </span>
-                    <blockquote className="mt-1 flex-1 text-[13.5px] leading-relaxed text-neutral-300">
-                      {item.quote}
-                    </blockquote>
-                    <figcaption className="mt-5 flex items-center gap-3">
-                      <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-indigo-900/50 text-[11px] text-indigo-300">
-                        {item.name
-                          .split(" ")
-                          .map((part) => part[0])
-                          .slice(0, 2)
-                          .join("")}
-                      </span>
-                      <span>
-                        <span className="block text-[13px] text-neutral-100">
-                          {item.name}
-                        </span>
-                        <span className="block text-[11.5px] text-neutral-500">
-                          {item.role}
-                        </span>
-                      </span>
-                    </figcaption>
-                  </figure>
-                </Reveal>
-              ))}
-            </div>
-          </div>
-        </section>
+        {/* Testimonials */}
+        <TestimonialSection title={t.testimonials.title} sub={t.testimonials.sub} items={[...t.testimonials.items]} />
 
-        {/* Pricing strip — amounts come from the server, same source as /pricing */}
+        {/* Pricing strip -- amounts come from the server, same source as /pricing */}
         {plans && plans.length > 0 && (
           <section className="border-t border-neutral-800/70">
             <div className="mx-auto w-full max-w-5xl px-6 py-20">
@@ -868,7 +886,7 @@ export function LandingPage() {
                         </span>
                       </p>
                       <p className="mt-2 text-[12.5px] leading-relaxed text-neutral-500">
-                        {plan.description}
+                        {t.pricing.desc[plan.id as keyof typeof t.pricing.desc] ?? plan.description}
                       </p>
                     </div>
                   </Reveal>
@@ -918,39 +936,45 @@ export function LandingPage() {
               </p>
             </Reveal>
             <Reveal delay={100}>
-              <Accordion
-                key={lang}
-                className="mt-10 w-full"
-                defaultValue={["faq-0"]}
-              >
-                {t.faq.items.map((item, i) => (
-                  <AccordionItem
-                    key={item.q}
-                    value={`faq-${i}`}
-                    className="border-neutral-800"
-                  >
-                    <AccordionTrigger className="text-[14px] text-neutral-100 hover:text-neutral-50">
-                      {item.q}
-                    </AccordionTrigger>
-                    <AccordionPanel className="text-[13px] leading-relaxed text-neutral-400">
-                      {item.a}
-                    </AccordionPanel>
-                  </AccordionItem>
-                ))}
-              </Accordion>
+              <div className="mt-10 rounded-2xl border border-white/[0.06] bg-[#1a1a1a]/60 p-4 sm:p-6">
+                <Accordion
+                  key={lang}
+                  className="w-full"
+                  defaultValue={["faq-0"]}
+                >
+                  {t.faq.items.map((item, i) => (
+                    <AccordionItem
+                      key={item.q}
+                      value={`faq-${i}`}
+                      className="border-neutral-800/60"
+                    >
+                      <AccordionTrigger className="text-[14px] text-neutral-100 hover:text-neutral-50">
+                        {item.q}
+                      </AccordionTrigger>
+                      <AccordionPanel className="text-[13px] leading-relaxed text-neutral-400">
+                        {item.a}
+                      </AccordionPanel>
+                    </AccordionItem>
+                  ))}
+                </Accordion>
+              </div>
             </Reveal>
           </div>
         </section>
 
         {/* Final CTA */}
-        <section className="border-t border-neutral-800/70">
-          <div className="mx-auto w-full max-w-5xl px-6 py-20 text-center">
+        <section className="border-t border-neutral-800/70 relative overflow-hidden">
+          {/* Gradient glow background */}
+          <div aria-hidden="true" className="absolute inset-0 pointer-events-none">
+            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[500px] h-[300px] rounded-full bg-indigo-600/10 blur-[100px]" />
+          </div>
+          <div className="mx-auto w-full max-w-5xl px-6 py-24 text-center relative z-10">
             <Reveal>
-              <h2 className="text-[26px] text-neutral-50">{t.cta.title}</h2>
-              <p className="mx-auto mt-3 max-w-md text-[14px] text-neutral-400">
+              <h2 className="text-[28px] text-neutral-50">{t.cta.title}</h2>
+              <p className="mx-auto mt-3 max-w-md text-[15px] text-neutral-400">
                 {t.cta.sub}
               </p>
-              <div className="mt-7 flex items-center justify-center">
+              <div className="mt-8 flex items-center justify-center">
                 <span className="relative">
                   <span
                     aria-hidden="true"
@@ -1064,6 +1088,12 @@ export function LandingPage() {
                 © 2026 LokaSync. {t.footer.rights}
               </p>
               <nav className="flex items-center gap-4 text-[12px]">
+                <Link
+                  to="/blog"
+                  className="text-neutral-500 transition-colors hover:text-neutral-200"
+                >
+                  Blog
+                </Link>
                 <Link
                   to="/privacy"
                   className="text-neutral-500 transition-colors hover:text-neutral-200"

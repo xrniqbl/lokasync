@@ -1,8 +1,11 @@
+import { logger } from "../../utils/logger";
 import { useState, useEffect } from "react";
 import { toast } from "sonner";
 import { FileText, Figma, FileCode, FileSpreadsheet, FileImage, GitBranch, Download, Share2, X } from "lucide-react";
 import * as Dialog from "@radix-ui/react-dialog";
+import { useLang } from "../../LangContext";
 import * as api from "../../utils/api";
+import * as storage from "../../utils/storage";
 
 interface FileItem {
   name: string;
@@ -15,8 +18,9 @@ interface FileItem {
 
 interface FilePreviewModalProps {
   file: FileItem | null;
+  workspaceId: string | null;
   onClose: () => void;
-  onRename: (oldName: string, newName: string) => void;
+  onRename: (oldName: string, newName: string) => Promise<void>;
 }
 
 const typeConfig: Record<string, { label: string; color: string; bg: string; icon: React.ReactNode }> = {
@@ -29,13 +33,16 @@ const typeConfig: Record<string, { label: string; color: string; bg: string; ico
   diagram: { label: "Diagram", color: "#6366f1", bg: "bg-indigo-950/40", icon: <GitBranch size={32} /> },
 };
 
-export function FilePreviewModal({ file, onClose, onRename }: FilePreviewModalProps) {
+export function FilePreviewModal({ file, workspaceId, onClose, onRename }: FilePreviewModalProps) {
+  const { t } = useLang();
   const [renaming, setRenaming] = useState(false);
   const [newName, setNewName] = useState(file?.name ?? "");
   const [ownerNames, setOwnerNames] = useState<Record<string, string>>({});
+  const [downloading, setDownloading] = useState(false);
 
   useEffect(() => {
     if (!file) return;
+    setNewName(file.name);
     api.getTeams().then((teams) => {
       const map: Record<string, string> = {};
       teams.forEach((t) => t.members.forEach((m) => { map[m.initials] = m.name; }));
@@ -47,22 +54,55 @@ export function FilePreviewModal({ file, onClose, onRename }: FilePreviewModalPr
 
   const type = typeConfig[file.type] || typeConfig.doc;
 
-  const handleRename = () => {
+  const handleRename = async () => {
     if (newName.trim() && newName.trim() !== file.name) {
-      onRename(file.name, newName.trim());
-      toast.success("File renamed");
+      try {
+        await onRename(file.name, newName.trim());
+        toast.success(t("filePreview.fileRenamed"));
+      } catch {
+        toast.error(t("filePreview.failedToRename"));
+      }
     }
     setRenaming(false);
     onClose();
   };
 
-  const handleDownload = () => {
-    toast.success(`Downloading "${file.name}"`);
+  const handleDownload = async () => {
+    if (!workspaceId) {
+      toast.error(t("filePreview.workspaceNotReady"));
+      return;
+    }
+    setDownloading(true);
+    try {
+      const blob = await storage.downloadFile(file.name, workspaceId);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = file.name;
+      a.click();
+      URL.revokeObjectURL(url);
+      toast.success(`Downloading "${file.name}"`);
+    } catch (e) {
+      logger.error("app", "Preview download failed:", e);
+      toast.error(t("filePreview.failedToDownload"));
+    } finally {
+      setDownloading(false);
+    }
   };
 
-  const handleShare = () => {
-    navigator.clipboard?.writeText(`https://app.io/files/${encodeURIComponent(file.name)}`).catch(() => {});
-    toast.success("Share link copied to clipboard");
+  const handleShare = async () => {
+    if (!workspaceId) {
+      toast.error(t("filePreview.workspaceNotReady"));
+      return;
+    }
+    try {
+      const signedUrl = await storage.getDownloadUrl(file.name, workspaceId, 300);
+      await navigator.clipboard?.writeText(signedUrl);
+      toast.success(t("filePreview.shareLinkCopied"));
+    } catch (e) {
+      logger.error("app", "Share failed:", e);
+      toast.error(t("filePreview.failedToShare"));
+    }
   };
 
   return (
@@ -128,9 +168,10 @@ export function FilePreviewModal({ file, onClose, onRename }: FilePreviewModalPr
             <div className="flex items-center gap-2">
               <button
                 onClick={handleDownload}
-                className="flex-1 flex items-center justify-center gap-2 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-[13px] rounded-lg transition-colors"
+                disabled={downloading}
+                className="flex-1 flex items-center justify-center gap-2 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-[13px] rounded-lg transition-colors"
               >
-                <Download size={13} /> Download
+                <Download size={13} /> {downloading ? "Downloading..." : "Download"}
               </button>
               <button
                 onClick={handleShare}

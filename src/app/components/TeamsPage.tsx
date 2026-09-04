@@ -1,9 +1,11 @@
-import { useState, useEffect } from "react";
+import { logger } from "../utils/logger";
+import { useState, useEffect, useCallback } from "react";
 import { toast } from "sonner";
 import { InviteMemberModal } from "./modals/InviteMemberModal";
 import { ManageTeamModal } from "./modals/ManageTeamModal";
 import { MemberProfileModal } from "./modals/MemberProfileModal";
 import { useNavigation } from "./NavigationContext";
+import { useRealtimeSync } from "../hooks/useRealtimeSync";
 import * as api from "../utils/api";
 import { useLang } from "../LangContext";
 
@@ -63,12 +65,19 @@ export function TeamsPage() {
   const [selectedMember, setSelectedMember] = useState<{ member: Member; colorIndex: number } | null>(null);
   const [teamFilter, setTeamFilter] = useState<string | null>(null);
 
-  useEffect(() => {
+  const loadData = useCallback((opts?: { silent?: boolean }) => {
     api.getTeams().then((data) => setTeams(data)).catch((e) => {
-      console.log("Failed to load teams:", e);
-      toast.error("Failed to load teams");
+      logger.error("app", "Failed to load teams:", e);
+      if (!opts?.silent) toast.error(t("teams.failedToLoad"));
     });
   }, []);
+
+  useEffect(() => { loadData(); }, [loadData]);
+
+  useRealtimeSync(
+    ["workspace_teams", "workspace_team_members", "workspace_members"],
+    () => loadData({ silent: true }),
+  );
 
   useEffect(() => {
     const memberLookup = buildMemberLookup(teams);
@@ -182,13 +191,7 @@ export function TeamsPage() {
         })}
       </div>
 
-      <InviteMemberModal open={showInvite} onClose={() => setShowInvite(false)} onInvite={async (teamName, member) => {
-        try {
-          const updatedTeam = await api.inviteMember(teamName, member);
-          setTeams((prev) => prev.map((t) => t.name === teamName ? updatedTeam : t));
-          toast.success(`${member.name} added to ${teamName}`);
-        } catch (e) { console.log("Failed to invite member:", e); toast.error("Failed to invite member"); }
-      }} />
+      <InviteMemberModal open={showInvite} onClose={() => setShowInvite(false)} />
       {manageTeam && (
         <ManageTeamModal
           open={!!manageTeam}

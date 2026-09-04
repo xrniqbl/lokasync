@@ -1,3 +1,4 @@
+import { logger } from "../utils/logger";
 import { useEffect, useState } from "react";
 import { Megaphone, X } from "lucide-react";
 import { useAuth } from "../auth/AuthContext";
@@ -27,7 +28,7 @@ export function NotificationsHost() {
       .then((items) => {
         if (!cancelled) setUnread(items.filter((n) => !n.read));
       })
-      .catch((e) => console.error("Failed to load notifications:", e));
+      .catch((e) => logger.error("app", "Failed to load notifications:", e));
     return () => {
       cancelled = true;
     };
@@ -38,7 +39,7 @@ export function NotificationsHost() {
   const dismiss = (id: string) => {
     setUnread((prev) => prev.filter((n) => n.id !== id));
     markNotificationsRead([id]).catch((e) =>
-      console.error("Failed to mark notification read:", e),
+      logger.error("app", "Failed to mark notification read:", e),
     );
   };
 

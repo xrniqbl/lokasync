@@ -1,17 +1,55 @@
-import { useState, useRef, useEffect } from "react";
+import { logger } from "../utils/logger";
+﻿import { useState, useRef, useEffect, useCallback } from "react";
 import { toast } from "sonner";
+import { useRealtimeSync } from "../hooks/useRealtimeSync";
 import {
   Github, Figma, MessageSquare, CalendarDays,
-  CreditCard, Download, Shield,
+  Download, Shield, Mail,
   Eye, EyeOff, Copy, Check, Trash2, RefreshCw,
   X, Plus, Zap, BookOpen, Video, Layers, ExternalLink,
   AlertTriangle,
 } from "lucide-react";
+import { Link } from "react-router";
 import { useNavigation } from "./NavigationContext";
 import { InviteMemberModal } from "./modals/InviteMemberModal";
 import { detectLang, persistLang, type Lang } from "../i18n";
 import { useLang } from "../LangContext";
+import { useAppearance, ACCENT_FAMILY_TO_LABEL, type AccentFamily, type FontSize } from "../AppearanceContext";
+import { useSubscription } from "../subscription/SubscriptionContext";
+
+const idrFmt = new Intl.NumberFormat("id-ID", {
+  style: "currency",
+  currency: "IDR",
+  maximumFractionDigits: 0,
+});
+const billingDateFmt = new Intl.DateTimeFormat("en-US", {
+  day: "numeric",
+  month: "short",
+  year: "numeric",
+});
 import * as api from "../utils/api";
+import { supabase, updatePassword as updateSupabasePassword } from "../utils/supabase";
+
+// Parse a human-readable "Browser on OS" label from the current user agent.
+// Best-effort: Supabase doesn't expose per-device sessions, so this only ever
+// describes the browser the user is currently signed in from.
+function parseCurrentDevice(ua: string): string {
+  const browser =
+    /edg\//i.test(ua) ? "Edge" :
+    /opr\/|opera/i.test(ua) ? "Opera" :
+    /chrome|crios/i.test(ua) ? "Chrome" :
+    /firefox|fxios/i.test(ua) ? "Firefox" :
+    /safari/i.test(ua) ? "Safari" :
+    "Browser";
+  const os =
+    /windows/i.test(ua) ? "Windows" :
+    /iphone|ipad|ipod/i.test(ua) ? "iOS" :
+    /mac os x/i.test(ua) ? "macOS" :
+    /android/i.test(ua) ? "Android" :
+    /linux/i.test(ua) ? "Linux" :
+    "Unknown OS";
+  return `${browser} on ${os}`;
+}
 
 // ─── Primitives ────────────────────────────────────────────────────────────────
 
@@ -58,15 +96,14 @@ function Section({ title, description, children }: { title: string; description?
   );
 }
 
-function ToggleRow({ label, description, defaultChecked = false }: { label: string; description?: string; defaultChecked?: boolean }) {
-  const [checked, setChecked] = useState(defaultChecked);
+function ToggleRow({ label, description, checked, onChange }: { label: string; description?: string; checked: boolean; onChange?: () => void }) {
   return (
     <div className="flex items-center justify-between py-3 gap-4">
       <div className="min-w-0">
         <div className="text-neutral-200 text-[13px]">{label}</div>
         {description && <div className="text-neutral-600 text-[12px] mt-0.5">{description}</div>}
       </div>
-      <Toggle checked={checked} onChange={() => setChecked(!checked)} />
+      <Toggle checked={checked} onChange={() => onChange?.()} />
     </div>
   );
 }
@@ -94,15 +131,14 @@ const integrationIcons: Record<string, React.ReactNode> = {
   Zapier: <Zap size={16} />,
 };
 
-// sessionList and loginHistory are now fetched from Supabase — see SettingsPage useEffect
 
-const accentColors = [
-  { value: "#6366f1", label: "Indigo" },
-  { value: "#8b5cf6", label: "Violet" },
-  { value: "#3b82f6", label: "Blue" },
-  { value: "#10b981", label: "Emerald" },
-  { value: "#f59e0b", label: "Amber" },
-  { value: "#ef4444", label: "Rose" },
+const accentColors: { value: string; label: string; family: AccentFamily }[] = [
+  { value: "#6366f1", label: "Indigo", family: "indigo" },
+  { value: "#8b5cf6", label: "Violet", family: "violet" },
+  { value: "#3b82f6", label: "Blue", family: "blue" },
+  { value: "#10b981", label: "Emerald", family: "emerald" },
+  { value: "#f59e0b", label: "Amber", family: "amber" },
+  { value: "#ef4444", label: "Rose", family: "red" },
 ];
 
 const getNavGroups = (t: (k: any) => string) => [
@@ -152,20 +188,27 @@ const subSectionMap: Record<string, string> = {
 export function SettingsPage() {
   const { subSection } = useNavigation();
   const { t, lang: globalLang, setLang: setGlobalLang } = useLang();
+  const { applyAppearance } = useAppearance();
+  const { plan, subscription, transactions, loading: billingLoading } = useSubscription();
   const [activeNav, setActiveNav] = useState("Profile");
   const navGroups = getNavGroups(t);
   const [integrations, setIntegrations] = useState<any[]>([]);
-  const [sessions, setSessions] = useState<{ device: string; location: string; ip: string; lastActive: string; current: boolean }[]>([]);
-  const [loginHistory, setLoginHistory] = useState<{ date: string; ip: string; device: string; status: string }[]>([]);
-  const [members, setMembers] = useState<any[]>([]);
-  const [pendingList, setPendingList] = useState<any[]>([]);
-  const [billing, setBilling] = useState<any | null>(null);
-  const [profileData, setProfileData] = useState<any>({});
-  const [workspaceData, setWorkspaceData] = useState<any>({});
+  const [currentSession, setCurrentSession] = useState<{ device: string; signedInAt: string } | null>(null);
+  const [signingOutOthers, setSigningOutOthers] = useState(false);
+  const [members, setMembers] = useState<api.WorkspaceMember[]>([]);
+  const [pendingList, setPendingList] = useState<api.Invitation[]>([]);
+  const [myRole, setMyRole] = useState<string>("member");
+  const [profileData, setProfileData] = useState<Record<string, string>>({});
+  const [workspaceData, setWorkspaceData] = useState<Record<string, string>>({});
   const [showInvite, setShowInvite] = useState(false);
   const [avatarSrc, setAvatarSrc] = useState<string | null>(null);
+  const [logoSrc, setLogoSrc] = useState<string | null>(null);
+  const logoInputRef = useRef<HTMLInputElement>(null);
   const [show2FA, setShow2FA] = useState(false);
   const [twoFACode, setTwoFACode] = useState("");
+  const [twoFASetup, setTwoFASetup] = useState<{ secret: string; otpauthUrl: string; backupCodes: string[] } | null>(null);
+  const [is2FAEnabled, setIs2FAEnabled] = useState(false);
+  const [loading2FA, setLoading2FA] = useState(false);
   const [showCurrent, setShowCurrent] = useState(false);
   const [showNext, setShowNext] = useState(false);
   const [pw, setPw] = useState({ current: "", next: "", confirm: "" });
@@ -173,16 +216,23 @@ export function SettingsPage() {
   const [theme, setTheme] = useState<"dark" | "light" | "system">("dark");
   const [fontSize, setFontSize] = useState<"small" | "medium" | "large">("medium");
   const [density, setDensity] = useState<"compact" | "comfortable" | "spacious">("comfortable");
+  const [sidebarPosition, setSidebarPosition] = useState<"left" | "right">("left");
   const [dateFormat, setDateFormat] = useState("MM/DD/YYYY");
   const [timeFormat, setTimeFormat] = useState("12h");
   const [weekStart, setWeekStart] = useState("Monday");
+  const [timezone, setTimezone] = useState("Asia/Jakarta");
   const [auditFilter, setAuditFilter] = useState("All");
   const [auditLogData, setAuditLogData] = useState<any[]>([]);
   const [systemLang, setSystemLang] = useState<Lang>(globalLang);
   useEffect(() => {
     setSystemLang(globalLang);
   }, [globalLang]);
-  const [memberRoles, setMemberRoles] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    supabase.auth.getUser().then(({ data }) => {
+      if (data.user?.user_metadata?.totp_enabled) setIs2FAEnabled(true);
+    }).catch(() => {});
+  }, []);
   const [apiKeysList, setApiKeysList] = useState<any[]>([]);
   const [webhooksList, setWebhooksList] = useState<any[]>([]);
   const [showNewKey, setShowNewKey] = useState(false);
@@ -190,7 +240,9 @@ export function SettingsPage() {
   const [generatedKey, setGeneratedKey] = useState<string | null>(null);
   const [keyCopied, setKeyCopied] = useState(false);
   const [dangerEmail, setDangerEmail] = useState("");
+  const [dangerPassword, setDangerPassword] = useState("");
   const [dangerReset, setDangerReset] = useState("");
+  const [transferTargetEmail, setTransferTargetEmail] = useState("");
   const [exportFormats, setExportFormats] = useState<Record<string, string>>({
     "All tasks": "CSV", "All projects": "CSV", "Team data": "CSV", "Files & attachments": "CSV",
   });
@@ -204,32 +256,39 @@ export function SettingsPage() {
     teamMember: false, announcements: true,
     digest: true, productUpdates: false, security: true,
   });
+  const [securityPrefs, setSecurityPrefs] = useState({
+    trustedDevices: true, loginNotifications: true, sessionTimeout: false,
+  });
+  const [workspacePrefs, setWorkspacePrefs] = useState({
+    showCompletedTasks: false, compactView: false, publicProjectLinks: true, require2FA: false, guestAccess: true,
+  });
+  const [dataPrefs, setDataPrefs] = useState({
+    autoArchiveCompleted: false, autoDeleteArchived: false, retainAuditLogs: true,
+  });
+  const [defaultNotif, setDefaultNotif] = useState({
+    taskAssigned: true, taskDue: true, comments: true, projectStatus: false,
+    newMember: false, digest: true, productUpdates: false, security: true,
+  });
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Load settings sections from Supabase
   useEffect(() => {
-    api.getSettings("members").then((data) => {
-      if (data?.rows) {
-        setMembers(data.rows);
-        setMemberRoles(Object.fromEntries(data.rows.map((m: any) => [m.initials, m.role])));
-      }
-      if (data?.pending) setPendingList(data.pending);
-    }).catch((e) => console.log("Failed to load members settings:", e));
+    loadMembersAndInvites();
 
     api.getSettings("api-keys").then((data) => {
       if (Array.isArray(data)) setApiKeysList(data);
-    }).catch((e) => console.log("Failed to load api-keys:", e));
+    }).catch((e) => logger.error("app", "Failed to load api-keys:", e));
 
     api.getSettings("webhooks").then((data) => {
       if (Array.isArray(data)) setWebhooksList(data);
-    }).catch((e) => console.log("Failed to load webhooks:", e));
+    }).catch((e) => logger.error("app", "Failed to load webhooks:", e));
 
     api.getSettings("audit-log").then((data) => {
       if (Array.isArray(data)) setAuditLogData(data.map((e: any) => ({
         actor: e.actor, name: e.actorName, action: e.action, target: e.target,
         ip: e.ip, time: e.timestamp, category: e.category,
       })));
-    }).catch((e) => console.log("Failed to load audit-log:", e));
+    }).catch((e) => logger.error("app", "Failed to load audit-log:", e));
 
     api.getSettings("appearance").then((data) => {
       if (data) {
@@ -237,97 +296,225 @@ export function SettingsPage() {
         if (data.accent) setAccentColor(accentColors.find((a) => a.label.toLowerCase() === data.accent)?.value ?? "#6366f1");
         if (data.fontSize) setFontSize(data.fontSize);
         if (data.density) setDensity(data.density);
+        if (data.sidebarPosition) setSidebarPosition(data.sidebarPosition);
       }
-    }).catch((e) => console.log("Failed to load appearance:", e));
+    }).catch((e) => logger.error("app", "Failed to load appearance:", e));
 
     api.getSettings("timezone").then((data) => {
       if (data) {
+        if (data.timezone) setTimezone(data.timezone);
         if (data.dateFormat) setDateFormat(data.dateFormat);
         if (data.timeFormat) setTimeFormat(data.timeFormat);
         if (data.firstDay) setWeekStart(data.firstDay);
       }
-    }).catch((e) => console.log("Failed to load timezone:", e));
+    }).catch((e) => logger.error("app", "Failed to load timezone:", e));
 
     api.getSettings("notifications").then((data) => {
-      if (data && typeof data === "object") setNotifState((prev) => ({ ...prev, ...data }));
-    }).catch((e) => console.log("Failed to load notifications:", e));
+      if (data && typeof data === "object") {
+        setNotifState((prev) => ({ ...prev, ...data }));
+        if (data.defaults) setDefaultNotif(data.defaults);
+      }
+    }).catch((e) => logger.error("app", "Failed to load notifications:", e));
+
+    api.getSettings("profile").then((data) => {
+      if (data) {
+        if (data.securityPrefs) setSecurityPrefs(data.securityPrefs);
+        setProfileData(data);
+        if (data.avatarBase64) setAvatarSrc(data.avatarBase64);
+      }
+    }).catch((e) => logger.error("app", "Failed to load profile:", e));
+
+    api.getSettings("workspace").then((data) => {
+      if (data) {
+        if (data.workspacePrefs) setWorkspacePrefs(data.workspacePrefs);
+        if (data.dataPrefs) setDataPrefs(data.dataPrefs);
+        if (data.logoBase64) setLogoSrc(data.logoBase64);
+        setWorkspaceData(data);
+      }
+    }).catch((e) => logger.error("app", "Failed to load workspace:", e));
 
     // Fetch integrations from Supabase
     api.getIntegrations().then((data) => {
       if (Array.isArray(data)) {
         setIntegrations(data.map((d: any) => ({ ...d, icon: integrationIcons[d.name] ?? <Zap size={16} /> })));
       }
-    }).catch((e) => console.log("Failed to load integrations:", e));
+    }).catch((e) => logger.error("app", "Failed to load integrations:", e));
 
-    api.getSettings("billing").then((data) => {
-      if (data) setBilling(data);
-    }).catch((e) => console.log("Failed to load billing:", e));
-
-    api.getSettings("profile").then((data) => {
-      if (data) setProfileData(data);
-    }).catch((e) => console.log("Failed to load profile:", e));
-
-    api.getSettings("workspace").then((data) => {
-      if (data) setWorkspaceData(data);
-    }).catch((e) => console.log("Failed to load workspace:", e));
-
-    // Fetch sessions from Supabase
-    api.getSessions().then((data) => {
-      if (data?.active) setSessions(data.active);
-      if (data?.loginHistory) setLoginHistory(data.loginHistory);
-    }).catch((e) => console.log("Failed to load sessions:", e));
+    // Current session — Supabase only exposes the session for this device, not
+    // a per-user device list, so we describe just the active one.
+    supabase.auth.getSession().then(({ data }) => {
+      const sess = data.session;
+      if (!sess) return;
+      const issuedMs = (sess.expires_at ? sess.expires_at * 1000 - 3600 * 1000 : Date.now());
+      setCurrentSession({
+        device: parseCurrentDevice(navigator.userAgent),
+        signedInAt: new Date(issuedMs).toLocaleString("en-US", {
+          month: "short", day: "numeric", year: "numeric", hour: "2-digit", minute: "2-digit",
+        }),
+      });
+    }).catch((e) => logger.error("app", "Failed to load current session:", e));
   }, []);
 
   useEffect(() => {
     if (subSectionMap[subSection]) setActiveNav(subSectionMap[subSection]);
   }, [subSection]);
 
-  const toggleIntegration = (name: string) => {
+  const toggleIntegration = async (name: string) => {
+    const prevIntegrations = [...integrations];
+    const target = integrations.find((i) => i.name === name);
+    if (!target) return;
+    const newConnected = !target.connected;
+    const newLastSync = newConnected ? "just now" : null;
+    // Optimistic update
     setIntegrations((prev) =>
-      prev.map((i) => {
-        if (i.name !== name) return i;
-        const next = { ...i, connected: !i.connected, lastSync: !i.connected ? "just now" : null };
-        toast.success(next.connected ? `Connected to ${name}` : `Disconnected from ${name}`);
-        // Persist to Supabase
-        api.updateIntegration(name, { connected: next.connected, lastSync: next.lastSync }).catch(() => {});
-        return next;
-      })
+      prev.map((i) => i.name === name ? { ...i, connected: newConnected, lastSync: newLastSync } : i)
     );
+    try {
+      await api.updateIntegration(name, { connected: newConnected, lastSync: newLastSync });
+      toast.success(newConnected ? t("settings.connectedTo").replace("{name}", name) : t("settings.disconnectedFrom").replace("{name}", name));
+    } catch (e) {
+      // Rollback on failure
+      setIntegrations(prevIntegrations);
+      toast.error(t("settings.failedToUpdate").replace("{name}", name));
+    }
   };
 
   const handlePhotoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    const objectUrl = URL.createObjectURL(file);
-    setAvatarSrc(objectUrl);
-    toast.success("Profile photo updated");
+    if (file.size > 2 * 1024 * 1024) {
+      toast.error(t("settings.imageUnder2MB"));
+      return;
+    }
+    const reader = new FileReader();
+    reader.onloadend = async () => {
+      const base64 = reader.result as string;
+      setAvatarSrc(base64);
+      try {
+        await api.saveSettings("profile", { firstName: "", lastName: "", email: "", phone: "", title: "", department: "Engineering", bio: "", github: "", linkedin: "", ...profileData, avatarBase64: base64, securityPrefs });
+        toast.success(t("settings.profilePhotoUpdated"));
+      } catch (e) {
+        logger.error("app", "Failed to save avatar:", e);
+        toast.error(t("settings.failedToSavePhoto"));
+      }
+    };
+    reader.readAsDataURL(file);
   };
 
-  const updatePassword = () => {
-    if (!pw.current) return toast.error("Enter your current password");
-    if (pw.next.length < 12) return toast.error("New password must be at least 12 characters");
-    if (pw.next !== pw.confirm) return toast.error("Passwords do not match");
-    toast.success("Password updated successfully");
-    setPw({ current: "", next: "", confirm: "" });
+  const handleLogoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 2 * 1024 * 1024) {
+      toast.error(t("settings.logoUnder2MB"));
+      return;
+    }
+    const reader = new FileReader();
+    reader.onloadend = async () => {
+      const base64 = reader.result as string;
+      setLogoSrc(base64);
+      try {
+        await api.saveSettings("workspace", { name: "", url: "", industry: "", teamSize: "", region: "", ...workspaceData, workspacePrefs, dataPrefs, logoBase64: base64 });
+        toast.success(t("settings.workspaceLogoUpdated"));
+      } catch (e) {
+        logger.error("app", "Failed to save logo:", e);
+        toast.error(t("settings.failedToSaveLogo"));
+      }
+    };
+    reader.readAsDataURL(file);
   };
 
-  const verify2FA = () => {
-    if (twoFACode.length < 6) return toast.error("Enter the 6-digit code");
-    toast.success("Two-factor authentication enabled");
-    setShow2FA(false);
-    setTwoFACode("");
+  const updatePassword = async () => {
+    if (!pw.current) return toast.error(t("settings.enterCurrentPassword"));
+    if (pw.next.length < 12) return toast.error(t("settings.passwordMin12"));
+    if (pw.next !== pw.confirm) return toast.error(t("settings.passwordsDoNotMatch"));
+    try {
+      const { data: { user }, error: userError } = await supabase.auth.getUser();
+      if (userError || !user?.email) throw new Error("Unable to verify your session");
+      const { error: signInError } = await supabase.auth.signInWithPassword({ email: user.email, password: pw.current });
+      if (signInError) throw new Error("Current password is incorrect");
+      const { error } = await updateSupabasePassword(pw.next);
+      if (error) throw error;
+      toast.success(t("settings.passwordUpdated"));
+      setPw({ current: "", next: "", confirm: "" });
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : t("settings.failedToUpdatePassword"));
+    }
+  };
+
+  const verify2FA = async () => {
+    if (twoFACode.length < 6) return toast.error(t("settings.enter6digitCode"));
+    setLoading2FA(true);
+    try {
+      await api.verify2FA(twoFACode);
+      toast.success(t("settings.twoFactorEnabled"));
+      setIs2FAEnabled(true);
+      setShow2FA(false);
+      setTwoFACode("");
+      setTwoFASetup(null);
+    } catch (e: unknown) {
+      toast.error((e instanceof Error ? e.message : undefined) || t("settings.invalidCode"));
+    } finally {
+      setLoading2FA(false);
+    }
+  };
+
+  const start2FASetup = async () => {
+    setLoading2FA(true);
+    try {
+      const data = await api.setup2FA();
+      setTwoFASetup(data);
+      setShow2FA(true);
+    } catch (e) {
+      toast.error(t("settings.failedToStart2FA"));
+    } finally {
+      setLoading2FA(false);
+    }
+  };
+
+  const [showDisable2FA, setShowDisable2FA] = useState(false);
+  const [disable2FACode, setDisable2FACode] = useState("");
+  const [emailOTPSent, setEmailOTPSent] = useState(false);
+  const [emailOTPCode, setEmailOTPCode] = useState("");
+  const [sendingEmailOTP, setSendingEmailOTP] = useState(false);
+
+  const disable2FA = async () => {
+    if (!showDisable2FA) {
+      setShowDisable2FA(true);
+      return;
+    }
+    if (!disable2FACode || disable2FACode.length < 6) {
+      toast.error(t("settings.enter2FACode"));
+      return;
+    }
+    setLoading2FA(true);
+    try {
+      const isBackupCode = disable2FACode.length > 6;
+      await api.disable2FA(isBackupCode ? undefined : disable2FACode, isBackupCode ? disable2FACode : undefined);
+      setIs2FAEnabled(false);
+      setShowDisable2FA(false);
+      setDisable2FACode("");
+      toast.success(t("settings.twoFactorDisabled"));
+    } catch (e: unknown) {
+      toast.error((e instanceof Error ? e.message : undefined) || t("settings.failedToDisable2FA"));
+    } finally {
+      setLoading2FA(false);
+    }
   };
 
   const generateApiKey = async () => {
-    if (!newKeyName.trim()) return toast.error("Enter a name for the key");
-    const key = `sk-${Math.random().toString(36).slice(2, 10)}-${Math.random().toString(36).slice(2, 14)}`;
+    if (!newKeyName.trim()) return toast.error(t("settings.enterKeyName"));
+    // Use cryptographically secure random for key generation
+    const bytes = new Uint8Array(24);
+    crypto.getRandomValues(bytes);
+    const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+    const key = `sk-${hex.slice(0, 8)}-${hex.slice(8, 24)}`;
     setGeneratedKey(key);
     const newEntry = { id: Date.now(), name: newKeyName.trim(), prefix: `sk_${key.slice(3, 7)}`, created: new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }), lastUsed: "Never" };
     const updated = [...apiKeysList, newEntry];
     setApiKeysList(updated);
     setNewKeyName("");
-    toast.success("API key generated — copy it now, it won't be shown again");
-    try { await api.saveSettings("api-keys", updated); } catch (e) { console.log("Failed to save api keys:", e); }
+    toast.success(t("settings.apiKeyGenerated"));
+    try { await api.saveSettings("api-keys", updated); } catch (e) { logger.error("app", "Failed to save api keys:", e); toast.error(t("settings.failedToSaveApiKeys")); }
   };
 
   const copyKey = () => {
@@ -341,55 +528,109 @@ export function SettingsPage() {
   const revokeKey = async (name: string) => {
     const updated = apiKeysList.filter((k) => k.name !== name);
     setApiKeysList(updated);
-    toast.success(`API key "${name}" revoked`);
-    try { await api.saveSettings("api-keys", updated); } catch (e) { console.log("Failed to save api keys:", e); }
+    toast.success(t("settings.apiKeyRevoked").replace("{name}", name));
+    try { await api.saveSettings("api-keys", updated); } catch (e) { logger.error("app", "Failed to save api keys:", e); toast.error(t("settings.failedToSaveApiKeys")); }
   };
 
   const toggleWebhook = async (idx: number) => {
     const updated = webhooksList.map((w, i) => i === idx ? { ...w, active: !w.active } : w);
     setWebhooksList(updated);
-    try { await api.saveSettings("webhooks", updated); } catch (e) { console.log("Failed to save webhooks:", e); }
+    try { await api.saveSettings("webhooks", updated); } catch (e) { logger.error("app", "Failed to save webhooks:", e); toast.error(t("settings.failedToSaveWebhooks")); }
   };
 
   const deleteWebhook = async (idx: number) => {
     const updated = webhooksList.filter((_, i) => i !== idx);
     setWebhooksList(updated);
-    toast.success("Webhook deleted");
-    try { await api.saveSettings("webhooks", updated); } catch (e) { console.log("Failed to save webhooks:", e); }
+    toast.success(t("settings.webhookDeleted"));
+    try { await api.saveSettings("webhooks", updated); } catch (e) { logger.error("app", "Failed to save webhooks:", e); toast.error(t("settings.failedToSaveWebhooks")); }
   };
 
-  const saveMembers = async (updatedMembers: any[], updatedPending?: any[]) => {
-    const data = { rows: updatedMembers, pending: updatedPending ?? pendingList };
-    try { await api.saveSettings("members", data); } catch (e) { console.log("Failed to save members:", e); }
+  const loadMembersAndInvites = async () => {
+    try {
+      const { members: rows, my_role } = await api.getWorkspaceMembers();
+      setMembers(rows);
+      setMyRole(my_role);
+    } catch (e) { logger.error("app", "Failed to load members:", e); }
+    try {
+      const invites = await api.getInvitations();
+      setPendingList(invites);
+    } catch (e) {
+      // Non-admins can't list invitations (403) — that's expected, leave empty.
+      setPendingList([]);
+    }
+  };
+
+  // Live-sync members & invitations across tabs / team members
+  useRealtimeSync(["workspace_members", "invitations"], loadMembersAndInvites);
+
+  const changeMemberRole = async (m: { name: string; role: string; user_id: string | null }, newRole: string) => {
+    if (!m.user_id) return;
+    const prev = members;
+    setMembers((list) => list.map((x) => x.user_id === m.user_id ? { ...x, role: newRole } : x));
+    try {
+      await api.updateWorkspaceMemberRole(m.user_id, newRole);
+      toast.success(t("settings.roleChanged").replace("{name}", m.name).replace("{role}", newRole));
+    } catch (e: unknown) {
+      setMembers(prev);
+      toast.error((e instanceof Error ? e.message : undefined) || t("settings.failedToChangeRole"));
+    }
+  };
+
+  const removeMember = async (m: { name: string; user_id: string | null }) => {
+    if (!m.user_id) return;
+    const prev = members;
+    setMembers((list) => list.filter((x) => x.user_id !== m.user_id));
+    try {
+      await api.removeWorkspaceMember(m.user_id);
+      toast.success(t("settings.memberRemoved").replace("{name}", m.name));
+    } catch (e: unknown) {
+      setMembers(prev);
+      toast.error((e instanceof Error ? e.message : undefined) || t("settings.failedToRemoveMember"));
+    }
+  };
+
+  const cancelInvite = async (inv: { email: string; id: string }) => {
+    const prev = pendingList;
+    setPendingList((list) => list.filter((p) => p.id !== inv.id));
+    try {
+      await api.revokeInvitation(inv.id);
+      toast.success(t("settings.invitationCancelled").replace("{email}", inv.email));
+    } catch (e: unknown) {
+      setPendingList(prev);
+      toast.error((e instanceof Error ? e.message : undefined) || t("settings.failedToCancelInvite"));
+    }
   };
 
   const saveAppearance = async () => {
-    const accentLabel = accentColors.find((a) => a.value === accentColor)?.label.toLowerCase() ?? "indigo";
+    const family = accentColors.find((a) => a.value === accentColor)?.family ?? "indigo";
+    const accentLabel = ACCENT_FAMILY_TO_LABEL[family];
+    // Apply live so the whole app re-themes immediately, then persist.
+    applyAppearance({ accent: family, fontSize: fontSize as FontSize, density, sidebarPosition });
     try {
-      await api.saveSettings("appearance", { theme, accent: accentLabel, fontSize, density, sidebarPosition: "left" });
-      toast.success("Appearance settings saved");
-    } catch (e) { console.log("Failed to save appearance:", e); toast.error("Failed to save"); }
+      await api.saveSettings("appearance", { theme, accent: accentLabel, fontSize, density, sidebarPosition });
+      toast.success(t("settings.appearanceSaved"));
+    } catch (e) { logger.error("app", "Failed to save appearance:", e); toast.error(t("settings.failedToSave")); }
   };
 
   const saveTimezone = async () => {
     try {
-      await api.saveSettings("timezone", { timezone: "America/New_York", dateFormat, timeFormat, firstDay: weekStart, autoDetect: false });
-      toast.success("Timezone settings saved");
-    } catch (e) { console.log("Failed to save timezone:", e); toast.error("Failed to save"); }
+      await api.saveSettings("timezone", { timezone, dateFormat, timeFormat, firstDay: weekStart, autoDetect: false });
+      toast.success(t("settings.timezoneSaved"));
+    } catch (e) { logger.error("app", "Failed to save timezone:", e); toast.error(t("settings.failedToSave")); }
   };
 
   const saveProfile = async () => {
     try {
-      await api.saveSettings("profile", { firstName: "", lastName: "", email: "", phone: "", title: "", department: "Engineering", bio: "", github: "", linkedin: "", ...profileData });
-      toast.success("Profile saved");
-    } catch (e) { console.log("Failed to save profile:", e); toast.error("Failed to save"); }
+      await api.saveSettings("profile", { firstName: "", lastName: "", email: "", phone: "", title: "", department: "Engineering", bio: "", github: "", linkedin: "", ...profileData, avatarBase64: avatarSrc ?? profileData.avatarBase64, securityPrefs });
+      toast.success(t("settings.profileSaved"));
+    } catch (e) { logger.error("app", "Failed to save profile:", e); toast.error(t("settings.failedToSave")); }
   };
 
   const saveNotifications = async () => {
     try {
-      await api.saveSettings("notifications", notifState);
-      toast.success("Notification settings saved");
-    } catch (e) { console.log("Failed to save notifications:", e); toast.error("Failed to save"); }
+      await api.saveSettings("notifications", { ...notifState, defaults: defaultNotif });
+      toast.success(t("settings.notifSettingsSaved"));
+    } catch (e) { logger.error("app", "Failed to save notifications:", e); toast.error(t("settings.failedToSave")); }
   };
 
   const handleExport = async (label: string) => {
@@ -400,13 +641,13 @@ export function SettingsPage() {
       else if (label === "All projects") data = await api.getProjects();
       else if (label === "Team data") data = await api.getTeams();
       else if (label === "Files & attachments") { const res = await api.getFiles(); data = res.files; }
-      if (!data) { toast.error("No data to export"); return; }
+      if (!data) { toast.error(t("settings.noDataToExport")); return; }
       let content: string;
       if (format === "JSON") {
         content = JSON.stringify(data, null, 2);
       } else {
         const flat = Array.isArray(data) ? data : [data];
-        if (flat.length === 0) { toast.error("No data to export"); return; }
+        if (flat.length === 0) { toast.error(t("settings.noDataToExport")); return; }
         const keys = Object.keys(flat[0]);
         content = [keys.join(","), ...flat.map((row: any) => keys.map((k) => JSON.stringify(row[k] ?? "")).join(","))].join("\n");
       }
@@ -420,20 +661,20 @@ export function SettingsPage() {
       a.click();
       URL.revokeObjectURL(url);
       toast.success(`${label} exported as ${format}`);
-    } catch (e) { console.log("Export failed:", e); toast.error("Export failed"); }
+    } catch (e) { logger.error("app", "Export failed:", e); toast.error(t("settings.exportFailed")); }
   };
 
   const addWebhook = async () => {
-    if (!newWebhookUrl.trim()) return toast.error("Enter a webhook URL");
-    if (!newWebhookEvents.trim()) return toast.error("Enter at least one event");
+    if (!newWebhookUrl.trim()) return toast.error(t("settings.enterWebhookUrl"));
+    if (!newWebhookEvents.trim()) return toast.error(t("settings.enterWebhookEvents"));
     const newHook = { url: newWebhookUrl.trim(), events: newWebhookEvents.trim(), active: true };
     const updated = [...webhooksList, newHook];
     setWebhooksList(updated);
     setShowWebhookForm(false);
     setNewWebhookUrl("");
     setNewWebhookEvents("");
-    toast.success("Webhook added");
-    try { await api.saveSettings("webhooks", updated); } catch (e) { console.log("Failed to save webhooks:", e); }
+    toast.success(t("settings.webhookAdded"));
+    try { await api.saveSettings("webhooks", updated); } catch (e) { logger.error("app", "Failed to save webhooks:", e); toast.error(t("settings.failedToSaveWebhooks")); }
   };
 
   const filteredLogs = auditFilter === "All" ? auditLogData : auditLogData.filter((l) => l.category === auditFilter);
@@ -468,14 +709,14 @@ export function SettingsPage() {
           {/* ── Profile ── */}
           {activeNav === "Profile" && (
             <>
-              <Section title="Profile" description="Manage your personal information and avatar.">
+              <Section title={t("settings.profile")} description={t("settings.profileDesc")}>
                 <div className="flex items-center gap-4 mb-6">
                   <div
                     className="w-16 h-16 rounded-full flex items-center justify-center overflow-hidden shrink-0 cursor-pointer ring-2 ring-neutral-800 hover:ring-indigo-600/40 transition-all"
                     onClick={() => fileInputRef.current?.click()}
                   >
                     {avatarSrc ? (
-                      <img src={avatarSrc} alt="avatar" className="w-full h-full object-cover" />
+                      <img src={avatarSrc} alt="avatar" loading="lazy" className="w-full h-full object-cover" />
                     ) : (
                       <div className="w-full h-full bg-indigo-900/60 flex items-center justify-center text-indigo-300 text-[20px] font-['Lexend:SemiBold',_sans-serif]">{((profileData.firstName?.[0] ?? "") + (profileData.lastName?.[0] ?? "")) || "?"}</div>
                     )}
@@ -490,20 +731,20 @@ export function SettingsPage() {
                 </div>
                 <div className="space-y-4">
                   <div className="grid grid-cols-2 gap-3 lg:gap-4">
-                    <InputField label="First name" value={profileData.firstName ?? ""} onChange={(v) => setProfileData((p: any) => ({ ...p, firstName: v }))} />
-                    <InputField label="Last name" value={profileData.lastName ?? ""} onChange={(v) => setProfileData((p: any) => ({ ...p, lastName: v }))} />
+                    <InputField label={t("settings.firstName")} value={profileData.firstName ?? ""} onChange={(v) => setProfileData((p: Record<string, unknown>) => ({ ...p, firstName: v }))} />
+                    <InputField label={t("settings.lastName")} value={profileData.lastName ?? ""} onChange={(v) => setProfileData((p: Record<string, unknown>) => ({ ...p, lastName: v }))} />
                   </div>
-                  <InputField label="Email" value={profileData.email ?? ""} onChange={(v) => setProfileData((p: any) => ({ ...p, email: v }))} type="email" hint="Changing your email requires re-verification." />
-                  <InputField label="Phone number" value={profileData.phone ?? ""} onChange={(v) => setProfileData((p: any) => ({ ...p, phone: v }))} type="tel" />
-                  <InputField label="Job title" value={profileData.title ?? ""} onChange={(v) => setProfileData((p: any) => ({ ...p, title: v }))} />
+                  <InputField label={t("settings.email")} value={profileData.email ?? ""} onChange={(v) => setProfileData((p: Record<string, unknown>) => ({ ...p, email: v }))} type="email" hint={t("settings.emailHint")} />
+                  <InputField label={t("settings.phoneNumber")} value={profileData.phone ?? ""} onChange={(v) => setProfileData((p: Record<string, unknown>) => ({ ...p, phone: v }))} type="tel" />
+                  <InputField label={t("settings.jobTitle")} value={profileData.title ?? ""} onChange={(v) => setProfileData((p: Record<string, unknown>) => ({ ...p, title: v }))} />
                   <div>
-                    <label className="block text-neutral-300 text-[13px] mb-1.5">Department</label>
+                    <label className="block text-neutral-300 text-[13px] mb-1.5">{t("settings.department")}</label>
                     <select
                       value={profileData.department ?? "Engineering"}
-                      onChange={(e) => setProfileData((p: any) => ({ ...p, department: e.target.value }))}
-                      className="w-full bg-[#0f0f0f] border border-neutral-800 hover:border-neutral-700 focus:border-indigo-600/60 rounded-lg px-3 py-2.5 text-neutral-200 text-[13px] outline-none appearance-none cursor-pointer transition-colors"
+                      onChange={(e) => setProfileData((p: Record<string, unknown>) => ({ ...p, department: e.target.value }))}
+                      className="w-full bg-[#0f0f0f] border border-neutral-800 hover:border-neutral-700 focus:border-indigo-600/60 rounded-lg px-3 py-2.5 text-neutral-200 text-[13px] outline-none select-arrow cursor-pointer transition-colors"
                     >
-                      {profileData.department && !["Engineering", "Design", "Product", "QA", "Marketing"].includes(profileData.department) && (
+                      {profileData.department && !["Engineering", "Design", "Product", "QA", "Marketing", "Sales", "Customer Success", "Data & Analytics", "Human Resources", "Finance & Operations"].includes(profileData.department) && (
                         <option>{profileData.department}</option>
                       )}
                       <option>Engineering</option>
@@ -511,24 +752,29 @@ export function SettingsPage() {
                       <option>Product</option>
                       <option>QA</option>
                       <option>Marketing</option>
+                      <option>Sales</option>
+                      <option>Customer Success</option>
+                      <option>Data & Analytics</option>
+                      <option>Human Resources</option>
+                      <option>Finance & Operations</option>
                     </select>
                   </div>
                   <div>
-                    <label className="block text-neutral-300 text-[13px] mb-1.5">Bio</label>
+                    <label className="block text-neutral-300 text-[13px] mb-1.5">{t("settings.bio")}</label>
                     <textarea
                       rows={3}
                       value={profileData.bio ?? ""}
-                      onChange={(e) => setProfileData((p: any) => ({ ...p, bio: e.target.value }))}
+                      onChange={(e) => setProfileData((p: Record<string, unknown>) => ({ ...p, bio: e.target.value }))}
                       className="w-full bg-[#0f0f0f] border border-neutral-800 hover:border-neutral-700 focus:border-indigo-600/60 rounded-lg px-3 py-2.5 text-neutral-200 text-[13px] outline-none transition-colors resize-none placeholder:text-neutral-600 font-['Lexend:Regular',_sans-serif]"
                     />
                     <p className="text-neutral-600 text-[11px] mt-1">Visible to teammates on your profile card.</p>
                   </div>
                 </div>
               </Section>
-              <Section title="Social Links" description="Optional links shown on your profile.">
+              <Section title={t("settings.socialLinks")} description={t("settings.socialLinksDesc")}>
                 <div className="space-y-3">
-                  <InputField label="GitHub" value={profileData.github ?? ""} onChange={(v) => setProfileData((p: any) => ({ ...p, github: v }))} placeholder="https://github.com/username" />
-                  <InputField label="LinkedIn" value={profileData.linkedin ?? ""} onChange={(v) => setProfileData((p: any) => ({ ...p, linkedin: v }))} placeholder="https://linkedin.com/in/username" />
+                  <InputField label={t("settings.github")} value={profileData.github ?? ""} onChange={(v) => setProfileData((p: Record<string, unknown>) => ({ ...p, github: v }))} placeholder="https://github.com/username" />
+                  <InputField label={t("settings.linkedin")} value={profileData.linkedin ?? ""} onChange={(v) => setProfileData((p: Record<string, unknown>) => ({ ...p, linkedin: v }))} placeholder="https://linkedin.com/in/username" />
                 </div>
               </Section>
               <SaveRow onSave={saveProfile} />
@@ -538,10 +784,10 @@ export function SettingsPage() {
           {/* ── Security ── */}
           {activeNav === "Security" && (
             <>
-              <Section title="Change Password" description="Use a strong password of at least 12 characters.">
+              <Section title={t("settings.changePassword")} description={t("settings.changePasswordDesc")}>
                 <div className="space-y-4">
                   <div>
-                    <label className="block text-neutral-300 text-[13px] mb-1.5">Current password</label>
+                    <label className="block text-neutral-300 text-[13px] mb-1.5">{t("settings.currentPassword")}</label>
                     <div className="relative">
                       <input
                         type={showCurrent ? "text" : "password"}
@@ -592,95 +838,203 @@ export function SettingsPage() {
                 </div>
               </Section>
 
-              <Section title="Two-Factor Authentication" description="Add an extra layer of security to your account.">
+              <Section title={t("settings.twoFactor")} description={t("settings.twoFactorDesc")}>
                 <div className="flex items-center justify-between gap-4 mb-3">
                   <div className="flex items-center gap-3">
                     <div className="w-8 h-8 rounded-lg bg-neutral-800 flex items-center justify-center text-neutral-400 shrink-0">
                       <Shield size={15} />
                     </div>
                     <div>
-                      <div className="text-neutral-200 text-[13px]">Authenticator app</div>
-                      <div className="text-neutral-600 text-[12px]">Use Google Authenticator or Authy</div>
+                      <div className="text-neutral-200 text-[13px]">{t("settings.authenticatorApp")}</div>
+                      <div className="text-neutral-600 text-[12px]">{is2FAEnabled ? t("settings.twoFAEnabled") : t("settings.useGoogleAuthy")}</div>
                     </div>
                   </div>
-                  <button onClick={() => setShow2FA(!show2FA)} className="border border-neutral-800 hover:bg-neutral-800 text-neutral-300 text-[12px] px-3 py-1.5 rounded-lg transition-colors shrink-0">
-                    {show2FA ? "Cancel" : "Set up 2FA"}
-                  </button>
+                  {is2FAEnabled ? (
+                    <button onClick={disable2FA} disabled={loading2FA} className="border border-red-800/60 hover:bg-red-950/30 text-red-400 hover:text-red-300 text-[12px] px-3 py-1.5 rounded-lg transition-colors shrink-0 disabled:opacity-50">
+                      {showDisable2FA ? t("common.confirm") : t("settings.disable2FA")}
+                    </button>
+                  ) : (
+                    <button onClick={() => is2FAEnabled ? setShow2FA(!show2FA) : start2FASetup()} disabled={loading2FA} className="border border-neutral-800 hover:bg-neutral-800 text-neutral-300 text-[12px] px-3 py-1.5 rounded-lg transition-colors shrink-0 disabled:opacity-50">
+                      {show2FA ? t("common.cancel") : t("settings.setup2FA")}
+                    </button>
+                  )}
                 </div>
-                {show2FA && (
+                {showDisable2FA && is2FAEnabled && (
+                  <div className="p-3 bg-neutral-800/30 rounded-xl space-y-2">
+                    <p className="text-neutral-400 text-[12px]">Enter your current 2FA code or backup code to disable:</p>
+                    <input
+                      type="text"
+                      maxLength={8}
+                      placeholder="000000"
+                      value={disable2FACode}
+                      onChange={(e) => setDisable2FACode(e.target.value.replace(/\s/g, ""))}
+                      className="w-full rounded-lg border border-neutral-800 bg-[#0f0f0f] px-3 py-2 text-center text-[14px] tracking-[0.2em] text-neutral-200 outline-none focus:border-red-600/60"
+                    />
+                    <button onClick={() => { setShowDisable2FA(false); setDisable2FACode(""); }} className="text-neutral-500 text-[11px] hover:text-neutral-300">Cancel</button>
+                  </div>
+                )}
+                {show2FA && twoFASetup && !is2FAEnabled && (
                   <div className="p-4 bg-neutral-800/30 rounded-xl space-y-3">
-                    <div className="flex justify-center">
-                      <div className="w-24 h-24 bg-white rounded-lg flex items-center justify-center p-1">
-                        <div className="grid grid-cols-5 gap-0.5 w-full h-full">
-                          {Array.from({ length: 25 }).map((_, i) => (
-                            <div key={i} className="rounded-[1px]" style={{ backgroundColor: [0, 6, 12, 18, 24, 1, 5, 7, 11, 13, 17, 19].includes(i) ? "#000" : "#fff" }} />
-                          ))}
+                    <div className="text-center">
+                      <p className="text-neutral-400 text-[12px] mb-2">{t("settings.scanQR")}</p>
+                      <code className="block bg-[#0f0f0f] border border-neutral-800 rounded-lg px-3 py-2 text-emerald-300 text-[11px] font-mono break-all">{twoFASetup.secret}</code>
+                      <a href={twoFASetup.otpauthUrl} className="text-indigo-400 text-[11px] hover:underline mt-1 inline-block">{t("settings.openInAuthenticator")}</a>
+                    </div>
+                    {twoFASetup.backupCodes.length > 0 && (
+                      <div className="bg-[#0f0f0f] border border-neutral-800 rounded-lg p-3">
+                        <p className="text-neutral-500 text-[11px] mb-1">{t("settings.backupCodes")}</p>
+                        <div className="grid grid-cols-2 gap-1">
+                          {twoFASetup.backupCodes.map((c, i) => <code key={i} className="text-neutral-300 text-[10px] font-mono">{c}</code>)}
                         </div>
                       </div>
-                    </div>
-                    <p className="text-neutral-400 text-[12px] text-center">Scan with your authenticator app, then enter the 6-digit code.</p>
+                    )}
+                    <p className="text-neutral-400 text-[12px] text-center">Enter the 6-digit code from your authenticator app.</p>
                     <div className="flex gap-2">
                       <input
                         type="text" maxLength={6} placeholder="000000" value={twoFACode}
                         onChange={(e) => setTwoFACode(e.target.value.replace(/\D/g, ""))}
                         className="flex-1 bg-[#0f0f0f] border border-neutral-800 focus:border-indigo-600/60 rounded-lg px-3 py-2.5 text-neutral-200 text-[14px] text-center tracking-widest outline-none transition-colors font-['Lexend:Regular',_sans-serif]"
                       />
-                      <button onClick={verify2FA} className="bg-indigo-600 hover:bg-indigo-500 text-white text-[13px] px-4 py-2 rounded-lg transition-colors">Verify</button>
+                      <button onClick={verify2FA} disabled={loading2FA} className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-[13px] px-4 py-2 rounded-lg transition-colors">Verify</button>
                     </div>
+                  </div>
+                )}
+
+                {/* Email OTP 2FA option */}
+                <div className="flex items-center justify-between gap-4 mt-4 pt-4 border-t border-neutral-800/60">
+                  <div className="flex items-center gap-3">
+                    <div className="w-8 h-8 rounded-lg bg-neutral-800 flex items-center justify-center text-neutral-400 shrink-0">
+                      <Mail size={15} />
+                    </div>
+                    <div>
+                      <div className="text-neutral-200 text-[13px]">{t("auth.emailOTP")}</div>
+                      <div className="text-neutral-600 text-[12px]">{t("auth.emailOTPDesc")}</div>
+                    </div>
+                  </div>
+                  <button
+                    onClick={async () => {
+                      if (emailOTPSent) {
+                        setEmailOTPSent(false);
+                        setEmailOTPCode("");
+                        return;
+                      }
+                      try {
+                        setSendingEmailOTP(true);
+                        await api.sendEmailOTP();
+                        setEmailOTPSent(true);
+                        toast.success(t("auth.emailOTPSent"));
+                      } catch (e: unknown) {
+                        toast.error((e instanceof Error ? e.message : undefined) || "Failed to send code");
+                      } finally {
+                        setSendingEmailOTP(false);
+                      }
+                    }}
+                    disabled={sendingEmailOTP || is2FAEnabled}
+                    className="border border-neutral-800 hover:bg-neutral-800 text-neutral-300 text-[12px] px-3 py-1.5 rounded-lg transition-colors shrink-0 disabled:opacity-50"
+                  >
+                    {is2FAEnabled ? "Enabled" : emailOTPSent ? "Cancel" : sendingEmailOTP ? "Sending..." : "Set up"}
+                  </button>
+                </div>
+                {emailOTPSent && !is2FAEnabled && (
+                  <div className="p-4 bg-neutral-800/30 rounded-xl space-y-3 mt-3">
+                    <p className="text-neutral-400 text-[12px] text-center">{t("auth.enterEmailCode")}</p>
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        maxLength={6}
+                        placeholder="000000"
+                        value={emailOTPCode}
+                        onChange={(e) => setEmailOTPCode(e.target.value.replace(/\D/g, ""))}
+                        className="flex-1 bg-[#0f0f0f] border border-neutral-800 focus:border-indigo-600/60 rounded-lg px-3 py-2.5 text-neutral-200 text-[14px] text-center tracking-widest outline-none transition-colors"
+                      />
+                      <button
+                        onClick={async () => {
+                          if (emailOTPCode.length !== 6) return;
+                          try {
+                            await api.verifyEmailOTP(emailOTPCode);
+                            setIs2FAEnabled(true);
+                            setEmailOTPSent(false);
+                            setEmailOTPCode("");
+                            toast.success(t("settings.emailOTPEnabled"));
+                          } catch (e: unknown) {
+                            toast.error((e instanceof Error ? e.message : undefined) || t("settings.invalidCode"));
+                          }
+                        }}
+                        className="bg-indigo-600 hover:bg-indigo-500 text-white text-[13px] px-4 py-2 rounded-lg transition-colors"
+                      >
+                        Verify
+                      </button>
+                    </div>
+                    <button
+                      onClick={async () => {
+                        try {
+                          await api.sendEmailOTP();
+                          toast.success(t("settings.newCodeSent"));
+                        } catch (e: unknown) {
+                          toast.error((e instanceof Error ? e.message : undefined) || "Failed to resend");
+                        }
+                      }}
+                      className="w-full text-[12px] text-indigo-400 hover:text-indigo-300 transition-colors"
+                    >
+                      {t("auth.resendCode")}
+                    </button>
                   </div>
                 )}
               </Section>
 
-              <Section title="Active Sessions" description="Devices currently signed into your account.">
-                <div className="space-y-2">
-                  {(sessions.length > 0 ? sessions : [
-                    { device: "Loading sessions...", location: "", ip: "", lastActive: "", current: true },
-                  ]).map((s) => (
-                    <div key={s.device} className="flex items-center justify-between p-3 bg-[#141414] border border-neutral-800/60 rounded-xl gap-3">
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span className="text-neutral-200 text-[13px]">{s.device}</span>
-                          {s.current && <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-emerald-900/40 text-emerald-400">Current</span>}
-                        </div>
-                        <div className="text-neutral-600 text-[11px] mt-0.5">{s.location}{s.ip ? ` · ${s.ip}` : ""}{s.lastActive ? ` · ${s.lastActive}` : ""}</div>
+              <Section title={t("settings.activeSessions")} description={t("settings.activeSessionsDesc")}>
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between p-3 bg-[#141414] border border-neutral-800/60 rounded-xl gap-3">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-neutral-200 text-[13px]">{currentSession?.device ?? t("settings.thisDevice")}</span>
+                        <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-emerald-900/40 text-emerald-400">{t("settings.current")}</span>
                       </div>
-                      {!s.current && (
-                        <button onClick={async () => {
-                          setSessions(prev => prev.filter(x => x.device !== s.device));
-                          toast.success(`Session revoked: ${s.device}`);
-                          try { await api.revokeSession(s.device); } catch (e) { console.log("Revoke failed:", e); }
-                        }} className="text-red-400 hover:text-red-300 text-[12px] px-2.5 py-1 rounded-lg border border-red-900/40 hover:bg-red-950/30 transition-colors shrink-0">Revoke</button>
-                      )}
+                      <div className="text-neutral-600 text-[11px] mt-0.5">
+                        {currentSession ? t("settings.signedInAgo").replace("{time}", currentSession.signedInAt) : t("common.loading")}
+                      </div>
                     </div>
-                  ))}
-                </div>
-              </Section>
-
-              <Section title="Login History" description="Recent sign-in attempts.">
-                <div className="bg-[#141414] border border-neutral-800/60 rounded-xl overflow-hidden">
-                  <div className="divide-y divide-neutral-800/40">
-                    {loginHistory.map((l, i) => (
-                      <div key={i} className="grid grid-cols-[1fr_auto] gap-3 px-4 py-3 items-center">
-                        <div>
-                          <div className="text-neutral-300 text-[12px]">{l.device}</div>
-                          <div className="text-neutral-600 text-[11px] mt-0.5">{l.ip} · {l.date}</div>
-                        </div>
-                        <span className={`text-[11px] px-2 py-0.5 rounded-full ${l.status === "success" ? "bg-emerald-900/40 text-emerald-400" : "bg-red-900/40 text-red-400"}`}>
-                          {l.status === "success" ? "Success" : "Failed"}
-                        </span>
-                      </div>
-                    ))}
                   </div>
+                  <div className="flex items-center justify-between gap-3 flex-wrap">
+                    <p className="text-neutral-600 text-[11px] max-w-sm">
+                      Sign out everywhere else — this ends all other sessions on other browsers and devices. Your current session stays active.
+                    </p>
+                    <button
+                      disabled={signingOutOthers}
+                      onClick={async () => {
+                        setSigningOutOthers(true);
+                        try {
+                          const { error } = await supabase.auth.signOut({ scope: "others" });
+                          if (error) throw error;
+                          toast.success(t("settings.signedOutOtherSessions"));
+                        } catch (e: unknown) {
+                          toast.error((e instanceof Error ? e.message : undefined) || "Failed to sign out other sessions");
+                        } finally {
+                          setSigningOutOthers(false);
+                        }
+                      }}
+                      className="border border-red-900/40 hover:bg-red-950/30 text-red-400 hover:text-red-300 text-[12px] px-3 py-1.5 rounded-lg transition-colors shrink-0 disabled:opacity-50"
+                    >
+                      {signingOutOthers ? t("settings.signingOut") : t("settings.signOutOtherSessions")}
+                    </button>
+                  </div>
+                  <p className="text-neutral-700 text-[11px]">
+                    Note: a detailed per-device session list and login history aren't available — the authentication provider doesn't expose them.
+                  </p>
                 </div>
               </Section>
 
-              <Section title="Security Preferences">
+              <Section title={t("settings.securityPreferences")}>
                 <div className="divide-y divide-neutral-800/40">
-                  <ToggleRow label="Trusted devices" description="Skip 2FA on devices you've used before" defaultChecked />
-                  <ToggleRow label="Login notifications" description="Email me when a new device signs in" defaultChecked />
-                  <ToggleRow label="Session timeout" description="Auto sign-out after 30 minutes of inactivity" />
+                  <ToggleRow label={t("settings.trustedDevices")} description={t("settings.trustedDevicesDesc")} checked={securityPrefs.trustedDevices} onChange={() => setSecurityPrefs(p => ({ ...p, trustedDevices: !p.trustedDevices }))} />
+                  <ToggleRow label={t("settings.loginNotifications")} description={t("settings.loginNotificationsDesc")} checked={securityPrefs.loginNotifications} onChange={() => setSecurityPrefs(p => ({ ...p, loginNotifications: !p.loginNotifications }))} />
+                  <ToggleRow label={t("settings.sessionTimeout")} description={t("settings.sessionTimeoutDesc")} checked={securityPrefs.sessionTimeout} onChange={() => setSecurityPrefs(p => ({ ...p, sessionTimeout: !p.sessionTimeout }))} />
                 </div>
               </Section>
+              <SaveRow onSave={async () => {
+                try { await api.saveSettings("profile", { firstName: "", lastName: "", email: "", phone: "", title: "", department: "Engineering", bio: "", github: "", linkedin: "", ...profileData, securityPrefs }); toast.success(t("settings.securityPrefsSaved")); }
+                catch (e) { logger.error("app", "Failed to save security preferences:", e); toast.error(t("settings.failedToSave")); }
+              }} />
             </>
           )}
 
@@ -699,41 +1053,41 @@ export function SettingsPage() {
                 );
                 return (
                   <>
-                    <Section title="Notification Channels" description="Choose where you receive notifications.">
+                    <Section title={t("settings.notifChannels")} description={t("settings.notifChannelsDesc")}>
                       <div className="divide-y divide-neutral-800/40">
-                        {n("inApp", "In-app notifications", "Show notification bell in the sidebar")}
-                        {n("email", "Email notifications", "Receive summaries and alerts by email")}
-                        {n("slack", "Slack notifications", "Push to your connected Slack workspace")}
-                        {n("browser", "Browser push notifications", "Desktop alerts when the app is in background")}
+                        {n("inApp", t("settings.notifInApp"), t("settings.notifInAppDesc"))}
+                        {n("email", t("settings.notifEmailChannel"), t("settings.notifEmailChannelDesc"))}
+                        {n("slack", t("settings.notifSlack"), t("settings.notifSlackDesc"))}
+                        {n("browser", t("settings.notifBrowser"), t("settings.notifBrowserDesc"))}
                       </div>
                     </Section>
-                    <Section title="Tasks">
+                    <Section title={t("settings.notifTasks")}>
                       <div className="divide-y divide-neutral-800/40">
-                        {n("taskAssigned", "Task assigned to me")}
-                        {n("taskDue", "Task due today")}
-                        {n("taskStatus", "Task status changed", "When a task I own moves to a new status")}
-                        {n("comments", "Comments on my tasks")}
-                        {n("mentions", "Mentions in comments")}
+                        {n("taskAssigned", t("settings.notifItemTaskAssigned"))}
+                        {n("taskDue", t("settings.notifItemTaskDue"))}
+                        {n("taskStatus", t("settings.notifItemTaskStatus"))}
+                        {n("comments", t("settings.notifItemComments"))}
+                        {n("mentions", t("settings.notifItemMentions"))}
                       </div>
                     </Section>
-                    <Section title="Projects">
+                    <Section title={t("settings.notifProjects")}>
                       <div className="divide-y divide-neutral-800/40">
-                        {n("projectStatus", "Project status changes")}
-                        {n("newMember", "New member added to project")}
-                        {n("milestone", "Milestone deadline approaching", "3 days before a milestone is due")}
+                        {n("projectStatus", t("settings.notifItemProjectStatus"))}
+                        {n("newMember", t("settings.notifItemNewMember"))}
+                        {n("milestone", t("settings.notifItemMilestone"))}
                       </div>
                     </Section>
-                    <Section title="Team & Workspace">
+                    <Section title={t("settings.notifTeam")}>
                       <div className="divide-y divide-neutral-800/40">
-                        {n("teamMember", "New team member joined", "When someone joins your workspace")}
-                        {n("announcements", "Team announcements")}
+                        {n("teamMember", t("settings.notifItemTeamJoined"))}
+                        {n("announcements", t("settings.notifItemAnnouncements"))}
                       </div>
                     </Section>
-                    <Section title="Digest & Updates">
+                    <Section title={t("settings.notifDigest")}>
                       <div className="divide-y divide-neutral-800/40">
-                        {n("digest", "Weekly activity digest", "Summary every Monday morning")}
-                        {n("productUpdates", "Product & feature updates")}
-                        {n("security", "Security & compliance alerts")}
+                        {n("digest", t("settings.notifItemWeeklyDigest"))}
+                        {n("productUpdates", t("settings.notifItemProductUpdates"))}
+                        {n("security", t("settings.notifItemSecurityAlerts"))}
                       </div>
                     </Section>
                     <SaveRow onSave={saveNotifications} />
@@ -746,23 +1100,26 @@ export function SettingsPage() {
           {/* ── Workspace ── */}
           {activeNav === "Workspace" && (
             <>
-              <Section title="Workspace Identity" description="Settings visible to all workspace members.">
+              <Section title={t("settings.workspaceIdentity")} description={t("settings.workspaceIdentityDesc")}>
                 <div className="space-y-4">
                   <div className="flex items-center gap-4">
-                    <div className="w-14 h-14 rounded-xl bg-indigo-900/60 flex items-center justify-center text-indigo-300 text-[20px] font-['Lexend:SemiBold',_sans-serif] shrink-0">{workspaceData.name?.[0]?.toUpperCase() ?? "?"}</div>
+                    <div className="w-14 h-14 rounded-xl bg-indigo-900/60 flex items-center justify-center text-indigo-300 text-[20px] font-['Lexend:SemiBold',_sans-serif] shrink-0 overflow-hidden">
+                      {logoSrc ? <img src={logoSrc} alt="logo" loading="lazy" className="w-full h-full object-cover" /> : workspaceData.name?.[0]?.toUpperCase() ?? "?"}
+                    </div>
                     <div>
-                      <button onClick={() => toast.success("Logo upload coming soon")} className="border border-neutral-800 hover:bg-neutral-800 text-neutral-300 text-[12px] px-3 py-1.5 rounded-lg transition-colors">Upload logo</button>
-                      <p className="text-neutral-600 text-[11px] mt-1">PNG or SVG · 512×512 recommended</p>
+                      <button onClick={() => logoInputRef.current?.click()} className="border border-neutral-800 hover:bg-neutral-800 text-neutral-300 text-[12px] px-3 py-1.5 rounded-lg transition-colors">{t("settings.uploadLogo")}</button>
+                      <p className="text-neutral-600 text-[11px] mt-1">{t("settings.logoHint")}</p>
+                      <input ref={logoInputRef} type="file" accept="image/*" className="hidden" onChange={handleLogoChange} />
                     </div>
                   </div>
-                  <InputField label="Workspace name" value={workspaceData.name ?? ""} onChange={(v) => setWorkspaceData((p: any) => ({ ...p, name: v }))} />
-                  <InputField label="Workspace URL" value={workspaceData.url ?? ""} onChange={(v) => setWorkspaceData((p: any) => ({ ...p, url: v }))} hint="Changing this will break all existing shared links." />
+                  <InputField label={t("settings.workspaceName")} value={workspaceData.name ?? ""} onChange={(v) => setWorkspaceData((p: Record<string, unknown>) => ({ ...p, name: v }))} />
+                  <InputField label={t("settings.workspaceUrl")} value={workspaceData.url ?? ""} onChange={(v) => setWorkspaceData((p: Record<string, unknown>) => ({ ...p, url: v }))} hint={t("settings.workspaceUrlHint")} />
                   <div>
-                    <label className="block text-neutral-300 text-[13px] mb-1.5">Industry</label>
+                    <label className="block text-neutral-300 text-[13px] mb-1.5">{t("settings.industry")}</label>
                     <select
                       value={workspaceData.industry ?? "Software / Technology"}
-                      onChange={(e) => setWorkspaceData((p: any) => ({ ...p, industry: e.target.value }))}
-                      className="w-full bg-[#0f0f0f] border border-neutral-800 rounded-lg px-3 py-2.5 text-neutral-200 text-[13px] outline-none appearance-none cursor-pointer"
+                      onChange={(e) => setWorkspaceData((p: Record<string, unknown>) => ({ ...p, industry: e.target.value }))}
+                      className="w-full bg-[#0f0f0f] border border-neutral-800 rounded-lg px-3 py-2.5 text-neutral-200 text-[13px] outline-none select-arrow cursor-pointer"
                     >
                       {workspaceData.industry && !["Software / Technology", "Design & Creative", "Finance", "Healthcare", "E-commerce"].includes(workspaceData.industry) && (
                         <option>{workspaceData.industry}</option>
@@ -775,11 +1132,11 @@ export function SettingsPage() {
                     </select>
                   </div>
                   <div>
-                    <label className="block text-neutral-300 text-[13px] mb-1.5">Team size</label>
+                    <label className="block text-neutral-300 text-[13px] mb-1.5">{t("settings.teamSize")}</label>
                     <select
                       value={workspaceData.teamSize ?? "1–10"}
-                      onChange={(e) => setWorkspaceData((p: any) => ({ ...p, teamSize: e.target.value }))}
-                      className="w-full bg-[#0f0f0f] border border-neutral-800 rounded-lg px-3 py-2.5 text-neutral-200 text-[13px] outline-none appearance-none cursor-pointer"
+                      onChange={(e) => setWorkspaceData((p: Record<string, unknown>) => ({ ...p, teamSize: e.target.value }))}
+                      className="w-full bg-[#0f0f0f] border border-neutral-800 rounded-lg px-3 py-2.5 text-neutral-200 text-[13px] outline-none select-arrow cursor-pointer"
                     >
                       {workspaceData.teamSize && !["1–10", "11–50", "51–200", "200+"].includes(workspaceData.teamSize) && (
                         <option>{workspaceData.teamSize}</option>
@@ -791,11 +1148,11 @@ export function SettingsPage() {
                     </select>
                   </div>
                   <div>
-                    <label className="block text-neutral-300 text-[13px] mb-1.5">Data region</label>
+                    <label className="block text-neutral-300 text-[13px] mb-1.5">{t("settings.dataRegion")}</label>
                     <select
                       value={workspaceData.region ?? "United States (US-East)"}
-                      onChange={(e) => setWorkspaceData((p: any) => ({ ...p, region: e.target.value }))}
-                      className="w-full bg-[#0f0f0f] border border-neutral-800 rounded-lg px-3 py-2.5 text-neutral-200 text-[13px] outline-none appearance-none cursor-pointer"
+                      onChange={(e) => setWorkspaceData((p: Record<string, unknown>) => ({ ...p, region: e.target.value }))}
+                      className="w-full bg-[#0f0f0f] border border-neutral-800 rounded-lg px-3 py-2.5 text-neutral-200 text-[13px] outline-none select-arrow cursor-pointer"
                     >
                       {workspaceData.region && !["United States (US-East)", "Europe (EU-West)", "Asia-Pacific (AP-Southeast)"].includes(workspaceData.region) && (
                         <option>{workspaceData.region}</option>
@@ -807,18 +1164,18 @@ export function SettingsPage() {
                   </div>
                 </div>
               </Section>
-              <Section title="Workspace Preferences">
+              <Section title={t("settings.workspacePreferences")}>
                 <div className="divide-y divide-neutral-800/40">
-                  <ToggleRow label="Show completed tasks" description="Display completed tasks in all task lists" />
-                  <ToggleRow label="Compact view" description="Reduce spacing in task and file lists" />
-                  <ToggleRow label="Allow public project links" description="Members can share project links externally" defaultChecked />
-                  <ToggleRow label="Require 2FA for all members" description="Enforce two-factor auth workspace-wide" />
-                  <ToggleRow label="Guest access" description="Allow external collaborators with limited access" defaultChecked />
+                  <ToggleRow label={t("settings.showCompletedTasks")} description={t("settings.showCompletedTasksDesc")} checked={workspacePrefs.showCompletedTasks} onChange={() => setWorkspacePrefs(p => ({ ...p, showCompletedTasks: !p.showCompletedTasks }))} />
+                  <ToggleRow label={t("settings.compactView")} description={t("settings.compactViewDesc")} checked={workspacePrefs.compactView} onChange={() => setWorkspacePrefs(p => ({ ...p, compactView: !p.compactView }))} />
+                  <ToggleRow label={t("settings.publicProjectLinks")} description={t("settings.publicProjectLinksDesc")} checked={workspacePrefs.publicProjectLinks} onChange={() => setWorkspacePrefs(p => ({ ...p, publicProjectLinks: !p.publicProjectLinks }))} />
+                  <ToggleRow label={t("settings.require2FA")} description={t("settings.require2FADesc")} checked={workspacePrefs.require2FA} onChange={() => setWorkspacePrefs(p => ({ ...p, require2FA: !p.require2FA }))} />
+                  <ToggleRow label={t("settings.guestAccess")} description={t("settings.guestAccessDesc")} checked={workspacePrefs.guestAccess} onChange={() => setWorkspacePrefs(p => ({ ...p, guestAccess: !p.guestAccess }))} />
                 </div>
               </Section>
               <SaveRow onSave={async () => {
-                try { await api.saveSettings("workspace", { name: "", url: "", industry: "", teamSize: "", region: "", ...workspaceData }); toast.success("Workspace settings saved"); }
-                catch (e) { console.log("Failed to save workspace:", e); toast.error("Failed to save"); }
+                try { await api.saveSettings("workspace", { name: "", url: "", industry: "", teamSize: "", region: "", ...workspaceData, workspacePrefs, logoBase64: logoSrc ?? workspaceData.logoBase64 }); toast.success(t("settings.workspaceSettingsSaved")); }
+                catch (e) { logger.error("app", "Failed to save workspace:", e); toast.error(t("settings.failedToSave")); }
               }} />
             </>
           )}
@@ -826,34 +1183,41 @@ export function SettingsPage() {
           {/* ── Appearance ── */}
           {activeNav === "Appearance" && (
             <>
-              <Section title="Theme" description="Choose your preferred color scheme.">
+              <Section title={t("settings.theme")} description={t("settings.themeDesc")}>
                 <div className="grid grid-cols-3 gap-3">
-                  {(["dark", "light", "system"] as const).map((t) => (
+                  {(["dark", "light", "system"] as const).map((th) => {
+                    const available = th === "dark";
+                    return (
                     <button
-                      key={t}
-                      onClick={() => { setTheme(t); toast.success(`Theme set to ${t}`); }}
-                      className={`relative p-3 rounded-xl border transition-all text-left ${theme === t ? "border-indigo-500 bg-indigo-950/20" : "border-neutral-800 hover:border-neutral-700"}`}
+                      key={th}
+                      disabled={!available}
+                      onClick={() => available && setTheme(th)}
+                      className={`relative p-3 rounded-xl border transition-all text-left ${theme === th ? "border-indigo-500 bg-indigo-950/20" : "border-neutral-800 hover:border-neutral-700"} ${!available ? "opacity-40 cursor-not-allowed" : ""}`}
                     >
-                      <div className={`h-14 rounded-lg mb-2.5 overflow-hidden ${t === "dark" ? "bg-neutral-900" : t === "light" ? "bg-neutral-200" : "bg-gradient-to-br from-neutral-900 to-neutral-200"}`}>
-                        <div className={`h-3 w-full ${t === "dark" ? "bg-neutral-800" : t === "light" ? "bg-neutral-300" : "bg-gradient-to-r from-neutral-800 to-neutral-300"}`} />
+                      <div className={`h-14 rounded-lg mb-2.5 overflow-hidden ${th === "dark" ? "bg-neutral-900" : th === "light" ? "bg-neutral-200" : "bg-gradient-to-br from-neutral-900 to-neutral-200"}`}>
+                        <div className={`h-3 w-full ${th === "dark" ? "bg-neutral-800" : th === "light" ? "bg-neutral-300" : "bg-gradient-to-r from-neutral-800 to-neutral-300"}`} />
                         <div className="p-1.5 space-y-1">
                           {[1, 2].map((i) => (
-                            <div key={i} className={`h-1.5 rounded-full ${t === "dark" ? "bg-neutral-700" : t === "light" ? "bg-neutral-400" : "bg-neutral-500"}`} style={{ width: i === 1 ? "80%" : "60%" }} />
+                            <div key={i} className={`h-1.5 rounded-full ${th === "dark" ? "bg-neutral-700" : th === "light" ? "bg-neutral-400" : "bg-neutral-500"}`} style={{ width: i === 1 ? "80%" : "60%" }} />
                           ))}
                         </div>
                       </div>
-                      <div className="text-neutral-200 text-[12px] capitalize">{t}</div>
-                      {theme === t && <Check size={12} className="absolute top-2.5 right-2.5 text-indigo-400" />}
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-neutral-200 text-[12px] capitalize">{th}</span>
+                        {!available && <span className="text-[9px] px-1 py-0.5 rounded bg-neutral-800 text-neutral-500">{t("settings.soon")}</span>}
+                      </div>
+                      {theme === th && available && <Check size={12} className="absolute top-2.5 right-2.5 text-indigo-400" />}
                     </button>
-                  ))}
+                    );
+                  })}
                 </div>
               </Section>
-              <Section title="Accent Color" description="Used for buttons, highlights, and active states.">
+              <Section title={t("settings.accentColor")} description={t("settings.accentColorDesc")}>
                 <div className="flex items-center gap-3">
                   {accentColors.map((c) => (
                     <button
                       key={c.value}
-                      onClick={() => { setAccentColor(c.value); toast.success(`Accent: ${c.label}`); }}
+                      onClick={() => { setAccentColor(c.value); applyAppearance({ accent: c.family }); }}
                       title={c.label}
                       className={`w-8 h-8 rounded-full transition-transform hover:scale-110 ${accentColor === c.value ? "ring-2 ring-offset-2 ring-offset-[#0f0f0f] ring-white/30 scale-110" : ""}`}
                       style={{ backgroundColor: c.value }}
@@ -861,32 +1225,34 @@ export function SettingsPage() {
                   ))}
                 </div>
               </Section>
-              <Section title="Font Size">
+              <Section title={t("settings.fontSize")}>
                 <div className="flex items-center gap-2">
                   {(["small", "medium", "large"] as const).map((s) => (
-                    <button key={s} onClick={() => setFontSize(s)}
+                    <button key={s} onClick={() => { setFontSize(s); applyAppearance({ fontSize: s }); }}
                       className={`flex-1 py-2 rounded-lg text-[12px] capitalize border transition-colors ${fontSize === s ? "border-indigo-500 bg-indigo-950/20 text-neutral-50" : "border-neutral-800 text-neutral-500 hover:border-neutral-700 hover:text-neutral-300"}`}>
                       {s}
                     </button>
                   ))}
                 </div>
               </Section>
-              <Section title="Density" description="Controls spacing throughout the interface.">
+              <Section title={t("settings.density")} description={t("settings.densityDesc")}>
                 <div className="flex items-center gap-2">
                   {(["compact", "comfortable", "spacious"] as const).map((d) => (
-                    <button key={d} onClick={() => setDensity(d)}
+                    <button key={d}
+                      onClick={() => { setDensity(d); applyAppearance({ density: d }); }}
                       className={`flex-1 py-2 rounded-lg text-[12px] capitalize border transition-colors ${density === d ? "border-indigo-500 bg-indigo-950/20 text-neutral-50" : "border-neutral-800 text-neutral-500 hover:border-neutral-700 hover:text-neutral-300"}`}>
                       {d}
                     </button>
                   ))}
                 </div>
               </Section>
-              <Section title="Sidebar Position">
+              <Section title={t("settings.sidebarPosition")}>
                 <div className="flex items-center gap-2">
-                  {["Left", "Right"].map((p, i) => (
-                    <button key={p} onClick={() => toast.success(`Sidebar position: ${p}`)}
-                      className={`flex-1 py-2 rounded-lg text-[12px] border transition-colors ${i === 0 ? "border-indigo-500 bg-indigo-950/20 text-neutral-50" : "border-neutral-800 text-neutral-500 hover:border-neutral-700 hover:text-neutral-300"}`}>
-                      {p}
+                  {(["left", "right"] as const).map((p) => (
+                    <button key={p}
+                      onClick={() => { setSidebarPosition(p); applyAppearance({ sidebarPosition: p }); }}
+                      className={`flex-1 py-2 rounded-lg text-[12px] border transition-colors ${sidebarPosition === p ? "border-indigo-500 bg-indigo-950/20 text-neutral-50" : "border-neutral-800 text-neutral-500 hover:border-neutral-700 hover:text-neutral-300"}`}>
+                      {p.charAt(0).toUpperCase() + p.slice(1)}
                     </button>
                   ))}
                 </div>
@@ -931,38 +1297,42 @@ export function SettingsPage() {
               <SaveRow onSave={() => {
                 setGlobalLang(systemLang);
                 toast.success(systemLang === "id" ? "Bahasa diubah ke Bahasa Indonesia" : "Language changed to English");
-              }} label={systemLang === "id" ? "Simpan bahasa" : "Save language"} />
+              }} label={t("settings.saveLanguage")} />
             </>
           )}
 
           {/* ── Timezone ── */}
           {activeNav === "Timezone" && (
             <>
-              <Section title="Time Zone" description="Used for task deadlines, calendar events, and timestamps.">
+              <Section title={t("settings.timeZone")} description={t("settings.timeZoneDesc")}>
                 <div className="space-y-4">
                   <div>
                     <label className="block text-neutral-300 text-[13px] mb-1.5">Time zone</label>
-                    <select className="w-full bg-[#0f0f0f] border border-neutral-800 rounded-lg px-3 py-2.5 text-neutral-200 text-[13px] outline-none appearance-none cursor-pointer">
-                      <option>Asia/Jakarta (UTC+7)</option>
-                      <option>Asia/Singapore (UTC+8)</option>
-                      <option>Asia/Tokyo (UTC+9)</option>
-                      <option>America/New_York (UTC-5)</option>
-                      <option>America/Los_Angeles (UTC-8)</option>
-                      <option>Europe/London (UTC+0)</option>
-                      <option>Europe/Paris (UTC+1)</option>
-                      <option>Australia/Sydney (UTC+11)</option>
+                    <select
+                      value={timezone}
+                      onChange={(e) => setTimezone(e.target.value)}
+                      className="w-full bg-[#0f0f0f] border border-neutral-800 rounded-lg px-3 py-2.5 text-neutral-200 text-[13px] outline-none select-arrow cursor-pointer"
+                    >
+                      <option value="Asia/Jakarta">Asia/Jakarta (UTC+7)</option>
+                      <option value="Asia/Singapore">Asia/Singapore (UTC+8)</option>
+                      <option value="Asia/Tokyo">Asia/Tokyo (UTC+9)</option>
+                      <option value="America/New_York">America/New_York (UTC-5)</option>
+                      <option value="America/Los_Angeles">America/Los_Angeles (UTC-8)</option>
+                      <option value="Europe/London">Europe/London (UTC+0)</option>
+                      <option value="Europe/Paris">Europe/Paris (UTC+1)</option>
+                      <option value="Australia/Sydney">Australia/Sydney (UTC+11)</option>
                     </select>
                   </div>
                   <div className="flex items-center justify-between py-2">
                     <div>
-                      <div className="text-neutral-200 text-[13px]">Auto-detect timezone</div>
-                      <div className="text-neutral-600 text-[12px] mt-0.5">Use your browser's timezone automatically</div>
+                      <div className="text-neutral-200 text-[13px]">{t("settings.autoDetectTimezone")}</div>
+                      <div className="text-neutral-600 text-[12px] mt-0.5">{t("settings.autoDetectTimezoneDesc")}</div>
                     </div>
-                    <Toggle checked={false} onChange={() => toast.success("Auto-detect enabled")} />
+                    <Toggle checked={false} onChange={() => toast.success(t("settings.autoDetectEnabled"))} />
                   </div>
                 </div>
               </Section>
-              <Section title="Date Format">
+              <Section title={t("settings.dateFormat")}>
                 <div className="space-y-1">
                   {[
                     { fmt: "MM/DD/YYYY", preview: new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) },
@@ -982,9 +1352,9 @@ export function SettingsPage() {
                   ))}
                 </div>
               </Section>
-              <Section title="Time Format">
+              <Section title={t("settings.timeFormat")}>
                 <div className="flex items-center gap-2">
-                  {[{ val: "12h", label: "12-hour (3:00 PM)" }, { val: "24h", label: "24-hour (15:00)" }].map((f) => (
+                  {[{ val: "12h", label: t("settings.format12h") }, { val: "24h", label: t("settings.format24h") }].map((f) => (
                     <button key={f.val} onClick={() => setTimeFormat(f.val)}
                       className={`flex-1 py-2.5 rounded-lg text-[12px] border transition-colors ${timeFormat === f.val ? "border-indigo-500 bg-indigo-950/20 text-neutral-50" : "border-neutral-800 text-neutral-500 hover:border-neutral-700 hover:text-neutral-300"}`}>
                       {f.label}
@@ -992,12 +1362,12 @@ export function SettingsPage() {
                   ))}
                 </div>
               </Section>
-              <Section title="First Day of Week">
+              <Section title={t("settings.firstDayOfWeek")}>
                 <div className="flex items-center gap-2">
-                  {["Sunday", "Monday", "Saturday"].map((d) => (
-                    <button key={d} onClick={() => setWeekStart(d)}
-                      className={`flex-1 py-2 rounded-lg text-[12px] border transition-colors ${weekStart === d ? "border-indigo-500 bg-indigo-950/20 text-neutral-50" : "border-neutral-800 text-neutral-500 hover:border-neutral-700 hover:text-neutral-300"}`}>
-                      {d}
+                  {[{ val: "Sunday", label: t("settings.sunday") }, { val: "Monday", label: t("settings.monday") }, { val: "Saturday", label: t("settings.saturday") }].map((d) => (
+                    <button key={d.val} onClick={() => setWeekStart(d.val)}
+                      className={`flex-1 py-2 rounded-lg text-[12px] border transition-colors ${weekStart === d.val ? "border-indigo-500 bg-indigo-950/20 text-neutral-50" : "border-neutral-800 text-neutral-500 hover:border-neutral-700 hover:text-neutral-300"}`}>
+                      {d.label}
                     </button>
                   ))}
                 </div>
@@ -1009,59 +1379,66 @@ export function SettingsPage() {
           {/* ── Default Notifications ── */}
           {activeNav === "Default Notifications" && (
             <>
-              <Section title="Workspace Defaults" description="These settings apply to all new workspace members. Members can override them individually.">
+              <Section title={t("settings.workspaceDefaults")} description={t("settings.workspaceDefaultsDesc")}>
                 <div className="mb-4 px-3 py-2.5 bg-neutral-800/40 rounded-lg text-neutral-500 text-[12px]">
-                  Changes here apply to new members going forward, not existing ones.
+                  {t("settings.defaultNotifApply")}
                 </div>
                 <div className="divide-y divide-neutral-800/40">
-                  <ToggleRow label="Task assigned" defaultChecked />
-                  <ToggleRow label="Task due today" defaultChecked />
-                  <ToggleRow label="Comments and mentions" defaultChecked />
-                  <ToggleRow label="Project status changes" />
-                  <ToggleRow label="New team member added" />
-                  <ToggleRow label="Weekly digest email" defaultChecked />
-                  <ToggleRow label="Product updates" />
-                  <ToggleRow label="Security alerts" defaultChecked />
+                  <ToggleRow label={t("settings.taskAssigned")} checked={defaultNotif.taskAssigned} onChange={() => setDefaultNotif(p => ({ ...p, taskAssigned: !p.taskAssigned }))} />
+                  <ToggleRow label={t("settings.taskDueToday")} checked={defaultNotif.taskDue} onChange={() => setDefaultNotif(p => ({ ...p, taskDue: !p.taskDue }))} />
+                  <ToggleRow label={t("settings.commentsAndMentions")} checked={defaultNotif.comments} onChange={() => setDefaultNotif(p => ({ ...p, comments: !p.comments }))} />
+                  <ToggleRow label={t("settings.projectStatusChanges")} checked={defaultNotif.projectStatus} onChange={() => setDefaultNotif(p => ({ ...p, projectStatus: !p.projectStatus }))} />
+                  <ToggleRow label={t("settings.newTeamMember")} checked={defaultNotif.newMember} onChange={() => setDefaultNotif(p => ({ ...p, newMember: !p.newMember }))} />
+                  <ToggleRow label={t("settings.weeklyDigest")} checked={defaultNotif.digest} onChange={() => setDefaultNotif(p => ({ ...p, digest: !p.digest }))} />
+                  <ToggleRow label={t("settings.productUpdates")} checked={defaultNotif.productUpdates} onChange={() => setDefaultNotif(p => ({ ...p, productUpdates: !p.productUpdates }))} />
+                  <ToggleRow label={t("settings.securityAlerts")} checked={defaultNotif.security} onChange={() => setDefaultNotif(p => ({ ...p, security: !p.security }))} />
                 </div>
               </Section>
               <div className="flex items-center justify-between">
-                <button onClick={() => toast.success("Defaults reset to system values")} className="text-neutral-500 hover:text-neutral-300 text-[13px] flex items-center gap-1.5 transition-colors">
-                  <RefreshCw size={13} /> Reset to system defaults
+                <button onClick={() => { setDefaultNotif({ taskAssigned: true, taskDue: true, comments: true, projectStatus: false, newMember: false, digest: true, productUpdates: false, security: true }); toast.success(t("settings.resetDefaults")); }} className="text-neutral-500 hover:text-neutral-300 text-[13px] flex items-center gap-1.5 transition-colors">
+                  <RefreshCw size={13} /> {t("settings.resetToDefaults")}
                 </button>
                 <button onClick={async () => {
                   try {
-                    await api.saveSettings("default-notifications", {
-                      taskAssigned: true, taskDue: true, comments: true, projectStatus: false,
-                      newMember: false, digest: true, productUpdates: false, security: true,
-                    });
-                    toast.success("Default notification settings saved");
-                  } catch (e) { console.log("Failed to save defaults:", e); toast.error("Failed to save"); }
+                    await api.saveSettings("notifications", { ...notifState, defaults: defaultNotif });
+                    toast.success(t("settings.defaultNotifSaved"));
+                  } catch (e) { logger.error("app", "Failed to save defaults:", e); toast.error(t("settings.failedToSave")); }
                 }} className="bg-indigo-600 hover:bg-indigo-500 text-white text-[13px] px-5 py-2 rounded-lg transition-colors">
-                  Save defaults
+                  {t("settings.saveDefaults")}
                 </button>
               </div>
             </>
           )}
 
           {/* ── Members ── */}
-          {activeNav === "Members" && (
+          {activeNav === "Members" && (() => {
+            const isAdmin = myRole === "owner" || myRole === "admin";
+            const statusDot = (s: string) => s === "active" ? "#10b981" : "#404040";
+            return (
             <>
-              <Section title="Members & Permissions" description={`${members.length} active members in this workspace.`}>
+              <Section title={t("settings.membersPermissions")} description={`${members.length} ${t("settings.activeMembersIn")}`}>
                 <div className="flex items-center justify-between mb-4">
-                  <div className="text-neutral-500 text-[12px]">Manage roles and access levels</div>
-                  <button onClick={() => setShowInvite(true)} className="bg-indigo-600 hover:bg-indigo-500 text-white text-[12px] px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1.5">
-                    <Plus size={13} /> Invite member
-                  </button>
+                  <div className="text-neutral-500 text-[12px]">{isAdmin ? t("settings.manageRoles") : t("settings.peopleInWorkspace")}</div>
+                  {isAdmin && (
+                    <button onClick={() => setShowInvite(true)} className="bg-indigo-600 hover:bg-indigo-500 text-white text-[12px] px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1.5">
+                      <Plus size={13} /> {t("settings.inviteMember")}
+                    </button>
+                  )}
                 </div>
                 <div className="bg-[#141414] border border-neutral-800/60 rounded-xl overflow-hidden">
-                  <div className="hidden md:grid grid-cols-[1fr_100px_80px_32px] gap-4 px-4 py-2.5 border-b border-neutral-800/40">
-                    {["Member", "Role", "Status", ""].map((h) => (
+                  <div className="hidden md:grid grid-cols-[1fr_120px_80px_32px] gap-4 px-4 py-2.5 border-b border-neutral-800/40">
+                    {[t("settings.memberHeader"), t("settings.roleLabel"), t("settings.statusHeader"), ""].map((h) => (
                       <div key={h} className="text-neutral-600 text-[11px] uppercase tracking-wider">{h}</div>
                     ))}
                   </div>
                   <div className="divide-y divide-neutral-800/40">
-                    {members.map((m) => (
-                      <div key={m.initials} className="grid grid-cols-[1fr_auto] md:grid-cols-[1fr_100px_80px_32px] gap-3 md:gap-4 px-4 py-3 items-center">
+                    {members.length === 0 && (
+                      <div className="px-4 py-8 text-center text-neutral-600 text-[12px]">{t("settings.noMembersYet")}</div>
+                    )}
+                    {members.map((m) => {
+                      const isOwner = m.role === "owner";
+                      return (
+                      <div key={m.user_id ?? m.email} className="grid grid-cols-[1fr_auto] md:grid-cols-[1fr_120px_80px_32px] gap-3 md:gap-4 px-4 py-3 items-center">
                         <div className="flex items-center gap-3 min-w-0">
                           <div className="w-7 h-7 rounded-full bg-indigo-900/60 flex items-center justify-center text-indigo-300 text-[11px] font-['Lexend:SemiBold',_sans-serif] shrink-0">{m.initials}</div>
                           <div className="min-w-0">
@@ -1069,142 +1446,180 @@ export function SettingsPage() {
                             <div className="text-neutral-600 text-[11px] truncate">{m.email}</div>
                           </div>
                         </div>
-                        <select
-                          value={memberRoles[m.initials]}
-                          disabled={m.role === "Owner"}
-                          onChange={async (e) => {
-                            const newRole = e.target.value;
-                            const updated = members.map((x) => x.initials === m.initials ? { ...x, role: newRole } : x);
-                            setMemberRoles((prev) => ({ ...prev, [m.initials]: newRole }));
-                            setMembers(updated);
-                            toast.success(`${m.name} role updated to ${newRole}`);
-                            await saveMembers(updated);
-                          }}
-                          className="bg-neutral-800 border border-neutral-700 text-neutral-300 text-[12px] px-2 py-1.5 rounded-lg outline-none cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                        >
-                          {["Owner", "Admin", "Member", "Viewer"].map((r) => <option key={r}>{r}</option>)}
-                        </select>
+                        {isAdmin && !isOwner ? (
+                          <select
+                            value={m.role}
+                            onChange={(e) => changeMemberRole(m, e.target.value)}
+                            className="bg-neutral-800 border border-neutral-700 text-neutral-300 text-[12px] px-2 py-1.5 rounded-lg outline-none cursor-pointer"
+                          >
+                            {["admin", "member", "viewer"].map((r) => <option key={r} value={r}>{r[0].toUpperCase() + r.slice(1)}</option>)}
+                          </select>
+                        ) : (
+                          <span className="text-neutral-400 text-[12px] capitalize">{m.role}</span>
+                        )}
                         <div className="hidden md:flex items-center gap-1.5">
-                          <div className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: m.status === "online" ? "#10b981" : m.status === "away" ? "#f59e0b" : "#404040" }} />
+                          <div className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: statusDot(m.status) }} />
                           <span className="text-neutral-500 text-[12px] capitalize">{m.status}</span>
                         </div>
-                        <button
-                          disabled={m.role === "Owner"}
-                          onClick={async () => { const updated = members.filter((x) => x.initials !== m.initials); setMembers(updated); toast.success(`${m.name} removed`); await saveMembers(updated); }}
-                          className="text-neutral-600 hover:text-red-400 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
-                        >
-                          <X size={14} />
-                        </button>
+                        {isAdmin && !isOwner ? (
+                          <button
+                            onClick={() => removeMember(m)}
+                            className="text-neutral-600 hover:text-red-400 transition-colors"
+                            aria-label={`Remove ${m.name}`}
+                          >
+                            <X size={14} />
+                          </button>
+                        ) : <span />}
                       </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </div>
               </Section>
-              <Section title="Pending Invites" description="Awaiting acceptance.">
-                <div className="space-y-2">
-                  {pendingList.map((inv) => (
-                    <div key={inv.email} className="flex items-center justify-between p-3 bg-[#141414] border border-neutral-800/60 rounded-xl gap-3">
-                      <div>
-                        <div className="text-neutral-300 text-[13px]">{inv.email}</div>
-                        <div className="text-neutral-600 text-[11px] mt-0.5">{inv.role} · Sent {inv.sent}</div>
+              {isAdmin && (
+                <Section title={t("settings.pendingInvites")} description={t("settings.pendingInvitesDesc")}>
+                  <div className="space-y-2">
+                    {pendingList.length === 0 && (
+                      <div className="text-neutral-600 text-[12px] py-2">No pending invitations.</div>
+                    )}
+                    {pendingList.map((inv) => {
+                      const link = `${window.location.origin}/join/${inv.token}`;
+                      return (
+                      <div key={inv.id} className="flex items-center justify-between p-3 bg-[#141414] border border-neutral-800/60 rounded-xl gap-3">
+                        <div className="min-w-0">
+                          <div className="text-neutral-300 text-[13px] truncate">{inv.email}</div>
+                          <div className="text-neutral-600 text-[11px] mt-0.5 capitalize">{inv.role} · pending</div>
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <button onClick={() => { navigator.clipboard.writeText(link).catch(() => {}); toast.success(t("settings.inviteLinkCopied")); }} className="text-neutral-400 hover:text-neutral-200 text-[12px] px-2.5 py-1 rounded-lg border border-neutral-800 hover:bg-neutral-800 transition-colors">Copy link</button>
+                          <button onClick={() => cancelInvite(inv)} className="text-red-400 hover:text-red-300 text-[12px] px-2.5 py-1 rounded-lg border border-red-900/40 hover:bg-red-950/30 transition-colors">Cancel</button>
+                        </div>
                       </div>
-                      <div className="flex items-center gap-2 shrink-0">
-                        <button onClick={async () => {
-                          const updated = pendingList.map((p) => p.email === inv.email ? { ...p, sent: new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) } : p);
-                          setPendingList(updated);
-                          toast.success(`Invite resent to ${inv.email}`);
-                          await saveMembers(members, updated);
-                        }} className="text-neutral-400 hover:text-neutral-200 text-[12px] px-2.5 py-1 rounded-lg border border-neutral-800 hover:bg-neutral-800 transition-colors">Resend</button>
-                        <button onClick={async () => {
-                          const updated = pendingList.filter((p) => p.email !== inv.email);
-                          setPendingList(updated);
-                          toast.success(`Invite to ${inv.email} cancelled`);
-                          await saveMembers(members, updated);
-                        }} className="text-red-400 hover:text-red-300 text-[12px] px-2.5 py-1 rounded-lg border border-red-900/40 hover:bg-red-950/30 transition-colors">Cancel</button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </Section>
+                      );
+                    })}
+                  </div>
+                </Section>
+              )}
             </>
-          )}
+            );
+          })()}
 
           {/* ── Billing ── */}
-          {activeNav === "Billing" && (
+          {activeNav === "Billing" && (() => {
+            const planActive = subscription?.status === "active";
+            const planExpired = subscription?.status === "expired";
+            const isPaid = plan.monthly > 0;
+            const intervalYearly = subscription?.interval === "yearly";
+            const priceLabel = isPaid
+              ? `${idrFmt.format(intervalYearly ? plan.yearly : plan.monthly)} ${intervalYearly ? "/ year" : "/ month"}`
+              : `${idrFmt.format(0)} / month`;
+            const statusBadge: Record<string, { label: string; cls: string }> = {
+              paid: { label: "Paid", cls: "bg-emerald-900/40 text-emerald-400" },
+              pending: { label: "Pending", cls: "bg-amber-900/40 text-amber-400" },
+              failed: { label: "Failed", cls: "bg-red-900/40 text-red-400" },
+            };
+            return (
             <>
-              <Section title="Current Plan" description={`Your workspace is on the ${billing?.plan ?? "—"} plan.`}>
+              <Section title={t("settings.currentPlan")} description={`${t("settings.workspaceOnPlan")} ${plan.name}.`}>
+                {billingLoading ? (
+                  <div className="p-6 text-center text-neutral-600 text-[13px]">Loading…</div>
+                ) : (
                 <div className="p-4 bg-indigo-950/20 border border-indigo-800/40 rounded-xl mb-3">
                   <div className="flex items-start justify-between gap-3 mb-3">
                     <div>
-                      <div className="text-neutral-50 text-[16px] font-['Lexend:SemiBold',_sans-serif] mb-0.5">{billing?.plan ?? "—"} Plan</div>
-                      <div className="text-neutral-400 text-[13px]">${billing?.price ?? 0} per seat / month · {billing?.seats ?? 0} seats</div>
+                      <div className="text-neutral-50 text-[16px] font-['Lexend:SemiBold',_sans-serif] mb-0.5">{plan.name} Plan</div>
+                      <div className="text-neutral-400 text-[13px]">{priceLabel}</div>
                     </div>
-                    <span className="text-[11px] px-2.5 py-1 rounded-full bg-indigo-900/60 text-indigo-300 shrink-0">Active</span>
+                    {planActive ? (
+                      <span className="text-[11px] px-2.5 py-1 rounded-full bg-emerald-900/40 text-emerald-400 shrink-0">Active</span>
+                    ) : planExpired ? (
+                      <span className="text-[11px] px-2.5 py-1 rounded-full bg-red-900/40 text-red-400 shrink-0">Expired</span>
+                    ) : (
+                      <span className="text-[11px] px-2.5 py-1 rounded-full bg-neutral-800 text-neutral-400 shrink-0">Free</span>
+                    )}
                   </div>
-                  <div className="text-neutral-500 text-[12px] mb-4">Next billing: <span className="text-neutral-300">{billing?.nextBilling ?? "—"}</span> · <span className="text-neutral-300">{billing ? `$${(billing.price * billing.seats).toFixed(2)}` : "—"}</span></div>
-                  <button onClick={() => toast.success("Upgrade flow coming soon")} className="bg-indigo-600 hover:bg-indigo-500 text-white text-[13px] px-4 py-2 rounded-lg transition-colors">
-                    Upgrade to Enterprise
-                  </button>
-                </div>
-              </Section>
-              <Section title="Usage" description="Current usage against your plan limits.">
-                <div className="space-y-4">
-                  {[
-                    { label: "Members", used: billing?.usage?.members ?? 0, limit: billing?.usage?.memberLimit ?? 0, color: "#818cf8" },
-                    { label: "Active projects", used: billing?.usage?.projects ?? 0, limit: billing?.usage?.projectLimit ?? 0, color: "#34d399" },
-                    { label: "Storage", used: billing?.usage?.storage ?? 0, limit: billing?.usage?.storageLimit ?? 0, unit: " GB", color: "#f59e0b" },
-                  ].map((u: any) => (
-                    <div key={u.label}>
-                      <div className="flex justify-between text-[12px] mb-1.5">
-                        <span className="text-neutral-400">{u.label}</span>
-                        <span className="text-neutral-300">{u.used}{u.unit} <span className="text-neutral-600">/ {u.limit}{u.unit}</span></span>
-                      </div>
-                      <div className="h-1.5 bg-neutral-800 rounded-full overflow-hidden">
-                        <div className="h-full rounded-full" style={{ width: `${Math.min((u.used / Math.max(u.limit, 1)) * 100, 100)}%`, backgroundColor: u.color }} />
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </Section>
-              <Section title="Payment Method">
-                <div className="flex items-center justify-between p-3 bg-[#141414] border border-neutral-800/60 rounded-xl">
-                  <div className="flex items-center gap-3">
-                    <div className="w-8 h-8 rounded-lg bg-neutral-800 flex items-center justify-center text-neutral-400">
-                      <CreditCard size={16} />
-                    </div>
-                    <div>
-                      <div className="text-neutral-200 text-[13px]">{billing?.payment?.brand ?? "Card"} ending in {billing?.payment?.last4 ?? "····"}</div>
-                      <div className="text-neutral-600 text-[11px]">Expires {billing?.payment?.expiry ?? "—"}</div>
-                    </div>
+                  <div className="text-neutral-500 text-[12px] mb-4">
+                    {planActive && subscription
+                      ? <>Renews on <span className="text-neutral-300">{billingDateFmt.format(new Date(subscription.current_period_end))}</span></>
+                      : planExpired && subscription
+                        ? <>Expired on <span className="text-neutral-300">{billingDateFmt.format(new Date(subscription.current_period_end))}</span></>
+                        : "No active paid subscription."}
                   </div>
-                  <button onClick={() => toast.success("Payment method update coming soon")} className="border border-neutral-800 hover:bg-neutral-800 text-neutral-400 hover:text-neutral-200 text-[12px] px-3 py-1.5 rounded-lg transition-colors">Update</button>
+                  <div className="flex gap-2">
+                    <Link to="/pricing" className="inline-block bg-indigo-600 hover:bg-indigo-500 text-white text-[13px] px-4 py-2 rounded-lg transition-colors">
+                      {isPaid ? "Change plan" : "Upgrade plan"}
+                    </Link>
+                    {(planActive || planExpired) && subscription && (
+                      <Link to={`/checkout/${subscription.plan_id}?interval=${subscription.interval}`} className="inline-block border border-neutral-700 hover:bg-neutral-800 text-neutral-300 text-[13px] px-4 py-2 rounded-lg transition-colors">
+                        {planExpired ? "Renew plan" : "Renew now"}
+                      </Link>
+                    )}
+                  </div>
+                </div>
+                )}
+                <div className="flex items-start gap-2 text-neutral-300 text-[12px] mt-1">
+                  {plan.features?.length > 0 && (
+                    <ul className="space-y-1.5">
+                      {plan.features.map((f) => (
+                        <li key={f} className="flex items-start gap-2">
+                          <Check size={13} className="mt-0.5 shrink-0 text-indigo-400" /> {f}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
                 </div>
               </Section>
-              <Section title="Billing History">
+              <Section title={t("settings.billingHistory")}>
                 <div className="bg-[#141414] border border-neutral-800/60 rounded-xl overflow-hidden">
+                  {transactions.length === 0 ? (
+                    <div className="px-4 py-8 text-center text-neutral-600 text-[12px]">
+                      No payments yet. Transactions from checkout will appear here.
+                    </div>
+                  ) : (
                   <div className="divide-y divide-neutral-800/40">
-                    {(billing?.invoices ?? []).map((inv: any) => (
-                      <div key={inv.date} className="grid grid-cols-[1fr_80px_60px_32px] gap-4 px-4 py-3 items-center">
-                        <div>
-                          <div className="text-neutral-300 text-[13px]">{billing?.plan ?? "—"} · {billing?.seats ?? 0} seats</div>
-                          <div className="text-neutral-600 text-[11px] mt-0.5">{inv.date}</div>
+                    {transactions.map((tx) => {
+                      const badge = statusBadge[tx.status] ?? statusBadge.pending;
+                      return (
+                      <div key={tx.order_id} className="flex items-center gap-3 px-4 py-3">
+                        <div className="min-w-0 flex-1">
+                          <div className="text-neutral-300 text-[13px]">{tx.plan_name} · {tx.interval}</div>
+                          <div className="text-neutral-600 text-[11px] mt-0.5 truncate">
+                            {billingDateFmt.format(new Date(tx.created_at))} · {tx.order_id}
+                            {tx.voucher_code ? ` · voucher ${tx.voucher_code}` : ""}
+                          </div>
                         </div>
-                        <div className="text-neutral-50 text-[13px] font-['Lexend:SemiBold',_sans-serif]">{inv.amount}</div>
-                        <span className="text-[11px] px-1.5 py-0.5 rounded-full bg-emerald-900/40 text-emerald-400 text-center">{inv.status}</span>
-                        <button onClick={() => toast.success("Invoice downloaded")} className="text-neutral-600 hover:text-neutral-400 transition-colors">
-                          <Download size={14} />
-                        </button>
+                        <div className="text-neutral-50 text-[13px] font-['Lexend:SemiBold',_sans-serif] shrink-0">{idrFmt.format(tx.gross_amount)}</div>
+                        <span className={`text-[11px] px-1.5 py-0.5 rounded-full shrink-0 ${badge.cls}`}>{badge.label}</span>
+                        {tx.status === "pending" ? (
+                          <Link to={`/payment/finish?order_id=${encodeURIComponent(tx.order_id)}`} className="text-indigo-400 hover:text-indigo-300 text-[11px] shrink-0">Continue</Link>
+                        ) : (
+                          <button onClick={() => {
+                            const blob = new Blob([JSON.stringify(tx, null, 2)], { type: "application/json" });
+                            const url = URL.createObjectURL(blob);
+                            const a = document.createElement("a");
+                            a.href = url;
+                            a.download = `invoice-${tx.order_id}.json`;
+                            a.click();
+                            URL.revokeObjectURL(url);
+                            toast.success(t("settings.invoiceDownloaded"));
+                          }} className="text-neutral-600 hover:text-neutral-400 transition-colors shrink-0">
+                            <Download size={14} />
+                          </button>
+                        )}
                       </div>
-                    ))}
+                      );
+                    })}
                   </div>
+                  )}
                 </div>
               </Section>
             </>
-          )}
+            );
+          })()}
 
           {/* ── Integrations ── */}
           {activeNav === "Integrations" && (
-            <Section title="Integrations" description="Connect external tools and services to your workspace.">
+            <Section title={t("settings.integrations")} description={t("settings.integrationsDesc")}>
               <div className="space-y-3">
                 {integrations.map((integration) => (
                   <div key={integration.name} className="p-3 lg:p-4 bg-[#141414] border border-neutral-800/60 rounded-xl">
@@ -1248,7 +1663,7 @@ export function SettingsPage() {
           {/* ── API Keys ── */}
           {activeNav === "API Keys" && (
             <>
-              <Section title="API Keys" description="Use these keys to authenticate API requests from your applications.">
+              <Section title={t("settings.apiKeys")} description={t("settings.apiKeysDesc")}>
                 <div className="bg-[#141414] border border-neutral-800/60 rounded-xl overflow-hidden mb-3">
                   <div className="hidden md:grid grid-cols-[1fr_100px_100px_auto] gap-4 px-4 py-2.5 border-b border-neutral-800/40">
                     {["Name", "Created", "Last used", ""].map((h) => (
@@ -1307,7 +1722,7 @@ export function SettingsPage() {
                 )}
               </Section>
 
-              <Section title="Webhooks" description="Receive HTTP POST requests when events occur in your workspace.">
+              <Section title={t("settings.webhooks")} description={t("settings.webhooksDesc")}>
                 <div className="space-y-2 mb-3">
                   {webhooksList.map((w, i) => (
                     <div key={i} className="p-3 bg-[#141414] border border-neutral-800/60 rounded-xl">
@@ -1364,7 +1779,7 @@ export function SettingsPage() {
 
           {/* ── Audit Log ── */}
           {activeNav === "Audit Log" && (
-            <Section title="Audit Log" description="All security and administrative actions in your workspace.">
+            <Section title={t("settings.auditLog")} description={t("settings.auditLogDesc")}>
               <div className="flex items-center gap-1 mb-4 overflow-x-auto pb-0.5">
                 {["All", "Security", "Members", "Integrations", "API", "Settings"].map((f) => (
                   <button key={f} onClick={() => setAuditFilter(f)}
@@ -1375,6 +1790,11 @@ export function SettingsPage() {
               </div>
               <div className="bg-[#141414] border border-neutral-800/60 rounded-xl overflow-hidden">
                 <div className="divide-y divide-neutral-800/40">
+                  {filteredLogs.length === 0 && (
+                    <div className="px-4 py-8 text-center text-neutral-600 text-[12px]">
+                      No activity recorded yet. Actions like role changes, integrations, and security updates will appear here.
+                    </div>
+                  )}
                   {filteredLogs.map((log, i) => (
                     <div key={i} className="flex items-start gap-3 px-4 py-3 hover:bg-neutral-800/10 transition-colors">
                       <div className="w-6 h-6 rounded-full bg-neutral-800 flex items-center justify-center text-[10px] text-neutral-400 shrink-0 mt-0.5">{log.actor}</div>
@@ -1399,16 +1819,18 @@ export function SettingsPage() {
                   ))}
                 </div>
               </div>
-              <button onClick={() => toast.success("No older entries available")} className="w-full mt-3 py-2 text-neutral-600 hover:text-neutral-400 text-[12px] transition-colors">
-                Load more
-              </button>
+              {filteredLogs.length > 0 && (
+                <button disabled className="w-full mt-3 py-2 text-neutral-700 text-[12px] transition-colors cursor-not-allowed">
+                  End of log
+                </button>
+              )}
             </Section>
           )}
 
           {/* ── Data & Export ── */}
           {activeNav === "Data & Export" && (
             <>
-              <Section title="Export Data" description="Download your workspace data in CSV or JSON format.">
+              <Section title={t("settings.exportData")} description={t("settings.exportDataDesc")}>
                 <div className="space-y-3">
                   {[
                     { label: "All tasks", description: "Titles, assignees, statuses, due dates" },
@@ -1438,28 +1860,49 @@ export function SettingsPage() {
                   ))}
                 </div>
               </Section>
-              <Section title="Data Retention" description="Control how long data is kept in your workspace.">
+              <Section title={t("settings.dataRetention")} description={t("settings.dataRetentionDesc")}>
                 <div className="divide-y divide-neutral-800/40">
-                  <ToggleRow label="Auto-archive completed tasks" description="Archive tasks after 90 days of completion" defaultChecked />
-                  <ToggleRow label="Auto-delete archived files" description="Permanently remove archived files after 365 days" />
-                  <ToggleRow label="Retain audit logs" description="Keep audit log history for 12 months" defaultChecked />
+                  <ToggleRow label={t("settings.autoArchiveCompleted")} description={t("settings.autoArchiveCompletedDesc")} checked={dataPrefs.autoArchiveCompleted} onChange={() => setDataPrefs(p => ({ ...p, autoArchiveCompleted: !p.autoArchiveCompleted }))} />
+                  <ToggleRow label={t("settings.autoDeleteArchived")} description={t("settings.autoDeleteArchivedDesc")} checked={dataPrefs.autoDeleteArchived} onChange={() => setDataPrefs(p => ({ ...p, autoDeleteArchived: !p.autoDeleteArchived }))} />
+                  <ToggleRow label={t("settings.retainAuditLogs")} description={t("settings.retainAuditLogsDesc")} checked={dataPrefs.retainAuditLogs} onChange={() => setDataPrefs(p => ({ ...p, retainAuditLogs: !p.retainAuditLogs }))} />
                 </div>
               </Section>
-              <Section title="Privacy & GDPR">
+              <SaveRow onSave={async () => {
+                try { await api.saveSettings("workspace", { name: "", url: "", industry: "", teamSize: "", region: "", ...workspaceData, workspacePrefs, dataPrefs, logoBase64: logoSrc ?? workspaceData.logoBase64 }); toast.success(t("settings.dataRetentionSaved")); }
+                catch (e) { logger.error("app", "Failed to save data retention:", e); toast.error(t("settings.failedToSave")); }
+              }} />
+              <Section title={t("settings.privacyGdpr")}>
                 <div className="space-y-3">
                   <div className="flex items-center justify-between p-3 bg-[#141414] border border-neutral-800/60 rounded-xl gap-3">
                     <div>
                       <div className="text-neutral-200 text-[13px]">Download personal data</div>
                       <div className="text-neutral-600 text-[11px] mt-0.5">A copy of all data associated with your account</div>
                     </div>
-                    <button onClick={() => toast.success("Data download requested — you'll receive an email within 24h")} className="border border-neutral-800 hover:bg-neutral-800 text-neutral-300 text-[12px] px-3 py-1.5 rounded-lg transition-colors shrink-0">Request download</button>
+                    <button onClick={async () => {
+                      try {
+                        const profile = await api.getSettings("profile");
+                        const payload = {
+                          profile,
+                          billing: { plan: plan.name, subscription, transactions },
+                          exportedAt: new Date().toISOString(),
+                        };
+                        const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement("a");
+                        a.href = url;
+                        a.download = `personal-data-${new Date().toISOString().slice(0, 10)}.json`;
+                        a.click();
+                        URL.revokeObjectURL(url);
+                        toast.success(t("settings.personalDataDownloaded"));
+                      } catch (e) { logger.error("app", "Failed to download personal data:", e); toast.error(t("settings.downloadFailed")); }
+                    }} className="border border-neutral-800 hover:bg-neutral-800 text-neutral-300 text-[12px] px-3 py-1.5 rounded-lg transition-colors shrink-0">Download</button>
                   </div>
                   <div className="flex items-center justify-between p-3 bg-[#141414] border border-neutral-800/60 rounded-xl gap-3">
                     <div>
                       <div className="text-neutral-200 text-[13px]">Request data deletion</div>
                       <div className="text-neutral-600 text-[11px] mt-0.5">Permanently remove all your personal data</div>
                     </div>
-                    <button onClick={() => toast.error("Contact support to initiate data deletion")} className="border border-red-900/40 hover:bg-red-950/30 text-red-400 hover:text-red-300 text-[12px] px-3 py-1.5 rounded-lg transition-colors shrink-0">Request deletion</button>
+                    <button onClick={() => toast.error(t("settings.contactSupportDeletion"))} className="border border-red-900/40 hover:bg-red-950/30 text-red-400 hover:text-red-300 text-[12px] px-3 py-1.5 rounded-lg transition-colors shrink-0">Request deletion</button>
                   </div>
                 </div>
               </Section>
@@ -1481,17 +1924,31 @@ export function SettingsPage() {
                 </div>
                 <div>
                   <label className="block text-neutral-300 text-[13px] mb-1.5">New owner</label>
-                  <select className="w-full bg-[#0f0f0f] border border-neutral-800 rounded-lg px-3 py-2.5 text-neutral-200 text-[13px] outline-none appearance-none cursor-pointer">
-                    {members.filter((m) => m.role === "Admin").length > 0 ? (
-                      members.filter((m) => m.role === "Admin").map((m) => (
-                        <option key={m.initials}>{m.name} ({m.email})</option>
-                      ))
-                    ) : (
-                      <option>No admins found</option>
-                    )}
+                  <select
+                    value={transferTargetEmail}
+                    onChange={(e) => setTransferTargetEmail(e.target.value)}
+                    className="w-full bg-[#0f0f0f] border border-neutral-800 rounded-lg px-3 py-2.5 text-neutral-200 text-[13px] outline-none select-arrow cursor-pointer"
+                  >
+                    <option value="">Select an admin</option>
+                    {members.filter((m) => m.role === "Admin").map((m) => (
+                      <option key={m.initials} value={m.email}>{m.name} ({m.email})</option>
+                    ))}
                   </select>
                 </div>
-                <button onClick={() => toast.success("Ownership transfer request sent — the new owner must accept via email")} className="border border-amber-800/60 hover:bg-amber-950/30 text-amber-400 hover:text-amber-300 text-[13px] px-4 py-2 rounded-lg transition-colors">
+                <button
+                  disabled={!transferTargetEmail}
+                  onClick={async () => {
+                    try {
+                      await api.transferOwnership(transferTargetEmail);
+                      toast.success(t("settings.ownershipTransferred"));
+                      await supabase.auth.signOut();
+                      window.location.href = "/";
+                    } catch (e: unknown) {
+                      toast.error((e instanceof Error ? e.message : undefined) || "Failed to transfer ownership");
+                    }
+                  }}
+                  className="border border-amber-800/60 hover:bg-amber-950/30 text-amber-400 hover:text-amber-300 text-[13px] px-4 py-2 rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                >
                   Transfer ownership
                 </button>
               </div>
@@ -1516,9 +1973,9 @@ export function SettingsPage() {
                   onClick={async () => {
                     try {
                       await api.resetWorkspaceData();
-                      toast.success("Workspace data has been reset. Refresh to see changes.");
+                      toast.success(t("settings.workspaceReset"));
                       setDangerReset("");
-                    } catch (e) { console.log("Failed to reset workspace:", e); toast.error("Failed to reset workspace data"); }
+                    } catch (e) { logger.error("app", "Failed to reset workspace:", e); toast.error(t("settings.failedToResetWorkspace")); }
                   }}
                   className="border border-red-800/60 hover:bg-red-950/30 text-red-400 hover:text-red-300 text-[13px] px-4 py-2 rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2"
                 >
@@ -1541,9 +1998,28 @@ export function SettingsPage() {
                     className="w-full bg-[#0f0f0f] border border-neutral-800 focus:border-red-600/40 rounded-lg px-3 py-2.5 text-neutral-200 text-[13px] outline-none transition-colors placeholder:text-neutral-700 font-['Lexend:Regular',_sans-serif]"
                   />
                 </div>
+                <div>
+                  <label className="block text-neutral-500 text-[12px] mb-1.5">Enter your password to confirm deletion</label>
+                  <input
+                    type="password"
+                    value={dangerPassword}
+                    onChange={(e) => setDangerPassword(e.target.value)}
+                    placeholder="Your account password"
+                    className="w-full bg-[#0f0f0f] border border-neutral-800 focus:border-red-600/40 rounded-lg px-3 py-2.5 text-neutral-200 text-[13px] outline-none transition-colors placeholder:text-neutral-700"
+                  />
+                </div>
                 <button
-                  disabled={!profileData.email || dangerEmail !== profileData.email}
-                  onClick={() => toast.error("Account deletion is disabled in this demo")}
+                  disabled={!profileData.email || dangerEmail !== profileData.email || !dangerPassword}
+                  onClick={async () => {
+                    try {
+                      await api.deleteAccount(dangerPassword);
+                      toast.success(t("settings.accountDeleted"));
+                      await supabase.auth.signOut();
+                      window.location.href = "/";
+                    } catch (e: unknown) {
+                      toast.error((e instanceof Error ? e.message : undefined) || "Failed to delete account");
+                    }
+                  }}
                   className="bg-red-700 hover:bg-red-600 disabled:opacity-40 disabled:cursor-not-allowed text-white text-[13px] px-4 py-2 rounded-lg transition-colors flex items-center gap-2"
                 >
                   <Trash2 size={14} /> Delete my account
@@ -1555,14 +2031,11 @@ export function SettingsPage() {
         </div>
       </div>
 
-      <InviteMemberModal open={showInvite} onClose={() => setShowInvite(false)} onInvite={async (teamName, member) => {
-        const newMember = { initials: member.initials, name: member.name, email: "", role: "Member", status: "online", joined: new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) };
-        const updated = [...members, newMember];
-        setMembers(updated);
-        setMemberRoles((prev) => ({ ...prev, [member.initials]: "Member" }));
-        toast.success(`${member.name} added`);
-        await saveMembers(updated);
-      }} />
+      <InviteMemberModal
+        open={showInvite}
+        onClose={() => setShowInvite(false)}
+        onInvited={() => { void loadMembersAndInvites(); }}
+      />
     </div>
   );
 }

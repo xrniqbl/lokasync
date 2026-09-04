@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { toast } from "sonner";
+import { useLang } from "../LangContext";
 import { Button } from "@/components/cossui/button";
 import {
   Card,
@@ -44,6 +45,7 @@ export function ProfilePage() {
   const { user, session, profile, setProfile } = useAuth();
   const { plan } = useSubscription();
   const { subSection, navigate } = useNavigation();
+  const { t } = useLang();
   const securityRef = useRef<HTMLDivElement>(null);
 
   const meta = (user?.user_metadata ?? {}) as Record<string, string>;
@@ -74,11 +76,11 @@ export function ProfilePage() {
   const handleSaveProfile = async (e: FormEvent) => {
     e.preventDefault();
     if (!fullName.trim()) {
-      toast.error("Full name is required");
+      toast.error(t("profile.nameRequired"));
       return;
     }
     if (!phone.trim()) {
-      toast.error("Phone number is required");
+      toast.error(t("profile.phoneRequired"));
       return;
     }
     if (!session) return;
@@ -94,7 +96,7 @@ export function ProfilePage() {
       });
     } catch (err) {
       setSaving(false);
-      toast.error(err instanceof Error ? err.message : "Failed to save profile");
+      toast.error(err instanceof Error ? err.message : t("settings.failedToSave"));
       return;
     }
     setProfile(saved);
@@ -124,17 +126,17 @@ export function ProfilePage() {
       // best-effort mirror; the KV profile is the source of truth
     }
     setSaving(false);
-    toast.success("Profile updated");
+    toast.success(t("profile.updated"));
   };
 
   const handleUpdatePassword = async (e: FormEvent) => {
     e.preventDefault();
     if (newPassword.length < 8) {
-      toast.error("Password must be at least 8 characters");
+      toast.error(t("profile.passwordMin8"));
       return;
     }
     if (newPassword !== confirmPassword) {
-      toast.error("Passwords do not match");
+      toast.error(t("profile.passwordsDoNotMatch"));
       return;
     }
     setUpdatingPassword(true);
@@ -146,7 +148,7 @@ export function ProfilePage() {
     }
     setNewPassword("");
     setConfirmPassword("");
-    toast.success("Password updated");
+    toast.success(t("profile.passwordUpdated"));
   };
 
   return (

@@ -2,6 +2,7 @@ import { useState, type FormEvent } from "react";
 import { Navigate, useNavigate } from "react-router";
 import { toast } from "sonner";
 import { Button } from "@/components/cossui/button";
+import { useLang } from "../LangContext";
 import {
   Field,
   FieldDescription,
@@ -16,12 +17,13 @@ import {
 } from "@/components/cossui/input-group";
 import { useAuth } from "../auth/AuthContext";
 import { FullScreenLoader } from "../auth/guards";
-import { saveProfile } from "../utils/api";
+import { ensureWorkspace, saveProfile } from "../utils/api";
 import { supabase } from "../utils/supabase";
 import { AuthShell } from "./auth/AuthShell";
 
 export function OnboardingPage() {
   const { session, profile, profileLoading, setProfile } = useAuth();
+  const { t } = useLang();
   const navigate = useNavigate();
 
   const [fullName, setFullName] = useState("");
@@ -57,8 +59,25 @@ export function OnboardingPage() {
           company: saved.company,
         },
       });
+      // Provision the user's workspace now so it has a meaningful name on
+      // first entry instead of the server-side default. Best-effort: if this
+      // fails, AppLayout's mount guard will retry provision with a fallback.
+      try {
+        await ensureWorkspace({
+          name: (company.trim() || `${saved.full_name}'s Workspace`).slice(0, 80),
+        });
+      } catch (wsErr: unknown) {
+        // An invited user has no workspace of their own — send them to accept
+        // the invitation instead of provisioning a stray solo workspace.
+        if (wsErr && typeof wsErr === "object" && "code" in wsErr && wsErr.code === "pending_invite" && "token" in wsErr) {
+          setProfile(saved);
+          navigate(`/join/${wsErr.token as string}`, { replace: true });
+          return;
+        }
+        // Otherwise non-fatal — Layer 2 in AppLayout retries with a server default.
+      }
       setProfile(saved);
-      toast.success("Welcome aboard!");
+      toast.success(t("onboarding.welcome"));
       navigate("/app/dashboard", { replace: true });
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to save profile");

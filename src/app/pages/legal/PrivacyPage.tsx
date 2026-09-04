@@ -5,17 +5,17 @@ const DOC: { en: LegalDoc; id: LegalDoc } = {
     title: "Privacy Policy",
     updated: "Last updated: 11 June 2026",
     intro:
-      "This Privacy Policy explains what information LokaSync (“we”, “us”) collects when you use the LokaSync project-management workspace, how we use it, and the choices you have. By creating an account or using LokaSync you agree to this policy.",
+      "This Privacy Policy explains what information LokaSync (\"we\", \"us\") collects when you use the LokaSync project-management workspace, how we use it, and the choices you have. By creating an account or using LokaSync you agree to this policy.",
     sections: [
       {
         title: "Information we collect",
         blocks: [
           "We only collect information that is needed to provide the service:",
           [
-            "Account information — your full name, email address, phone number, job title, and company name, provided when you register or edit your profile.",
-            "Workspace content — the projects, tasks, calendar events, files metadata, and other content you create inside your workspace.",
-            "Billing information — your chosen plan, billing interval, voucher codes you apply, and the status of your payment transactions.",
-            "Technical information — basic device and browser preferences (such as your language choice), stored locally on your device.",
+            "Account information -- your full name, email address, phone number, job title, and company name, provided when you register or edit your profile.",
+            "Workspace content -- the projects, tasks, calendar events, files metadata, and other content you create inside your workspace.",
+            "Billing information -- your chosen plan, billing interval, voucher codes you apply, and the status of your payment transactions.",
+            "Technical information -- basic device and browser preferences (such as your language choice), stored locally on your device.",
           ],
         ],
       },
@@ -36,7 +36,7 @@ const DOC: { en: LegalDoc; id: LegalDoc } = {
       {
         title: "Payments",
         blocks: [
-          "Payments are processed by Midtrans, a licensed Indonesian payment gateway. When you pay, your name, email, and phone number are shared with Midtrans to create the transaction, and Midtrans handles the payment itself (for example, a bank virtual account). We never see or store your card numbers or bank credentials — we only store the order ID, amount, payment method, and transaction status.",
+          "Payments are processed by Midtrans, a licensed Indonesian payment gateway. When you pay, your name, email, and phone number are shared with Midtrans to create the transaction, and Midtrans handles the payment itself (for example, a bank virtual account). We never see or store your card numbers or bank credentials -- we only store the order ID, amount, payment method, and transaction status.",
           "Midtrans processes your data under its own privacy policy, available on the Midtrans website.",
         ],
       },
@@ -80,7 +80,7 @@ const DOC: { en: LegalDoc; id: LegalDoc } = {
       {
         title: "Changes to this policy",
         blocks: [
-          "We may update this Privacy Policy from time to time. When we do, we will update the “Last updated” date above. Significant changes will be announced inside the app or by email.",
+          "We may update this Privacy Policy from time to time. When we do, we will update the \"Last updated\" date above. Significant changes will be announced inside the app or by email.",
         ],
       },
     ],
@@ -89,17 +89,17 @@ const DOC: { en: LegalDoc; id: LegalDoc } = {
     title: "Kebijakan Privasi",
     updated: "Terakhir diperbarui: 11 Juni 2026",
     intro:
-      "Kebijakan Privasi ini menjelaskan informasi apa yang dikumpulkan LokaSync (“kami”) saat Anda menggunakan ruang kerja manajemen proyek LokaSync, bagaimana kami menggunakannya, dan pilihan yang Anda miliki. Dengan membuat akun atau menggunakan LokaSync, Anda menyetujui kebijakan ini.",
+      "Kebijakan Privasi ini menjelaskan informasi apa yang dikumpulkan LokaSync (\"kami\") saat Anda menggunakan ruang kerja manajemen proyek LokaSync, bagaimana kami menggunakannya, dan pilihan yang Anda miliki. Dengan membuat akun atau menggunakan LokaSync, Anda menyetujui kebijakan ini.",
     sections: [
       {
         title: "Informasi yang kami kumpulkan",
         blocks: [
           "Kami hanya mengumpulkan informasi yang diperlukan untuk menyediakan layanan:",
           [
-            "Informasi akun — nama lengkap, alamat email, nomor telepon, jabatan, dan nama perusahaan, yang Anda berikan saat mendaftar atau mengubah profil.",
-            "Konten ruang kerja — proyek, tugas, agenda kalender, metadata file, dan konten lain yang Anda buat di dalam ruang kerja.",
-            "Informasi tagihan — paket yang Anda pilih, interval tagihan, kode voucher yang Anda gunakan, dan status transaksi pembayaran Anda.",
-            "Informasi teknis — preferensi perangkat dan browser dasar (seperti pilihan bahasa), yang disimpan secara lokal di perangkat Anda.",
+            "Informasi akun -- nama lengkap, alamat email, nomor telepon, jabatan, dan nama perusahaan, yang Anda berikan saat mendaftar atau mengubah profil.",
+            "Konten ruang kerja -- proyek, tugas, agenda kalender, metadata file, dan konten lain yang Anda buat di dalam ruang kerja.",
+            "Informasi tagihan -- paket yang Anda pilih, interval tagihan, kode voucher yang Anda gunakan, dan status transaksi pembayaran Anda.",
+            "Informasi teknis -- preferensi perangkat dan browser dasar (seperti pilihan bahasa), yang disimpan secara lokal di perangkat Anda.",
           ],
         ],
       },
@@ -120,7 +120,7 @@ const DOC: { en: LegalDoc; id: LegalDoc } = {
       {
         title: "Pembayaran",
         blocks: [
-          "Pembayaran diproses oleh Midtrans, gerbang pembayaran berlisensi di Indonesia. Saat Anda membayar, nama, email, dan nomor telepon Anda dibagikan ke Midtrans untuk membuat transaksi, dan Midtrans yang menangani pembayarannya (misalnya virtual account bank). Kami tidak pernah melihat atau menyimpan nomor kartu maupun kredensial bank Anda — kami hanya menyimpan ID pesanan, jumlah, metode pembayaran, dan status transaksi.",
+          "Pembayaran diproses oleh Midtrans, gerbang pembayaran berlisensi di Indonesia. Saat Anda membayar, nama, email, dan nomor telepon Anda dibagikan ke Midtrans untuk membuat transaksi, dan Midtrans yang menangani pembayarannya (misalnya virtual account bank). Kami tidak pernah melihat atau menyimpan nomor kartu maupun kredensial bank Anda -- kami hanya menyimpan ID pesanan, jumlah, metode pembayaran, dan status transaksi.",
           "Midtrans memproses data Anda berdasarkan kebijakan privasinya sendiri, yang tersedia di situs web Midtrans.",
         ],
       },
@@ -164,7 +164,7 @@ const DOC: { en: LegalDoc; id: LegalDoc } = {
       {
         title: "Perubahan kebijakan ini",
         blocks: [
-          "Kami dapat memperbarui Kebijakan Privasi ini dari waktu ke waktu. Saat itu terjadi, tanggal “Terakhir diperbarui” di atas akan kami sesuaikan. Perubahan signifikan akan diumumkan di dalam aplikasi atau melalui email.",
+          "Kami dapat memperbarui Kebijakan Privasi ini dari waktu ke waktu. Saat itu terjadi, tanggal \"Terakhir diperbarui\" di atas akan kami sesuaikan. Perubahan signifikan akan diumumkan di dalam aplikasi atau melalui email.",
         ],
       },
     ],
