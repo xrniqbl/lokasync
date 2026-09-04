@@ -775,7 +775,7 @@ const dict = {
   "pricing.features.business": { en: '["Everything in Pro","Advanced dashboards & forecasting","Unlimited file storage","Audit log & API access","Dedicated support"]', id: '["Semua di Pro","Dashboard & peramalan lanjutan","Penyimpanan file tanpa batas","Log audit & akses API","Dukungan khusus"]' },
   // Comparison table
   "pricing.feature": { en: "Feature", id: "Fitur" },
-  "pricing.compare.features": { en: '["Projects","Tasks per project","Team members","Calendar view","File storage","Real-time sync","Kanban & list views","Analytics dashboard","Team management","Priority support","Custom workspace settings","API access","Audit log"]', id: '["Proyek","Tugas per proyek","Anggota tim","Tampilan kalender","Penyimpanan file","Sinkronisasi real-time","Tampilan Kanban & list","Dashboard analitik","Manajemen tim","Dukungan prioritas","Pengaturan workspace kustom","Akses API","Log audit"]' },
+  "pricing.compare.features": { en: "[\"Projects\",\"Tasks per project\",\"Team members\",\"Calendar view\",\"File storage\",\"Real-time sync\",\"Kanban & list views\",\"Analytics dashboard\",\"Team management\",\"Priority support\",\"Custom workspace settings\",\"API access\",\"Audit log\"]", id: "[\"Proyek\",\"Tugas per proyek\",\"Anggota tim\",\"Tampilan kalender\",\"Penyimpanan file\",\"Sinkronisasi real-time\",\"Tampilan Kanban & list\",\"Dashboard analitik\",\"Manajemen tim\",\"Dukungan prioritas\",\"Pengaturan workspace kustom\",\"Akses API\",\"Log audit\"]" },
   // Pricing FAQ
   "pricing.faq.q1": { en: "Is the Free plan really free forever?", id: "Apakah paket Free benar-benar gratis selamanya?" },
   "pricing.faq.a1": { en: "Yes. The Free plan gives you up to 3 projects with no time limit and no credit card required. You can use it indefinitely. Upgrade only when you need more projects, analytics, or team management.", id: "Ya. Paket Free memberi Anda hingga 3 proyek tanpa batas waktu dan tanpa kartu kredit. Anda bisa menggunakannya tanpa batas. Upgrade hanya saat butuh lebih banyak proyek, analitik, atau manajemen tim." },
@@ -1008,7 +1008,7 @@ const dict = {
   "settings.enterKeyName": { en: "Enter a name for the key", id: "Masukkan nama untuk kunci" },
   "settings.apiKeyGenerated": { en: "API key generated — copy it now, it won't be shown again", id: "Kunci API dibuat — salin sekarang, tidak akan ditampilkan lagi" },
   "settings.failedToSaveApiKeys": { en: "Failed to save API keys", id: "Gagal menyimpan kunci API" },
-  "settings.apiKeyRevoked": { en: 'API key "{name}" revoked', id: 'Kunci API "{name}" dicabut' },
+  "settings.apiKeyRevoked": { en: "API key \"{name}\" revoked", id: "Kunci API \"{name}\" dicabut" },
   "settings.failedToSaveWebhooks": { en: "Failed to save webhooks", id: "Gagal menyimpan webhook" },
   "settings.webhookDeleted": { en: "Webhook deleted", id: "Webhook dihapus" },
   "settings.roleChanged": { en: "{name} is now {role}", id: "{name} sekarang {role}" },
