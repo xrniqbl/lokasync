@@ -98,7 +98,7 @@ export function LoginPage() {
         </Field>
         <Field>
           <div className="flex w-full items-center justify-between">
-            <FieldLabel>{t("settings.newPassword")}</FieldLabel>
+            <FieldLabel>{t("auth.password")}</FieldLabel>
             <Link
               to="/forgot-password"
               className="text-xs text-neutral-400 hover:text-[#fafafa] hover:underline"

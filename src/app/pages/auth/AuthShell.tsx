@@ -1,5 +1,4 @@
 import type { ReactNode } from "react";
-import { Link } from "react-router";
 import {
   Card,
   CardDescription,
@@ -8,6 +7,8 @@ import {
   CardPanel,
   CardTitle,
 } from "@/components/cossui/card";
+import { LokaLogo } from "../../components/LokaLogo";
+import { SEOHead } from "../../components/SEOHead";
 
 interface AuthShellProps {
   title: string;
@@ -29,11 +30,8 @@ export function AuthShell({
       className="dark flex min-h-screen w-full flex-col items-center justify-center gap-6 bg-[#0f0f0f] px-4 py-10"
       style={{ fontFamily: "Lexend, sans-serif" }}
     >
-      <Link to="/" aria-label="LokaSync home">
-        <span className="text-lg font-bold tracking-[0.08em] text-[#fafafa]">
-          LOKASYNC
-        </span>
-      </Link>
+      <SEOHead title={`${title} — LokaSync`} robots="noindex, nofollow" />
+      <LokaLogo size="md" />
       <Card
         className={`w-full border-neutral-800 bg-[#1a1a1a] ${wide ? "max-w-md" : "max-w-sm"}`}
       >

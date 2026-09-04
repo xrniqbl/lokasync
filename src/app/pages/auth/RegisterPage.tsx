@@ -36,7 +36,7 @@ function passwordStrength(pw: string): 0 | 1 | 2 | 3 {
 }
 
 const strengthMeta = [
-  { label: "", color: "" },
+  { label: "Weak", color: "#ef4444" },
   { label: "Weak", color: "#ef4444" },
   { label: "Fair", color: "#f59e0b" },
   { label: "Strong", color: "#10b981" },
@@ -201,7 +201,7 @@ export function RegisterPage() {
                   ))}
                 </div>
                 <span className="text-xs text-neutral-500">
-                  {t(`auth.${strengthMeta[strength].label.toLowerCase()}`)}
+                  {t(`auth.${strengthMeta[strength].label.toLowerCase()}` as any)}
                 </span>
               </div>
             )}
