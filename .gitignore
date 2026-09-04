@@ -17,5 +17,20 @@ projectmanagement/
 .claude/
 .agents/
 
+# Python (dev-only LLM review scripts)
+__pycache__/
+*.py[cod]
+
+# Local agent/kimchi scratch
+.kimchi/
+
 # Logs
 *.log
+
+# Supabase CLI local state
+supabase/.temp/
+
+# One-off dev patch scripts
+.patch_*.py
+fix-encoding.*
+fix2.cjs

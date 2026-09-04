@@ -1,0 +1,27 @@
+# robots.txt — LokaSync
+# https://lokasync.app
+
+User-agent: *
+Allow: /
+Allow: /pricing
+Allow: /privacy
+Allow: /terms
+
+# Auth pages — no SEO value, prevent thin-content indexing
+Disallow: /login
+Disallow: /register
+Disallow: /forgot-password
+Disallow: /reset-password
+Disallow: /verify-email
+
+# Authenticated app — not public content
+Disallow: /app/
+Disallow: /admin
+
+# Transactional / one-time pages
+Disallow: /onboarding
+Disallow: /join/
+Disallow: /checkout/
+Disallow: /payment/
+
+Sitemap: https://lokasync.app/sitemap.xml
