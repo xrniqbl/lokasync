@@ -1,0 +1,13 @@
+{
+  "importMap": "./import_map.json",
+  "compilerOptions": {
+    "lib": ["deno.ns", "deno.unstable", "dom"],
+    "strict": false,
+    "noImplicitAny": false
+  },
+  "lint": {
+    "rules": {
+      "exclude": ["no-explicit-any"]
+    }
+  }
+}

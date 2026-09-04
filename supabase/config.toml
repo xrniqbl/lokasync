@@ -2,3 +2,4 @@
 # header; authenticity is verified in-code via the SHA512 signature_key.
 [functions.server]
 verify_jwt = false
+import_map = "./functions/import_map.json"
