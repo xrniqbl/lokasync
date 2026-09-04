@@ -1,6 +1,8 @@
-import { useEffect, useRef } from "react";
+import { logger } from "../utils/logger";
+import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router";
-import { Check } from "lucide-react";
+import { Check, CreditCard } from "lucide-react";
+import { toast } from "sonner";
 import { Button } from "@/components/cossui/button";
 import {
   Card,
@@ -14,8 +16,25 @@ import { Separator } from "@/components/cossui/separator";
 import { Spinner } from "@/components/cossui/spinner";
 import { useNavigation } from "./NavigationContext";
 import { useSubscription } from "../subscription/SubscriptionContext";
+import { useAuth } from "../auth/AuthContext";
+import { getPaymentStatus } from "../utils/api";
 import type { TransactionSummary } from "../utils/api";
 import { useLang } from "../LangContext";
+
+/** Load Midtrans Snap.js dynamically (shared with CheckoutPage). */
+function loadSnap(clientKey: string, isProduction: boolean): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (window.snap) return resolve();
+    const script = document.createElement("script");
+    script.src = isProduction
+      ? "https://app.midtrans.com/snap/snap.js"
+      : "https://app.sandbox.midtrans.com/snap/snap.js";
+    script.setAttribute("data-client-key", clientKey);
+    script.onload = () => resolve();
+    script.onerror = () => reject(new Error("Failed to load Midtrans Snap"));
+    document.head.appendChild(script);
+  });
+}
 
 const idr = new Intl.NumberFormat("id-ID", {
   style: "currency",
@@ -35,9 +54,52 @@ const STATUS_BADGES: Record<string, { labelKey: string; className: string }> = {
   failed: { labelKey: "billingPage.failed", className: "bg-red-950/60 text-red-400" },
 };
 
-function TransactionRow({ tx }: { tx: TransactionSummary }) {
+function TransactionRow({ tx, onPaid }: { tx: TransactionSummary; onPaid?: () => void }) {
   const { t } = useLang();
+  const { session } = useAuth();
+  const { refresh } = useSubscription();
+  const [opening, setOpening] = useState(false);
   const badge = STATUS_BADGES[tx.status] ?? STATUS_BADGES.pending;
+
+  const handlePayNow = async () => {
+    if (!session?.access_token) return;
+    setOpening(true);
+    try {
+      const status = await getPaymentStatus(session.access_token, tx.order_id);
+
+      if (status.status === "paid") {
+        toast.success(t("billing.paymentAlreadyCompleted"));
+        refresh();
+        onPaid?.();
+        setOpening(false);
+        return;
+      }
+
+      if (!status.snap_token || !status.client_key) {
+        toast.error(t("billing.sessionExpired"));
+        setOpening(false);
+        return;
+      }
+
+      await loadSnap(status.client_key, status.is_production ?? false);
+      window.snap!.pay(status.snap_token, {
+        onSuccess: () => {
+          toast.success(t("billing.paymentSuccessful"));
+          refresh();
+          onPaid?.();
+        },
+        onPending: () => toast.info("Payment is being processed"),
+        onError: () => toast.error(t("billing.paymentFailed")),
+        onClose: () => {},
+      });
+    } catch (e) {
+      logger.error("app", "Failed to open payment:", e);
+      toast.error(t("billing.couldNotOpenPayment"));
+    } finally {
+      setOpening(false);
+    }
+  };
+
   return (
     <div className="flex items-center gap-3 py-3">
       <div className="min-w-0 flex-1">
@@ -61,12 +123,14 @@ function TransactionRow({ tx }: { tx: TransactionSummary }) {
           {idr.format(tx.gross_amount)}
         </div>
         {tx.status === "pending" && (
-          <Link
-            to={`/payment/finish?order_id=${encodeURIComponent(tx.order_id)}`}
-            className="text-[11px] text-indigo-400 underline-offset-4 hover:underline"
+          <button
+            onClick={handlePayNow}
+            disabled={opening}
+            className="inline-flex items-center gap-1 text-[11px] text-indigo-400 hover:text-indigo-300 transition-colors disabled:opacity-50 mt-0.5"
           >
-            {t("billingPage.continuePayment")}
-          </Link>
+            <CreditCard size={11} />
+            {opening ? "Opening..." : t("billingPage.continuePayment")}
+          </button>
         )}
       </div>
     </div>

@@ -1,6 +1,10 @@
+import { logger } from "../utils/logger";
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router";
-import { CheckCircle2, Clock, XCircle } from "lucide-react";
+import { toast } from "sonner";
+import { CheckCircle2, Clock, CreditCard, XCircle } from "lucide-react";
+import { LokaLogo } from "../components/LokaLogo";
+import { useLang } from "../LangContext";
 import { Button } from "@/components/cossui/button";
 import {
   Card,
@@ -22,22 +26,69 @@ const idr = new Intl.NumberFormat("id-ID", {
   maximumFractionDigits: 0,
 });
 
-const POLL_MS = 4000;
+const BASE_POLL_MS = 4000;
+const MAX_RETRIES = 30; // ~2 minutes at base interval with backoff
+
+/** Load Midtrans Snap.js dynamically. */
+function loadSnap(clientKey: string, isProduction: boolean): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (window.snap) return resolve();
+    const script = document.createElement("script");
+    script.src = isProduction
+      ? "https://app.midtrans.com/snap/snap.js"
+      : "https://app.sandbox.midtrans.com/snap/snap.js";
+    script.setAttribute("data-client-key", clientKey);
+    script.onload = () => resolve();
+    script.onerror = () => reject(new Error("Failed to load Midtrans Snap"));
+    document.head.appendChild(script);
+  });
+}
 
 export function PaymentStatusPage() {
   const [searchParams] = useSearchParams();
   const orderId = searchParams.get("order_id");
   const { session } = useAuth();
+  const { t } = useLang();
   const { refresh: refreshSubscription } = useSubscription();
   const navigate = useNavigate();
 
   const [result, setResult] = useState<PaymentStatusResult | null>(null);
   const [notFound, setNotFound] = useState(false);
+  const [openingSnap, setOpeningSnap] = useState(false);
+  const [takingTooLong, setTakingTooLong] = useState(false);
   const timer = useRef<number>();
+
+  const handleCompletePayment = async () => {
+    if (!result?.snap_token || !result?.client_key) {
+      toast.error(t("checkout.paymentExpired"));
+      navigate(`/checkout/${result?.plan_id}?interval=${result?.interval}`);
+      return;
+    }
+    setOpeningSnap(true);
+    try {
+      await loadSnap(result.client_key, result.is_production ?? false);
+      window.snap!.pay(result.snap_token, {
+        onSuccess: () => {
+          toast.success(t("checkout.paymentSuccess"));
+          refreshSubscription();
+          setResult((prev) => prev ? { ...prev, status: "paid" } : prev);
+        },
+        onPending: () => toast.info("Payment is being processed"),
+        onError: () => toast.error(t("checkout.paymentFailed")),
+        onClose: () => {},
+      });
+    } catch (e) {
+      logger.error("app", "Failed to open Snap:", e);
+      toast.error(t("checkout.couldNotOpen"));
+    } finally {
+      setOpeningSnap(false);
+    }
+  };
 
   useEffect(() => {
     if (!orderId || !session) return;
     let cancelled = false;
+    let attempts = 0;
 
     const poll = async () => {
       try {
@@ -45,15 +96,26 @@ export function PaymentStatusPage() {
         if (cancelled) return;
         setResult(status);
         if (status.status === "pending") {
-          timer.current = window.setTimeout(poll, POLL_MS);
+          attempts++;
+          if (attempts >= MAX_RETRIES) {
+            setTakingTooLong(true);
+            return;
+          }
+          const delay = Math.min(BASE_POLL_MS * Math.pow(1.5, attempts), 30000);
+          timer.current = window.setTimeout(poll, delay);
         } else if (status.status === "paid") {
-          // Plan changed — make gated pages pick it up without a reload
           void refreshSubscription();
         }
       } catch (err) {
         if (cancelled) return;
-        if (String(err).includes("404")) setNotFound(true);
-        else timer.current = window.setTimeout(poll, POLL_MS);
+        if (String(err).includes("404")) { setNotFound(true); return; }
+        attempts++;
+        if (attempts >= MAX_RETRIES) {
+          setTakingTooLong(true);
+          return;
+        }
+        const delay = Math.min(BASE_POLL_MS * Math.pow(1.5, attempts), 30000);
+        timer.current = window.setTimeout(poll, delay);
       }
     };
     poll();
@@ -148,9 +210,14 @@ export function PaymentStatusPage() {
             <span>Total</span>
             <span>{idr.format(result.gross_amount)}</span>
           </div>
-          {result.status === "pending" && (
+          {result.status === "pending" && !takingTooLong && (
             <p className="mt-2 flex items-center gap-2 text-[12px] text-neutral-500">
               <Spinner className="size-3.5" /> Checking payment status…
+            </p>
+          )}
+          {result.status === "pending" && takingTooLong && (
+            <p className="mt-2 text-[12px] text-amber-400">
+              This is taking longer than expected. You can check back later or contact support.
             </p>
           )}
         </CardPanel>
@@ -166,6 +233,24 @@ export function PaymentStatusPage() {
             >
               Try again
             </Button>
+          ) : result.status === "pending" && result.snap_token ? (
+            <>
+              <Button
+                className="w-full"
+                loading={openingSnap}
+                onClick={handleCompletePayment}
+              >
+                <CreditCard className="mr-1.5 size-4" />
+                Complete Payment
+              </Button>
+              <Button
+                className="w-full"
+                variant="outline"
+                onClick={() => navigate("/app/dashboard")}
+              >
+                Go to dashboard
+              </Button>
+            </>
           ) : (
             <Button
               className="w-full"
@@ -194,11 +279,7 @@ function Shell({ children }: { children: React.ReactNode }) {
       className="dark flex min-h-screen w-full flex-col items-center bg-[#0f0f0f] px-4 py-12"
       style={{ fontFamily: "Lexend, sans-serif" }}
     >
-      <Link to="/" aria-label="LokaSync home">
-        <span className="text-lg font-bold tracking-[0.08em] text-[#fafafa]">
-          LOKASYNC
-        </span>
-      </Link>
+      <LokaLogo size="md" />
       {children}
     </div>
   );

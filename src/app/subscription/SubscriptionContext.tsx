@@ -1,3 +1,4 @@
+import { logger } from "../utils/logger";
 import {
   createContext,
   useCallback,
@@ -82,7 +83,7 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
         if (!cancelled) setInfo(data);
       })
       .catch((e) => {
-        console.error("Failed to load subscription:", e);
+        logger.error("app", "Failed to load subscription:", e);
         if (!cancelled) setInfo(null);
       })
       .finally(() => {
@@ -101,7 +102,7 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
       setInfo(await getSubscription(token));
       setLoaded(true);
     } catch (e) {
-      console.error("Failed to refresh subscription:", e);
+      logger.error("app", "Failed to refresh subscription:", e);
     }
   }, [session?.access_token]);
 

@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Link } from "react-router";
 import { Clock, X } from "lucide-react";
 import { useSubscription } from "../subscription/SubscriptionContext";
+import { useLang } from "../LangContext";
 
 const REMIND_DAYS = 7;
 
@@ -12,6 +13,7 @@ const REMIND_DAYS = 7;
  */
 export function RenewalBanner() {
   const { plan, subscription } = useSubscription();
+  const { t } = useLang();
   const [, forceRender] = useState(0);
 
   if (subscription?.status !== "active" || !subscription.current_period_end) {
@@ -40,7 +42,7 @@ export function RenewalBanner() {
   };
 
   const when =
-    daysLeft === 0 ? "today" : daysLeft === 1 ? "tomorrow" : `in ${daysLeft} days`;
+    daysLeft === 0 ? t("renewal.today") : daysLeft === 1 ? t("renewal.tomorrow") : t("renewal.inDays").replace("{days}", String(daysLeft));
 
   return (
     <div
@@ -50,18 +52,18 @@ export function RenewalBanner() {
     >
       <Clock className="size-3.5 shrink-0 text-amber-400" aria-hidden="true" />
       <span>
-        Your {plan.name} plan ends {when}. Renew to keep your paid features.
+        {t("renewal.endsIn").replace("{plan}", plan.name).replace("{when}", when)}
       </span>
       <Link
         to="/app/billing"
         className="shrink-0 rounded-full border border-amber-400/40 px-3 py-0.5 text-amber-100 transition-colors hover:bg-amber-400/10"
       >
-        Renew
+        {t("renewal.renew")}
       </Link>
       <button
         type="button"
         onClick={dismiss}
-        aria-label="Dismiss reminder"
+        aria-label={t("renewal.dismiss")}
         className="ml-1 flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-full text-amber-400/70 transition-colors hover:bg-amber-400/10 hover:text-amber-200"
       >
         <X className="size-3.5" />

@@ -1,3 +1,4 @@
+import { logger } from "../utils/logger";
 import { useEffect, useState, type FormEvent } from "react";
 import {
   Link,
@@ -7,6 +8,8 @@ import {
   useSearchParams,
 } from "react-router";
 import { Check, X } from "lucide-react";
+import { LokaLogo } from "../components/LokaLogo";
+import { useLang } from "../LangContext";
 import { toast } from "sonner";
 import { Button } from "@/components/cossui/button";
 import {
@@ -71,6 +74,7 @@ const idr = new Intl.NumberFormat("id-ID", {
 
 export function CheckoutPage() {
   const { planId } = useParams();
+  const { t } = useLang();
   const [searchParams, setSearchParams] = useSearchParams();
   const interval: BillingInterval =
     searchParams.get("interval") === "yearly" ? "yearly" : "monthly";
@@ -97,7 +101,7 @@ export function CheckoutPage() {
     getPlans()
       .then(setPlans)
       .catch((e) => {
-        console.error("Failed to load plans:", e);
+        logger.error("app", "Failed to load plans:", e);
         setPlansError(true);
       });
   }, []);
@@ -169,8 +173,8 @@ export function CheckoutPage() {
         toast.error(result.reason ?? "This voucher code is not valid");
       }
     } catch (err) {
-      console.error("Voucher validation failed:", err);
-      toast.error("Could not validate the voucher. Please try again.");
+      logger.error("app", "Voucher validation failed:", err);
+      toast.error(t("checkout.voucherError"));
     } finally {
       setApplying(false);
     }
@@ -198,7 +202,7 @@ export function CheckoutPage() {
         onClose: () => setPaying(false),
       });
     } catch (err) {
-      console.error("Checkout failed:", err);
+      logger.error("app", "Checkout failed:", err);
       const message = String(err);
       toast.error(
         message.includes("503")
@@ -392,11 +396,7 @@ function CheckoutShell({ children }: { children: React.ReactNode }) {
       className="dark flex min-h-screen w-full flex-col items-center bg-[#0f0f0f] px-4 py-12"
       style={{ fontFamily: "Lexend, sans-serif" }}
     >
-      <Link to="/" aria-label="LokaSync home">
-        <span className="text-lg font-bold tracking-[0.08em] text-[#fafafa]">
-          LOKASYNC
-        </span>
-      </Link>
+      <LokaLogo size="md" />
       <h1 className="mt-8 text-center text-[24px] text-neutral-50">Checkout</h1>
       <p className="mt-1 text-[13px] text-neutral-500">
         <Link

@@ -6,6 +6,7 @@ import {
   useSubscription,
   type PlanId,
 } from "../subscription/SubscriptionContext";
+import { useLang } from "../LangContext";
 
 /**
  * Blocks the page behind it until the user's plan rank reaches `min`.
@@ -22,6 +23,7 @@ export function PlanGate({
   children: React.ReactNode;
 }) {
   const { hasPlan, loading, plan } = useSubscription();
+  const { t } = useLang();
 
   if (hasPlan(min)) return <>{children}</>;
 
@@ -45,23 +47,22 @@ export function PlanGate({
       </div>
       <div>
         <h2 className="text-[16px] text-neutral-50">
-          {feature} is a {requiredName} feature
+          {t("planGate.isAFeature").replace("{feature}", feature).replace("{plan}", requiredName)}
         </h2>
         <p className="mx-auto mt-1 max-w-sm text-[13px] text-neutral-500">
-          You are on the {plan.name} plan. Upgrade to {requiredName} to unlock{" "}
-          {feature.toLowerCase()} for your workspace.
+          {t("planGate.upgradeRequired").replace("{currentPlan}", plan.name).replace("{requiredPlan}", requiredName).replace("{feature}", feature.toLowerCase())}
         </p>
       </div>
       <div className="flex items-center gap-2">
         <Button variant="outline" render={<Link to="/pricing" />}>
-          Compare plans
+          {t("planGate.comparePlans")}
         </Button>
         <Button
           render={
             <Link to={`/checkout/${min === "business" ? "business" : "pro"}?interval=monthly`} />
           }
         >
-          Upgrade to {requiredName}
+          {t("planGate.upgradeTo").replace("{plan}", requiredName)}
         </Button>
       </div>
     </div>
