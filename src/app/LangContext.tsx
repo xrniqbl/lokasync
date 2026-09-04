@@ -17,7 +17,7 @@ import { t as translate, type TranslationKey } from "./i18n-dict";
 interface LangContextValue {
   lang: Lang;
   setLang: (lang: Lang) => void;
-  t: (key: TranslationKey) => string;
+  t: (key: TranslationKey | (string & {})) => string;
 }
 
 const LangContext = createContext<LangContextValue>({
@@ -52,7 +52,7 @@ export function LangProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const t = useCallback(
-    (key: TranslationKey) => translate(key, lang),
+    (key: TranslationKey | (string & {})) => translate(key, lang),
     [lang],
   );
 
