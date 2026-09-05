@@ -72,7 +72,15 @@ function RenderContent({ content }: { content: string }) {
 
 /** Format inline markdown: **bold** */
 function inlineFormat(text: string): string {
-  return text.replace(/\*\*(.*?)\*\*/g, '<strong class="text-neutral-100 font-semibold">$1</strong>');
+  // Escape first, then apply the bold markup — content is first-party today,
+  // but any future source (CMS, contributor post) must not inject raw HTML.
+  const escaped = text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+  return escaped.replace(/\*\*(.*?)\*\*/g, '<strong class="text-neutral-100 font-semibold">$1</strong>');
 }
 
 export function BlogArticlePage() {

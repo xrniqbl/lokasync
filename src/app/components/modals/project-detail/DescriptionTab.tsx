@@ -1,9 +1,22 @@
 import { useRef, useCallback, useState, useEffect } from "react";
 import { Bold, Italic, List, Link } from "lucide-react";
+import DOMPurify from "dompurify";
 
 interface DescriptionTabProps {
   description: string;
   onChange: (html: string) => void;
+}
+
+// Descriptions are user-authored rich text (contenteditable + paste). They are
+// stored as-is by the server and rendered as HTML here — the only render path —
+// so both the stored value and what we echo back MUST be sanitized, otherwise a
+// member could paste <img onerror=…>/<script> and run it in every teammate's
+// session (stored XSS).
+function sanitizeDescription(html: string): string {
+  return DOMPurify.sanitize(html, {
+    ALLOWED_TAGS: ["b", "strong", "i", "em", "u", "s", "br", "p", "div", "span", "ul", "ol", "li", "a"],
+    ALLOWED_ATTR: ["href", "target", "rel"],
+  });
 }
 
 export function DescriptionTab({ description, onChange }: DescriptionTabProps) {
@@ -20,7 +33,7 @@ export function DescriptionTab({ description, onChange }: DescriptionTabProps) {
       el.innerHTML = "";
       setShowPlaceholder(true);
     } else {
-      el.innerHTML = description;
+      el.innerHTML = sanitizeDescription(description);
       setShowPlaceholder(false);
     }
   }, [description]);
@@ -31,7 +44,7 @@ export function DescriptionTab({ description, onChange }: DescriptionTabProps) {
     const isEmpty = editorRef.current.textContent?.trim() === "";
     setShowPlaceholder(isEmpty);
     // No inner debounce — container's autoSave handles debouncing (Issue #12)
-    onChange(isEmpty ? "" : html);
+    onChange(isEmpty ? "" : sanitizeDescription(html));
   }, [onChange]);
 
   const exec = (cmd: string, value?: string) => {
