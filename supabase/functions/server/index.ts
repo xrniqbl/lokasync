@@ -458,6 +458,86 @@ async function checkRateLimit(
 const rateLimited = (c: any) =>
   c.json({ error: "Too many attempts. Please try again later.", code: "rate_limited" }, 429);
 
+// ── TOTP 2FA helpers ──────────────────────────────────────────────────────────
+// RFC 6238 over HMAC-SHA1 via WebCrypto. Secrets are base32 (RFC 4648).
+
+const BASE32_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+
+function bytesToBase32(bytes: Uint8Array): string {
+  let bits = 0;
+  let value = 0;
+  let out = "";
+  for (let i = 0; i < bytes.length; i++) {
+    value = (value << 8) | bytes[i];
+    bits += 8;
+    while (bits >= 5) {
+      out += BASE32_ALPHABET[(value >>> (bits - 5)) & 31];
+      bits -= 5;
+    }
+  }
+  if (bits > 0) out += BASE32_ALPHABET[(value << (5 - bits)) & 31];
+  return out;
+}
+
+function base32ToBytes(base32: string): Uint8Array {
+  const cleaned = base32.toUpperCase().replace(/=+$/, "").replace(/[^A-Z2-7]/g, "");
+  let bits = 0;
+  let value = 0;
+  const out: number[] = [];
+  for (let i = 0; i < cleaned.length; i++) {
+    value = (value << 5) | BASE32_ALPHABET.indexOf(cleaned[i]);
+    bits += 5;
+    if (bits >= 8) {
+      out.push((value >>> (bits - 8)) & 255);
+      bits -= 8;
+    }
+  }
+  return new Uint8Array(out);
+}
+
+async function hmacSha1(key: Uint8Array, message: Uint8Array): Promise<Uint8Array> {
+  const cryptoKey = await crypto.subtle.importKey("raw", key, { name: "HMAC", hash: "SHA-1" }, false, ["sign"]);
+  const sig = await crypto.subtle.sign("HMAC", cryptoKey, message);
+  return new Uint8Array(sig);
+}
+
+function uint64ToBytes(counter: number): Uint8Array {
+  const buf = new ArrayBuffer(8);
+  const view = new DataView(buf);
+  view.setBigUint64(0, BigInt.asUintN(64, BigInt(counter)), false);
+  return new Uint8Array(buf);
+}
+
+async function hotp(secret: string, counter: number, digits = 6): Promise<string> {
+  const hash = await hmacSha1(base32ToBytes(secret), uint64ToBytes(counter));
+  const offset = hash[hash.length - 1] & 0x0f;
+  const code = ((hash[offset] & 0x7f) << 24) | ((hash[offset + 1] & 0xff) << 16) | ((hash[offset + 2] & 0xff) << 8) | (hash[offset + 3] & 0xff);
+  return String(code % Math.pow(10, digits)).padStart(digits, "0");
+}
+
+async function totp(secret: string, window = 0, step = 30): Promise<string> {
+  const counter = Math.floor(Date.now() / 1000 / step) + window;
+  return hotp(secret, counter);
+}
+
+function generateSecret(length = 32): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(length));
+  return bytesToBase32(bytes);
+}
+
+function generateBackupCodes(count = 8): string[] {
+  return Array.from({ length: count }, () =>
+    Array.from(crypto.getRandomValues(new Uint8Array(4)), (b) => b.toString(16).padStart(2, "0")).join("").toUpperCase()
+  );
+}
+
+async function verifyTotp(secret: string, code: string): Promise<boolean> {
+  for (let w = -1; w <= 1; w++) {
+    if (await totp(secret, w) === code) return true;
+  }
+  return false;
+}
+
 // ── Plan entitlements (server-side gating) ────────────────────────────────────
 // Effective plan is derived ONLY from `subscription:{userId}` (lazily expired
 // on read, same rule as GET /subscription). Client PlanGate is UI-only sugar.
@@ -719,6 +799,292 @@ const SEED_PLANS = [
 // Bump to force-overwrite the stored `plans` record on next read (e.g. after
 // rebranding or price changes in SEED_PLANS).
 const PLANS_SEED_VERSION = 2;
+
+// ── Two-factor authentication (TOTP + email OTP) ─────────────────────────────
+// TOTP secrets live in KV (`2fa:{userId}`), the enabled flags in Supabase user
+// metadata so the login flow can demand a second factor right after password
+// sign-in. Backup codes are single-use, stored alongside the secret.
+
+app.get("/2fa/setup", async (c) => {
+  try {
+    const user = await getAuthedUser(c);
+    if (!user) return c.json({ error: "Unauthorized" }, 401);
+    if (user.user_metadata?.totp_enabled) return c.json({ error: "2FA already enabled" }, 400);
+    const secret = generateSecret();
+    const backupCodes = generateBackupCodes();
+    const issuer = "LokaSync";
+    const otpauthUrl = `otpauth://totp/${issuer}:${encodeURIComponent(user.email ?? user.id)}?secret=${secret}&issuer=${issuer}`;
+    // Store pending secret (not enabled until verified)
+    await kv.set(`2fa:pending:${user.id}`, { secret, backupCodes });
+    return c.json({ secret, otpauthUrl, backupCodes });
+  } catch (e) {
+    console.log("GET /2fa/setup error:", e);
+    return c.json({ error: String(e) }, 500);
+  }
+});
+
+app.post("/2fa/verify", async (c) => {
+  try {
+    const user = await getAuthedUser(c);
+    if (!user) return c.json({ error: "Unauthorized" }, 401);
+
+    // Rate limit: max 5 verification attempts per 15 min
+    if (!await checkRateLimit(`2fa-verify:${user.id}`, 5, 15 * 60 * 1000)) {
+      return rateLimited(c);
+    }
+
+    const { code } = await c.req.json();
+    if (!code || String(code).length !== 6) return c.json({ error: "Enter a 6-digit code" }, 400);
+    const pending = await kv.get(`2fa:pending:${user.id}`);
+    if (!pending?.secret) return c.json({ error: "Setup not started" }, 400);
+    if (!(await verifyTotp(pending.secret, String(code)))) {
+      return c.json({ error: "Invalid code" }, 400);
+    }
+    await kv.set(`2fa:${user.id}`, { secret: pending.secret, backupCodes: pending.backupCodes, enabledAt: new Date().toISOString() });
+    await kv.del(`2fa:pending:${user.id}`);
+    // Persist enabled flag to user metadata so the login flow can detect it
+    await adminClient().auth.admin.updateUserById(user.id, { user_metadata: { ...user.user_metadata, totp_enabled: true } });
+    return c.json({ ok: true });
+  } catch (e) {
+    console.log("POST /2fa/verify error:", e);
+    return c.json({ error: String(e) }, 500);
+  }
+});
+
+app.delete("/2fa", async (c) => {
+  try {
+    const user = await getAuthedUser(c);
+    if (!user) return c.json({ error: "Unauthorized" }, 401);
+
+    // Require current TOTP code, backup code, or email OTP code before disabling
+    let body: any;
+    try { body = await c.req.json(); } catch { body = {}; }
+    const code = String(body?.code ?? "");
+    const backupCode = String(body?.backupCode ?? "").toUpperCase();
+    const emailOTPCode = String(body?.emailOTPCode ?? "");
+    if (!code && !backupCode && !emailOTPCode) {
+      return c.json({ error: "Current 2FA code or backup code is required to disable 2FA", code: "verification_required" }, 400);
+    }
+
+    let verified = false;
+
+    const record2fa = await kv.get(`2fa:${user.id}`);
+    if (record2fa?.secret && code && code.length === 6) {
+      verified = await verifyTotp(record2fa.secret, code);
+    }
+    if (!verified && backupCode && record2fa?.backupCodes) {
+      const idx = record2fa.backupCodes.indexOf(backupCode);
+      if (idx !== -1) {
+        verified = true;
+        record2fa.backupCodes.splice(idx, 1);
+        await kv.set(`2fa:${user.id}`, record2fa);
+      }
+    }
+    if (!verified && emailOTPCode && emailOTPCode.length === 6) {
+      const emailOtpRecord = await kv.get(`email-otp:${user.id}`);
+      if (emailOtpRecord && emailOtpRecord.code === emailOTPCode) {
+        if (new Date(emailOtpRecord.expiresAt) > new Date()) {
+          verified = true;
+          await kv.del(`email-otp:${user.id}`);
+        }
+      }
+    }
+
+    if (!verified) {
+      return c.json({ error: "Invalid code", code: "invalid_code" }, 403);
+    }
+
+    await kv.del(`2fa:${user.id}`);
+    await kv.del(`2fa:pending:${user.id}`);
+    await adminClient().auth.admin.updateUserById(user.id, { user_metadata: { ...user.user_metadata, totp_enabled: false, email_otp_enabled: false } });
+    return c.json({ ok: true });
+  } catch (e) {
+    console.log("DELETE /2fa error:", e);
+    return c.json({ error: String(e) }, 500);
+  }
+});
+
+app.post("/2fa/verify-login", async (c) => {
+  try {
+    const user = await getAuthedUser(c);
+    if (!user) return c.json({ error: "Unauthorized" }, 401);
+
+    // KV-backed brute-force protection: max 5 attempts, 15-min lockout
+    const attemptKey = `2fa-attempts:${user.id}`;
+    const attemptRecord = (await kv.get(attemptKey)) ?? { count: 0 };
+    if (attemptRecord.count >= 5 && attemptRecord.lockedUntil && new Date(attemptRecord.lockedUntil) > new Date()) {
+      return rateLimited(c);
+    }
+
+    const { code, backupCode } = await c.req.json();
+    const totpCode = code ? String(code) : "";
+    const bkCode = backupCode ? String(backupCode).toUpperCase() : "";
+
+    if (!totpCode && !bkCode) return c.json({ error: "Enter a 6-digit code or backup code" }, 400);
+    if (totpCode && totpCode.length !== 6) return c.json({ error: "Enter a 6-digit code" }, 400);
+
+    const record = await kv.get(`2fa:${user.id}`);
+    if (!record?.secret) return c.json({ error: "2FA not enabled" }, 400);
+
+    let verified = false;
+
+    if (totpCode.length === 6) {
+      verified = await verifyTotp(record.secret, totpCode);
+    }
+
+    // Backup codes are single-use
+    if (!verified && bkCode && record.backupCodes) {
+      const idx = record.backupCodes.indexOf(bkCode);
+      if (idx !== -1) {
+        verified = true;
+        record.backupCodes.splice(idx, 1);
+        await kv.set(`2fa:${user.id}`, record);
+      }
+    }
+
+    if (!verified) {
+      attemptRecord.count = (attemptRecord.count ?? 0) + 1;
+      if (attemptRecord.count >= 5) {
+        attemptRecord.lockedUntil = new Date(Date.now() + 15 * 60 * 1000).toISOString();
+      }
+      await kv.set(attemptKey, attemptRecord);
+      return c.json({ error: "Invalid code" }, 400);
+    }
+
+    await kv.del(attemptKey);
+    return c.json({ ok: true });
+  } catch (e) {
+    console.log("POST /2fa/verify-login error:", e);
+    return c.json({ error: String(e) }, 500);
+  }
+});
+
+// ── Email OTP ─────────────────────────────────────────────────────────────────
+// Alternative 2FA method: a 6-digit code sent via the transactional email
+// service, valid for 5 minutes with a per-code attempt counter.
+
+app.post("/email-otp/send", async (c) => {
+  try {
+    const user = await getAuthedUser(c);
+    if (!user) return c.json({ error: "Unauthorized" }, 401);
+
+    // Rate limit: max 3 sends per 10 minutes
+    if (!await checkRateLimit(`email-otp-send:${user.id}`, 3, 10 * 60 * 1000)) {
+      return rateLimited(c);
+    }
+
+    // Cryptographically secure 6-digit code
+    const bytes = crypto.getRandomValues(new Uint8Array(4));
+    const code = String((new DataView(bytes.buffer).getUint32(0) % 900000) + 100000);
+
+    await kv.set(`email-otp:${user.id}`, {
+      code,
+      attempts: 0,
+      createdAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
+    });
+
+    if (!user.email) return c.json({ error: "Account has no email address" }, 400);
+    const sent = await emails.sendEmail(
+      user.email,
+      "Your LokaSync verification code",
+      `<!DOCTYPE html><html><body style="font-family:Lexend,sans-serif;background:#0f0f0f;color:#fafafa;padding:32px">
+        <h2 style="margin:0 0 16px">Verification code</h2>
+        <p style="margin:0 0 24px;color:#a3a3a3">Enter this code to verify your identity:</p>
+        <div style="background:#1a1a1a;border:1px solid #262626;border-radius:12px;padding:24px;text-align:center;margin:0 0 24px">
+          <span style="font-size:32px;font-weight:bold;letter-spacing:8px;color:#fafafa">${code}</span>
+        </div>
+        <p style="margin:0;color:#737373;font-size:13px">This code expires in 5 minutes. If you didn't request it, please ignore this email.</p>
+      </body></html>`,
+    );
+    if (!sent) return c.json({ error: "Email service not configured" }, 503);
+
+    return c.json({ ok: true, expiresIn: 300 });
+  } catch (e) {
+    console.log("POST /email-otp/send error:", e);
+    return c.json({ error: String(e) }, 500);
+  }
+});
+
+app.post("/email-otp/verify", async (c) => {
+  try {
+    const user = await getAuthedUser(c);
+    if (!user) return c.json({ error: "Unauthorized" }, 401);
+
+    const { code } = await c.req.json();
+    if (!code || String(code).length !== 6) {
+      return c.json({ error: "Enter a 6-digit code" }, 400);
+    }
+
+    const record = await kv.get(`email-otp:${user.id}`);
+    if (!record) {
+      return c.json({ error: "No code was sent. Request a new one.", code: "no_pending_code" }, 400);
+    }
+    if (new Date(record.expiresAt) < new Date()) {
+      await kv.del(`email-otp:${user.id}`);
+      return c.json({ error: "Code has expired. Request a new one.", code: "expired" }, 400);
+    }
+    if (record.attempts >= 5) {
+      await kv.del(`email-otp:${user.id}`);
+      return c.json({ error: "Too many incorrect attempts. Request a new code.", code: "too_many_attempts" }, 429);
+    }
+    if (String(record.code) !== String(code)) {
+      record.attempts += 1;
+      await kv.set(`email-otp:${user.id}`, record);
+      return c.json({ error: "Invalid code" }, 400);
+    }
+
+    await kv.del(`email-otp:${user.id}`);
+    await adminClient().auth.admin.updateUserById(user.id, {
+      user_metadata: { ...user.user_metadata, email_otp_enabled: true },
+    });
+    return c.json({ ok: true });
+  } catch (e) {
+    console.log("POST /email-otp/verify error:", e);
+    return c.json({ error: String(e) }, 500);
+  }
+});
+
+// Verifies email OTP during login (does NOT enable — just verifies identity)
+app.post("/email-otp/verify-login", async (c) => {
+  try {
+    const user = await getAuthedUser(c);
+    if (!user) return c.json({ error: "Unauthorized" }, 401);
+
+    if (!await checkRateLimit(`email-otp-login:${user.id}`, 5, 15 * 60 * 1000)) {
+      return rateLimited(c);
+    }
+
+    const { code } = await c.req.json();
+    if (!code || String(code).length !== 6) {
+      return c.json({ error: "Enter a 6-digit code" }, 400);
+    }
+
+    const record = await kv.get(`email-otp:${user.id}`);
+    if (!record) {
+      return c.json({ error: "No code was sent. Request a new one.", code: "no_pending_code" }, 400);
+    }
+    if (new Date(record.expiresAt) < new Date()) {
+      await kv.del(`email-otp:${user.id}`);
+      return c.json({ error: "Code has expired. Request a new one.", code: "expired" }, 400);
+    }
+    if (record.attempts >= 5) {
+      await kv.del(`email-otp:${user.id}`);
+      return c.json({ error: "Too many incorrect attempts.", code: "too_many_attempts" }, 429);
+    }
+    if (String(record.code) !== String(code)) {
+      record.attempts += 1;
+      await kv.set(`email-otp:${user.id}`, record);
+      return c.json({ error: "Invalid code" }, 400);
+    }
+
+    await kv.del(`email-otp:${user.id}`);
+    return c.json({ ok: true });
+  } catch (e) {
+    console.log("POST /email-otp/verify-login error:", e);
+    return c.json({ error: String(e) }, 500);
+  }
+});
 
 app.get("/plans", async (c) => {
   try {

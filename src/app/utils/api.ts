@@ -842,3 +842,23 @@ export const toggleMilestone = (project: string, index: number, done: boolean) =
     method: "PUT",
     body: JSON.stringify({ done }),
   });
+
+// ── Two-factor authentication (TOTP) ────────────────────────────────────────
+export const setup2FA = () =>
+  request<{ secret: string; otpauthUrl: string; backupCodes: string[] }>("/2fa/setup");
+export const verify2FA = (code: string) =>
+  request<{ ok: boolean }>("/2fa/verify", { method: "POST", body: JSON.stringify({ code }) });
+export const disable2FA = (code?: string, backupCode?: string, emailOTPCode?: string) =>
+  request<{ ok: boolean }>("/2fa", { method: "DELETE", body: JSON.stringify({ code, backupCode, emailOTPCode }) });
+export const verify2FALogin = (code: string, backupCode?: string) =>
+  request<{ ok: boolean }>("/2fa/verify-login", { method: "POST", body: JSON.stringify({ code, backupCode }) });
+
+// ── Email OTP (alternative 2FA method) ──────────────────────────────────────
+export const sendEmailOTP = () =>
+  request<{ ok: boolean; expiresIn: number }>("/email-otp/send", { method: "POST" });
+export const verifyEmailOTP = (code: string) =>
+  request<{ ok: boolean }>("/email-otp/verify", { method: "POST", body: JSON.stringify({ code }) });
+/** Same endpoint as enrollment send — alias for the login flow. */
+export const sendEmailOTPLogin = sendEmailOTP;
+export const verifyEmailOTPLogin = (code: string) =>
+  request<{ ok: boolean }>("/email-otp/verify-login", { method: "POST", body: JSON.stringify({ code }) });

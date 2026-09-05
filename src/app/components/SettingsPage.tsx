@@ -11,6 +11,8 @@ import { useNavigation } from "./NavigationContext";
 import { InviteMemberModal } from "./modals/InviteMemberModal";
 import { useLang, LangToggle } from "../i18n";
 import * as api from "../utils/api";
+import { supabase } from "../utils/supabase";
+import { useAuth } from "../auth/AuthContext";
 import { useWorkspace } from "../workspace/WorkspaceContext";
 import { useRealtimeWorkspace } from "../realtime";
 
@@ -135,6 +137,7 @@ const subSectionMap: Record<string, string> = {
 export function SettingsPage() {
   const { subSection } = useNavigation();
   const { lang, setLang, t } = useLang();
+  const { user } = useAuth();
   const [activeNav, setActiveNav] = useState("Profile");
   const [integrations, setIntegrations] = useState<any[]>([]);
   const [sessions, setSessions] = useState<{ device: string; location: string; ip: string; lastActive: string; current: boolean }[]>([]);
@@ -149,6 +152,14 @@ export function SettingsPage() {
   const [avatarSrc, setAvatarSrc] = useState<string | null>(null);
   const [show2FA, setShow2FA] = useState(false);
   const [twoFACode, setTwoFACode] = useState("");
+  const [twoFASetup, setTwoFASetup] = useState<{ secret: string; otpauthUrl: string; backupCodes: string[] } | null>(null);
+  const [loading2FA, setLoading2FA] = useState(false);
+  const [is2FAEnabled, setIs2FAEnabled] = useState(false);
+  const [showDisable2FA, setShowDisable2FA] = useState(false);
+  const [disable2FACode, setDisable2FACode] = useState("");
+  useEffect(() => {
+    setIs2FAEnabled(!!(user?.user_metadata?.totp_enabled || user?.user_metadata?.email_otp_enabled));
+  }, [user]);
   const [showCurrent, setShowCurrent] = useState(false);
   const [showNext, setShowNext] = useState(false);
   const [pw, setPw] = useState({ current: "", next: "", confirm: "" });
@@ -311,11 +322,56 @@ export function SettingsPage() {
     setPw({ current: "", next: "", confirm: "" });
   };
 
-  const verify2FA = () => {
-    if (twoFACode.length < 6) return toast.error("Enter the 6-digit code");
-    toast.success("Two-factor authentication enabled");
-    setShow2FA(false);
-    setTwoFACode("");
+  const start2FASetup = async () => {
+    setLoading2FA(true);
+    try {
+      setTwoFASetup(await api.setup2FA());
+      setShow2FA(true);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to start 2FA setup");
+    } finally {
+      setLoading2FA(false);
+    }
+  };
+
+  const verify2FA = async () => {
+    if (twoFACode.length !== 6 || !twoFASetup) return toast.error(t("auth.invalidCode"));
+    setLoading2FA(true);
+    try {
+      await api.verify2FA(twoFACode);
+      const { data, error } = await supabase.auth.refreshSession();
+      if (error) throw error;
+      setIs2FAEnabled(!!(data.session?.user?.user_metadata?.totp_enabled));
+      toast.success(t("settings.twoFAEnabledToast"));
+      setShow2FA(false);
+      setTwoFASetup(null);
+      setTwoFACode("");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : t("auth.invalidCode"));
+    } finally {
+      setLoading2FA(false);
+    }
+  };
+
+  const disable2FA = async () => {
+    if (!disable2FACode) return toast.error(t("settings.enterCodeToDisable"));
+    setLoading2FA(true);
+    try {
+      const code = disable2FACode.replace(/\s/g, "");
+      const payload = code.length === 6 && /^\d+$/.test(code)
+        ? { code }
+        : { backupCode: code.toUpperCase() };
+      await api.disable2FA(payload.code, payload.backupCode);
+      await supabase.auth.refreshSession();
+      setIs2FAEnabled(false);
+      toast.success(t("settings.twoFADisabledToast"));
+      setShowDisable2FA(false);
+      setDisable2FACode("");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : t("settings.twoFADisabledToastFail"));
+    } finally {
+      setLoading2FA(false);
+    }
   };
 
   const generateApiKey = async () => {
@@ -619,33 +675,72 @@ export function SettingsPage() {
                       <Shield size={15} />
                     </div>
                     <div>
-                      <div className="text-neutral-200 text-[13px]">{t("settings.authenticatorApp")}</div>
-                      <div className="text-neutral-600 text-[12px]">{t("settings.authenticatorAppDesc")}</div>
-                    </div>
-                  </div>
-                  <button onClick={() => setShow2FA(!show2FA)} className="border border-neutral-800 hover:bg-neutral-800 text-neutral-300 text-[12px] px-3 py-1.5 rounded-lg transition-colors shrink-0">
-                    {show2FA ? t("common.cancel") : t("settings.setup2FA")}
-                  </button>
-                </div>
-                {show2FA && (
-                  <div className="p-4 bg-neutral-800/30 rounded-xl space-y-3">
-                    <div className="flex justify-center">
-                      <div className="w-24 h-24 bg-white rounded-lg flex items-center justify-center p-1">
-                        <div className="grid grid-cols-5 gap-0.5 w-full h-full">
-                          {Array.from({ length: 25 }).map((_, i) => (
-                            <div key={i} className="rounded-[1px]" style={{ backgroundColor: [0, 6, 12, 18, 24, 1, 5, 7, 11, 13, 17, 19].includes(i) ? "#000" : "#fff" }} />
-                          ))}
-                        </div>
+                      <div className="text-neutral-200 text-[13px]">
+                        {t("settings.authenticatorApp")}
+                        {is2FAEnabled && (
+                          <span className="ml-2 rounded-full bg-emerald-950/60 px-2 py-0.5 text-[10px] text-emerald-400">
+                            {t("settings.twoFAEnabledBadge")}
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-neutral-600 text-[12px]">
+                        {is2FAEnabled ? t("settings.twoFAEnabledDesc") : t("settings.authenticatorAppDesc")}
                       </div>
                     </div>
-                    <p className="text-neutral-400 text-[12px] text-center">{t("settings.scanAuthenticator")}</p>
+                  </div>
+                  {is2FAEnabled ? (
+                    <button
+                      onClick={() => { setShowDisable2FA(!showDisable2FA); setShow2FA(false); }}
+                      className="border border-neutral-800 hover:border-red-900 hover:text-red-400 text-neutral-300 text-[12px] px-3 py-1.5 rounded-lg transition-colors shrink-0"
+                    >
+                      {t("settings.disable2FA")}
+                    </button>
+                  ) : (
+                    <button
+                      onClick={() => (show2FA ? setShow2FA(false) : start2FASetup())}
+                      disabled={loading2FA}
+                      className="border border-neutral-800 hover:bg-neutral-800 text-neutral-300 text-[12px] px-3 py-1.5 rounded-lg transition-colors shrink-0 disabled:opacity-50"
+                    >
+                      {show2FA ? t("common.cancel") : t("settings.setup2FA")}
+                    </button>
+                  )}
+                </div>
+                {showDisable2FA && is2FAEnabled && (
+                  <div className="p-4 bg-neutral-800/30 rounded-xl space-y-3">
+                    <p className="text-neutral-400 text-[12px]">{t("settings.enterCodeToDisable")}</p>
+                    <div className="flex gap-2">
+                      <input
+                        type="text" maxLength={8} placeholder="000000" value={disable2FACode}
+                        onChange={(e) => setDisable2FACode(e.target.value.replace(/\s/g, ""))}
+                        className="flex-1 bg-[#0f0f0f] border border-neutral-800 focus:border-red-600/60 rounded-lg px-3 py-2.5 text-neutral-200 text-[14px] text-center tracking-widest outline-none transition-colors font-['Lexend:Regular',_sans-serif]"
+                      />
+                      <button onClick={disable2FA} disabled={loading2FA} className="bg-red-600 hover:bg-red-500 disabled:opacity-50 text-white text-[13px] px-4 py-2 rounded-lg transition-colors">{t("settings.disable2FA")}</button>
+                    </div>
+                  </div>
+                )}
+                {show2FA && twoFASetup && !is2FAEnabled && (
+                  <div className="p-4 bg-neutral-800/30 rounded-xl space-y-3">
+                    <div className="text-center">
+                      <p className="text-neutral-400 text-[12px] mb-2">{t("settings.scanQR")}</p>
+                      <code className="block bg-[#0f0f0f] border border-neutral-800 rounded-lg px-3 py-2 text-emerald-300 text-[11px] font-mono break-all">{twoFASetup.secret}</code>
+                      <a href={twoFASetup.otpauthUrl} className="text-indigo-400 text-[11px] hover:underline mt-1 inline-block">{t("settings.openInAuthenticator")}</a>
+                    </div>
+                    {twoFASetup.backupCodes.length > 0 && (
+                      <div className="bg-[#0f0f0f] border border-neutral-800 rounded-lg p-3">
+                        <p className="text-neutral-500 text-[11px] mb-1">{t("settings.backupCodes")}</p>
+                        <div className="grid grid-cols-2 gap-1">
+                          {twoFASetup.backupCodes.map((c, i) => <code key={i} className="text-neutral-300 text-[10px] font-mono">{c}</code>)}
+                        </div>
+                      </div>
+                    )}
+                    <p className="text-neutral-400 text-[12px] text-center">{t("settings.enter6Digit")}</p>
                     <div className="flex gap-2">
                       <input
                         type="text" maxLength={6} placeholder="000000" value={twoFACode}
                         onChange={(e) => setTwoFACode(e.target.value.replace(/\D/g, ""))}
                         className="flex-1 bg-[#0f0f0f] border border-neutral-800 focus:border-indigo-600/60 rounded-lg px-3 py-2.5 text-neutral-200 text-[14px] text-center tracking-widest outline-none transition-colors font-['Lexend:Regular',_sans-serif]"
                       />
-                      <button onClick={verify2FA} className="bg-indigo-600 hover:bg-indigo-500 text-white text-[13px] px-4 py-2 rounded-lg transition-colors">{t("settings.verify")}</button>
+                      <button onClick={verify2FA} disabled={loading2FA} className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-[13px] px-4 py-2 rounded-lg transition-colors">{t("settings.verify")}</button>
                     </div>
                   </div>
                 )}
