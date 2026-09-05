@@ -3,6 +3,7 @@ import { useState, useEffect, useCallback } from "react";
 import { Link } from "react-router";
 import { TrendingUp, TrendingDown, ArrowLeft } from "lucide-react";
 import { useNavigation } from "./NavigationContext";
+import { useLang } from "../LangContext";
 import { useRealtimeSync } from "../hooks/useRealtimeSync";
 import * as api from "../utils/api";
 import {
@@ -42,6 +43,7 @@ const statusColors: Record<string, string> = {
 
 export function ProjectAnalyticsPage() {
   const { subSection, navigate } = useNavigation();
+  const { t } = useLang();
   const [project, setProject] = useState<api.Project | null>(null);
   const [projectTasks, setProjectTasks] = useState<api.Task[]>([]);
   const [teamMembers, setTeamMembers] = useState<{ name: string; initials: string; role: string; done: number; total: number }[]>([]);
@@ -120,9 +122,9 @@ export function ProjectAnalyticsPage() {
   if (!project) {
     return (
       <div className="flex flex-col items-center justify-center h-64 gap-3">
-        <span className="text-neutral-500 text-[14px]">Project not found</span>
+        <span className="text-neutral-500 text-[14px]">{t("projectAnalytics.notFound")}</span>
         <button onClick={() => navigate("projects")} className="text-indigo-400 text-[13px] hover:underline">
-          Back to projects
+          {t("projectAnalytics.backToProjects")}
         </button>
       </div>
     );
@@ -140,7 +142,7 @@ export function ProjectAnalyticsPage() {
         {/* Breadcrumb */}
         <div className="flex items-center gap-2 text-[12px] text-neutral-500">
           <button onClick={() => navigate("projects")} className="flex items-center gap-1 hover:text-neutral-300 transition-colors">
-            <ArrowLeft size={12} /> Projects
+            <ArrowLeft size={12} /> {t("nav.projects")}
           </button>
           <span className="text-neutral-600">/</span>
           <span className="text-neutral-300">{project.name}</span>
@@ -162,7 +164,7 @@ export function ProjectAnalyticsPage() {
           </div>
           <div className="w-48">
             <div className="flex items-center justify-between mb-1.5">
-              <span className="text-neutral-500 text-[11px]">Progress</span>
+              <span className="text-neutral-500 text-[11px]">{t("projectAnalytics.progress")}</span>
               <span className="text-neutral-300 text-[12px]">{completionRate}%</span>
             </div>
             <ProgressBar value={completionRate} />
@@ -172,27 +174,27 @@ export function ProjectAnalyticsPage() {
         {/* KPI Cards */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 lg:gap-4">
           <div className="bg-[#141414] border border-neutral-800/60 rounded-xl p-4 lg:p-5">
-            <div className="text-neutral-400 text-[11px] lg:text-[12px] mb-3">Total Tasks</div>
+            <div className="text-neutral-400 text-[11px] lg:text-[12px] mb-3">{t("projectAnalytics.totalTasks")}</div>
             <div className="text-neutral-50 text-[20px] lg:text-[24px] font-['Lexend:SemiBold',_sans-serif] leading-none mb-1.5">{total}</div>
-            <span className="flex items-center gap-1 text-[11px] text-emerald-400"><TrendingUp size={11} />+{active} active</span>
+            <span className="flex items-center gap-1 text-[11px] text-emerald-400"><TrendingUp size={11} />{t("projectAnalytics.activeCount").replace("{count}", String(active))}</span>
           </div>
           <div className="bg-[#141414] border border-neutral-800/60 rounded-xl p-4 lg:p-5">
-            <div className="text-neutral-400 text-[11px] lg:text-[12px] mb-3">Completed</div>
+            <div className="text-neutral-400 text-[11px] lg:text-[12px] mb-3">{t("projectAnalytics.completed")}</div>
             <div className="text-neutral-50 text-[20px] lg:text-[24px] font-['Lexend:SemiBold',_sans-serif] leading-none mb-1.5">{completed}</div>
-            <span className="flex items-center gap-1 text-[11px] text-emerald-400"><TrendingUp size={11} />{completionRate}% rate</span>
+            <span className="flex items-center gap-1 text-[11px] text-emerald-400"><TrendingUp size={11} />{t("projectAnalytics.completionRate").replace("{rate}", String(completionRate))}</span>
           </div>
           <div className="bg-[#141414] border border-neutral-800/60 rounded-xl p-4 lg:p-5">
-            <div className="text-neutral-400 text-[11px] lg:text-[12px] mb-3">Active Tasks</div>
+            <div className="text-neutral-400 text-[11px] lg:text-[12px] mb-3">{t("projectAnalytics.activeTasks")}</div>
             <div className="text-neutral-50 text-[20px] lg:text-[24px] font-['Lexend:SemiBold',_sans-serif] leading-none mb-1.5">{active}</div>
-            <span className="text-[11px] text-neutral-500">{total - completed - active} todo</span>
+            <span className="text-[11px] text-neutral-500">{t("projectAnalytics.todoCount").replace("{count}", String(total - completed - active))}</span>
           </div>
           <div className="bg-[#141414] border border-neutral-800/60 rounded-xl p-4 lg:p-5">
-            <div className="text-neutral-400 text-[11px] lg:text-[12px] mb-3">Overdue</div>
+            <div className="text-neutral-400 text-[11px] lg:text-[12px] mb-3">{t("projectAnalytics.overdue")}</div>
             <div className="text-neutral-50 text-[20px] lg:text-[24px] font-['Lexend:SemiBold',_sans-serif] leading-none mb-1.5">{overdue}</div>
             {overdue > 0 ? (
-              <span className="flex items-center gap-1 text-[11px] text-red-400"><TrendingDown size={11} />need attention</span>
+              <span className="flex items-center gap-1 text-[11px] text-red-400"><TrendingDown size={11} />{t("projectAnalytics.needsAttention")}</span>
             ) : (
-              <span className="text-[11px] text-emerald-400">all on track</span>
+              <span className="text-[11px] text-emerald-400">{t("projectAnalytics.allOnTrack")}</span>
             )}
           </div>
         </div>
@@ -200,23 +202,23 @@ export function ProjectAnalyticsPage() {
         {/* Chart + Team Performance */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
           <div className="lg:col-span-2 bg-[#141414] border border-neutral-800/60 rounded-xl p-4 lg:p-5">
-            <div className="text-neutral-50 text-[13px] lg:text-[14px] font-['Lexend:SemiBold',_sans-serif] mb-4">Tasks Completed vs Created</div>
+            <div className="text-neutral-50 text-[13px] lg:text-[14px] font-['Lexend:SemiBold',_sans-serif] mb-4">{t("projectAnalytics.chartTitle")}</div>
             <ResponsiveContainer width="100%" height={200}>
               <AreaChart data={chartData}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#1f1f1f" vertical={false} />
                 <XAxis dataKey="month" tick={{ fill: "#525252", fontSize: 10 }} axisLine={false} tickLine={false} />
                 <YAxis tick={{ fill: "#525252", fontSize: 10 }} axisLine={false} tickLine={false} width={24} />
                 <Tooltip content={<ChartTooltip />} />
-                <Area type="monotone" dataKey="completed" name="Completed" stroke="#818cf8" fill="rgba(129,140,248,0.08)" strokeWidth={2} />
-                <Area type="monotone" dataKey="created" name="Created" stroke="#404040" fill="rgba(64,64,64,0.04)" strokeWidth={1.5} />
+                <Area type="monotone" dataKey="completed" name={t("projectAnalytics.completed")} stroke="#818cf8" fill="rgba(129,140,248,0.08)" strokeWidth={2} />
+                <Area type="monotone" dataKey="created" name={t("projectAnalytics.created")} stroke="#404040" fill="rgba(64,64,64,0.04)" strokeWidth={1.5} />
               </AreaChart>
             </ResponsiveContainer>
           </div>
 
           <div className="bg-[#141414] border border-neutral-800/60 rounded-xl p-4 lg:p-5">
-            <div className="text-neutral-50 text-[13px] lg:text-[14px] font-['Lexend:SemiBold',_sans-serif] mb-4">Team Members</div>
+            <div className="text-neutral-50 text-[13px] lg:text-[14px] font-['Lexend:SemiBold',_sans-serif] mb-4">{t("projectAnalytics.teamMembers")}</div>
             {teamMembers.length === 0 ? (
-              <div className="text-neutral-600 text-[12px] py-4 text-center">No team members assigned</div>
+              <div className="text-neutral-600 text-[12px] py-4 text-center">{t("projectAnalytics.noMembers")}</div>
             ) : (
               <div className="space-y-3">
                 {teamMembers.map((member) => (
@@ -226,7 +228,7 @@ export function ProjectAnalyticsPage() {
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="text-neutral-300 text-[12px] truncate">{member.name}</div>
-                      <div className="text-neutral-600 text-[11px]">{member.done}/{member.total} tasks</div>
+                      <div className="text-neutral-600 text-[11px]">{t("projectAnalytics.memberTasks").replace("{done}", String(member.done)).replace("{total}", String(member.total))}</div>
                     </div>
                     <div className="text-emerald-400 text-[12px] shrink-0">
                       {member.total > 0 ? Math.round((member.done / member.total) * 100) : 0}%

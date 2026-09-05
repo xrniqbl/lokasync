@@ -73,7 +73,7 @@ export function PaymentStatusPage() {
           refreshSubscription();
           setResult((prev) => prev ? { ...prev, status: "paid" } : prev);
         },
-        onPending: () => toast.info("Payment is being processed"),
+        onPending: () => toast.info(t("payment.processingToast")),
         onError: () => toast.error(t("checkout.paymentFailed")),
         onClose: () => {},
       });
@@ -132,14 +132,14 @@ export function PaymentStatusPage() {
         <Card className="mt-10 w-full max-w-md border-neutral-800 bg-[#1a1a1a]">
           <CardHeader className="items-center text-center">
             <XCircle className="size-10 text-neutral-500" />
-            <CardTitle className="text-neutral-50">Order not found</CardTitle>
+            <CardTitle className="text-neutral-50">{t("payment.orderNotFoundTitle")}</CardTitle>
             <CardDescription className="text-neutral-400">
-              We couldn't find this payment. It may belong to another account.
+              {t("payment.orderNotFoundDesc")}
             </CardDescription>
           </CardHeader>
           <CardFooter>
             <Button className="w-full" onClick={() => navigate("/pricing")}>
-              Back to plans
+              {t("payment.backToPlans")}
             </Button>
           </CardFooter>
         </Card>
@@ -158,20 +158,18 @@ export function PaymentStatusPage() {
   const presets = {
     paid: {
       icon: <CheckCircle2 className="size-10 text-emerald-400" />,
-      title: "Payment successful",
-      description: `Your ${result.plan_name} plan is now active. Welcome aboard!`,
+      title: t("payment.paidTitle"),
+      description: t("payment.paidDesc").replace("{plan}", result.plan_name),
     },
     pending: {
       icon: <Clock className="size-10 text-amber-400" />,
-      title: "Waiting for your payment",
-      description:
-        "Complete the payment with your chosen method. This page updates automatically once the payment is confirmed.",
+      title: t("payment.pendingTitle"),
+      description: t("payment.pendingDesc"),
     },
     failed: {
       icon: <XCircle className="size-10 text-red-400" />,
-      title: "Payment unsuccessful",
-      description:
-        "The payment was cancelled, declined, or expired. No charge was made — you can try again.",
+      title: t("payment.failedTitle"),
+      description: t("payment.failedDesc"),
     },
   } as const;
   const preset = presets[result.status];
@@ -188,18 +186,18 @@ export function PaymentStatusPage() {
         </CardHeader>
         <CardPanel className="flex flex-col gap-2 text-[13px]">
           <div className="flex justify-between text-neutral-400">
-            <span>Order</span>
+            <span>{t("payment.order")}</span>
             <span className="text-neutral-300">{result.order_id}</span>
           </div>
           <div className="flex justify-between text-neutral-400">
-            <span>Plan</span>
+            <span>{t("payment.plan")}</span>
             <span className="text-neutral-300">
               {result.plan_name} · {result.interval}
             </span>
           </div>
           {result.payment_type && (
             <div className="flex justify-between text-neutral-400">
-              <span>Method</span>
+              <span>{t("payment.method")}</span>
               <span className="text-neutral-300">
                 {result.payment_type.replaceAll("_", " ")}
               </span>
@@ -207,17 +205,17 @@ export function PaymentStatusPage() {
           )}
           <Separator className="my-1 bg-neutral-800" />
           <div className="flex justify-between text-[14px] text-neutral-50">
-            <span>Total</span>
+            <span>{t("payment.total")}</span>
             <span>{idr.format(result.gross_amount)}</span>
           </div>
           {result.status === "pending" && !takingTooLong && (
             <p className="mt-2 flex items-center gap-2 text-[12px] text-neutral-500">
-              <Spinner className="size-3.5" /> Checking payment status…
+              <Spinner className="size-3.5" /> {t("payment.checkingStatus")}
             </p>
           )}
           {result.status === "pending" && takingTooLong && (
             <p className="mt-2 text-[12px] text-amber-400">
-              This is taking longer than expected. You can check back later or contact support.
+              {t("payment.takingTooLong")}
             </p>
           )}
         </CardPanel>
@@ -231,7 +229,7 @@ export function PaymentStatusPage() {
                 )
               }
             >
-              Try again
+              {t("payment.tryAgain")}
             </Button>
           ) : result.status === "pending" && result.snap_token ? (
             <>
@@ -241,14 +239,14 @@ export function PaymentStatusPage() {
                 onClick={handleCompletePayment}
               >
                 <CreditCard className="mr-1.5 size-4" />
-                Complete Payment
+                {t("payment.completePayment")}
               </Button>
               <Button
                 className="w-full"
                 variant="outline"
                 onClick={() => navigate("/app/dashboard")}
               >
-                Go to dashboard
+                {t("auth.goToDashboard")}
               </Button>
             </>
           ) : (
@@ -256,7 +254,7 @@ export function PaymentStatusPage() {
               className="w-full"
               onClick={() => navigate("/app/dashboard")}
             >
-              Go to dashboard
+              {t("auth.goToDashboard")}
             </Button>
           )}
           {result.status === "pending" && (
@@ -264,7 +262,7 @@ export function PaymentStatusPage() {
               to="/app/dashboard"
               className="text-[12px] text-neutral-500 underline-offset-4 hover:text-neutral-300 hover:underline"
             >
-              I'll finish this later
+              {t("payment.finishLater")}
             </Link>
           )}
         </CardFooter>

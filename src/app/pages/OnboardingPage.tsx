@@ -80,7 +80,7 @@ export function OnboardingPage() {
       toast.success(t("onboarding.welcome"));
       navigate("/app/dashboard", { replace: true });
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to save profile");
+      toast.error(err instanceof Error ? err.message : t("onboarding.saveFailed"));
     } finally {
       setSubmitting(false);
     }
@@ -88,12 +88,12 @@ export function OnboardingPage() {
 
   return (
     <AuthShell
-      title="Complete your profile"
-      description="One last step before you enter your workspace"
+      title={t("onboarding.completeTitle")}
+      description={t("onboarding.completeDesc")}
     >
       <form onSubmit={handleSubmit} className="flex flex-col gap-4">
         <Field>
-          <FieldLabel>Full name</FieldLabel>
+          <FieldLabel>{t("onboarding.fullName")}</FieldLabel>
           <Input
             type="text"
             value={fullName}
@@ -104,7 +104,7 @@ export function OnboardingPage() {
           />
         </Field>
         <Field>
-          <FieldLabel>Phone number</FieldLabel>
+          <FieldLabel>{t("onboarding.phoneNumber")}</FieldLabel>
           <InputGroup>
             <InputGroupAddon>
               <InputGroupText>+62</InputGroupText>
@@ -116,18 +116,18 @@ export function OnboardingPage() {
               placeholder="81234567890"
               autoComplete="tel-national"
               pattern="[0-9]{7,13}"
-              title="7-13 digits, without the leading 0"
+              title={t("onboarding.phonePattern")}
               required
             />
           </InputGroup>
           <FieldDescription>
-            Used for billing and payment receipts.
+            {t("onboarding.phoneDesc")}
           </FieldDescription>
         </Field>
         <Field>
           <FieldLabel>
-            Job title{" "}
-            <span className="font-normal text-neutral-500">(optional)</span>
+            {t("onboarding.jobTitle")}{" "}
+            <span className="font-normal text-neutral-500">{t("onboarding.optional")}</span>
           </FieldLabel>
           <Input
             type="text"
@@ -139,8 +139,8 @@ export function OnboardingPage() {
         </Field>
         <Field>
           <FieldLabel>
-            Company or team{" "}
-            <span className="font-normal text-neutral-500">(optional)</span>
+            {t("onboarding.companyOrTeam")}{" "}
+            <span className="font-normal text-neutral-500">{t("onboarding.optional")}</span>
           </FieldLabel>
           <Input
             type="text"
@@ -151,7 +151,7 @@ export function OnboardingPage() {
           />
         </Field>
         <Button type="submit" loading={submitting} className="w-full">
-          Continue to dashboard
+          {t("onboarding.continue")}
         </Button>
       </form>
     </AuthShell>
