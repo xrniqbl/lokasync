@@ -1,5 +1,12 @@
 # 🔍 Audit Lengkap — Data Dummy & Integrasi Supabase
 
+> [!WARNING]
+> **⚠️ AUDIT INI SUDAH USANG (per 5 September 2026).** Temuan-temuan di bawah sudah ditangani:
+> Auth Supabase aktif, RLS + migrations ada, checkout Midtrans terhubung, cutover KV→SQL,
+> dashboard menghitung metrik dari data live, dan i18n EN/ID menyeluruh (dijaga oleh Vitest
+> di CI). File ini dipertahankan hanya sebagai catatan sejarah — jangan dipakai sebagai
+> dasar pekerjaan.
+
 > **Tanggal:** 10 Juni 2026  
 > **Proyek:** Minimalist Sidebar Component (Project Management Dashboard)
 

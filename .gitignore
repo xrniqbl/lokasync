@@ -19,3 +19,11 @@ projectmanagement/
 
 # Logs
 *.log
+
+# Supabase CLI local state
+supabase/.temp/
+
+# One-off dev patch scripts
+.patch_*.py
+fix-encoding.*
+fix2.cjs

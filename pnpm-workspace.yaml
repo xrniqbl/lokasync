@@ -1,13 +1,11 @@
 packages:
   - '.'
 allowBuilds:
-  '@carbon/icon-helpers': set this to true or false
-  '@carbon/icons-react': set this to true or false
-  '@tailwindcss/oxide': set this to true or false
-  esbuild: set this to true or false
-  sharp: set this to true or false
-onlyBuiltDependencies:
-  - '@carbon/icon-helpers'
-  - '@carbon/icons-react'
-  - '@tailwindcss/oxide'
-  - esbuild
+  '@carbon/icon-helpers': true
+  '@carbon/icons-react': true
+  '@tailwindcss/oxide': true
+  esbuild: true
+  sharp: true
+overrides:
+  '@types/react': 18.3.18
+  '@types/react-dom': 18.3.5
