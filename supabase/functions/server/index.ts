@@ -436,6 +436,28 @@ async function getAuthedUser(c: any) {
   return data.user;
 }
 
+// ── Rate Limiting ─────────────────────────────────────────────────────────────
+// KV-backed sliding-window rate limiter. Persists across Edge Function cold
+// starts. Each entry stores { timestamps: number[] } checked against the window.
+
+async function checkRateLimit(
+  key: string,
+  maxAttempts: number,
+  windowMs: number,
+): Promise<boolean> {
+  const record = (await kv.get(`rate-limit:${key}`)) ?? { timestamps: [] as number[] };
+  const now = Date.now();
+  const cutoff = now - windowMs;
+  const recent = (record.timestamps as number[]).filter((t: number) => t > cutoff);
+  if (recent.length >= maxAttempts) return false;
+  recent.push(now);
+  await kv.set(`rate-limit:${key}`, { timestamps: recent });
+  return true;
+}
+
+const rateLimited = (c: any) =>
+  c.json({ error: "Too many attempts. Please try again later.", code: "rate_limited" }, 429);
+
 // ── Plan entitlements (server-side gating) ────────────────────────────────────
 // Effective plan is derived ONLY from `subscription:{userId}` (lazily expired
 // on read, same rule as GET /subscription). Client PlanGate is UI-only sugar.
@@ -774,6 +796,11 @@ app.post("/vouchers/validate", async (c) => {
     const user = await getAuthedUser(c);
     if (!user) return c.json({ error: "Unauthorized" }, 401);
 
+    // Rate limit: max 10 voucher validations per hour per user (brute-force guard)
+    if (!await checkRateLimit(`voucher:${user.id}`, 10, 60 * 60 * 1000)) {
+      return rateLimited(c);
+    }
+
     const body = await c.req.json();
     const code = String(body.code ?? "").trim().toUpperCase();
     const planId = String(body.plan_id ?? "");
@@ -958,6 +985,11 @@ app.post("/payments/checkout", async (c) => {
   try {
     const user = await getAuthedUser(c);
     if (!user) return c.json({ error: "Unauthorized" }, 401);
+
+    // Rate limit: max 3 checkouts per hour per user
+    if (!await checkRateLimit(`checkout:${user.id}`, 3, 60 * 60 * 1000)) {
+      return rateLimited(c);
+    }
 
     const config = midtransConfig();
     if (!config) {
