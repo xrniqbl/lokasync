@@ -118,7 +118,7 @@ function Avatar() {
   );
 }
 
-const profileStatuses = [
+const profileStatuses: { value: string; labelKey: "online" | "away" | "doNotDisturb" | "offline"; color: string }[] = [
   { value: "online",  labelKey: "online",       color: "#10b981" },
   { value: "away",    labelKey: "away",         color: "#f59e0b" },
   { value: "dnd",     labelKey: "doNotDisturb", color: "#ef4444" },

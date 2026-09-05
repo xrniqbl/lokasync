@@ -653,6 +653,8 @@ export const resetWorkspaceData = () =>
 
 // ── Workspace plan (Fase 14.5 — member plan inheritance) ───────────────────────
 
+type PlanId = "free" | "pro" | "business";
+
 export interface WorkspacePlan {
   plan: PlanId;
   owner_id: string | null;

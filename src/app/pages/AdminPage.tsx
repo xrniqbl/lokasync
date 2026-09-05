@@ -49,6 +49,7 @@ type Tab =
   | "subscribers"
   | "maintenance"
   | "notifications"
+  | "reminders"
   | "migration";
 
 const TABS: { id: Tab; label: string; icon: typeof LayoutDashboard }[] = [

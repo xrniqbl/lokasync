@@ -97,6 +97,13 @@ const STRINGS = {
       secure: "Secure payments processed by Midtrans",
       via: "Pay by bank transfer (virtual account):",
     },
+    trust: {
+      title: "Built with security in mind",
+      encryption: "End-to-end encryption",
+      gdpr: "GDPR compliant",
+      soc2: "SOC2 aligned",
+      uptime: "99.9% uptime SLA",
+    },
     faq: {
       title: "Frequently asked questions",
       sub: "Everything you need to know before you start.",
@@ -230,6 +237,13 @@ const STRINGS = {
     payments: {
       secure: "Pembayaran aman diproses oleh Midtrans",
       via: "Bayar lewat transfer bank (virtual account):",
+    },
+    trust: {
+      title: "Dibangun dengan keamanan yang serius",
+      encryption: "Enkripsi end-to-end",
+      gdpr: "Patuh GDPR",
+      soc2: "Selaras SOC2",
+      uptime: "SLA uptime 99,9%",
     },
     faq: {
       title: "Pertanyaan yang sering diajukan",

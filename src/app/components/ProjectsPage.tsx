@@ -129,7 +129,7 @@ function AvatarGroup({ members }: { members: string[] }) {
   );
 }
 
-type TaskItem = { id: number; title: string; status: string; priority: string; assignee: string; due: string };
+type TaskItem = { id: number; title: string; status: string; priority: string; assignee: string; due: string; project?: string };
 
 function TaskTable({ tasks }: { tasks: TaskItem[] }) {
   const done = tasks.filter((t) => t.status === "completed").length;

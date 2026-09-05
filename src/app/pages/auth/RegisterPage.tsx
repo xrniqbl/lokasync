@@ -24,7 +24,7 @@ import { Label } from "@/components/cossui/label";
 import { signUpWithEmail } from "../../utils/supabase";
 import { AuthShell } from "./AuthShell";
 import { PasswordInput } from "./PasswordInput";
-import { useLang } from "../../i18n";
+import { type DictPath, useLang } from "../../i18n";
 
 function passwordStrength(pw: string): 0 | 1 | 2 | 3 {
   if (!pw) return 0;
@@ -35,11 +35,11 @@ function passwordStrength(pw: string): 0 | 1 | 2 | 3 {
   return score as 0 | 1 | 2 | 3;
 }
 
-const strengthMeta = [
+const strengthMeta: { label: "" | "weak" | "fair" | "strong"; color: string }[] = [
   { label: "", color: "" },
-  { label: "Weak", color: "#ef4444" },
-  { label: "Fair", color: "#f59e0b" },
-  { label: "Strong", color: "#10b981" },
+  { label: "weak", color: "#ef4444" },
+  { label: "fair", color: "#f59e0b" },
+  { label: "strong", color: "#10b981" },
 ];
 
 function StepIndicator({ step }: { step: 1 | 2 }) {
@@ -201,7 +201,7 @@ export function RegisterPage() {
                   ))}
                 </div>
                 <span className="text-xs text-neutral-500">
-                  {t(`auth.${strengthMeta[strength].label.toLowerCase()}`)}
+                  {t(`auth.${strengthMeta[strength].label.toLowerCase()}` as DictPath)}
                 </span>
               </div>
             )}

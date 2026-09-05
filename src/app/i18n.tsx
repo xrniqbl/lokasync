@@ -849,6 +849,9 @@ export const DICT = {
     fullAccess: { en: "Full access", id: "Akses penuh" },
     sendInvite: { en: "Send invite", id: "Kirim undangan" },
     noEventsOnDay: { en: "No events on this day", id: "Tidak ada acara di hari ini" },
+    month: { en: "Month", id: "Bulan" },
+    week: { en: "Week", id: "Minggu" },
+    day: { en: "Day", id: "Hari" },
     noUpcomingEvents: { en: "No upcoming events", id: "Tidak ada acara mendatang" },
     selected: { en: "selected", id: "terpilih" },
   },
@@ -869,6 +872,9 @@ export const DICT = {
   filesPage: {
     filesTitle: { en: "Files", id: "Berkas" },
     newFolder: { en: "New folder", id: "Folder baru" },
+    upload: { en: "Upload", id: "Unggah" },
+    size: { en: "Size", id: "Ukuran" },
+    modified: { en: "Modified", id: "Diubah" },
     allFiles: { en: "All Files", id: "Semua Berkas" },
     noFilesHere: { en: "No files here", id: "Tidak ada berkas di sini" },
     filesCountFolders: { en: "{fileCount} files · {folderCount} folders", id: "{fileCount} berkas · {folderCount} folder" },
@@ -890,6 +896,9 @@ export const DICT = {
   billingPage: {
     billingTitle: { en: "Billing", id: "Tagihan" },
     billingSubtitle: { en: "Manage your subscription and view your payment history.", id: "Kelola langganan Anda dan lihat riwayat pembayaran Anda." },
+    billingPlanTitle: { en: "{planName} plan", id: "Paket {planName}" },
+    activeBadge: { en: "Active", id: "Aktif" },
+    inactiveBadge: { en: "Expired", id: "Kedaluwarsa" },
     currentPlan: { en: "Current Plan", id: "Paket Saat Ini" },
     changePlan: { en: "Change plan", id: "Ganti paket" },
     comparePlans: { en: "Compare plans", id: "Bandingkan paket" },
@@ -1039,6 +1048,7 @@ export const DICT = {
   },
 
   analytics: {
+    performance: { en: "Performance", id: "Performa" },
     taskCompletion: { en: "Task Completion", id: "Penyelesaian Tugas" },
     productivity: { en: "Team Productivity", id: "Produktivitas Tim" },
     keyMetrics: { en: "Key Metrics", id: "Metrik Utama" },
@@ -1559,7 +1569,7 @@ export function t(path: DictPath, lang: Lang): string {
 interface LangContextValue {
   lang: Lang;
   setLang: (lang: Lang) => void;
-  t: (path: DictPath) => string;
+  t: (path: DictPath, params?: Record<string, string | number>) => string;
 }
 
 const LangContext = createContext<LangContextValue>({
@@ -1580,7 +1590,15 @@ export function LangProvider({ children }: { children: React.ReactNode }) {
     persistLang(next);
   }, []);
 
-  const tBound = useCallback((path: DictPath) => t(path, lang), [lang]);
+  const tBound = useCallback((path: DictPath, params?: Record<string, string | number>) => {
+    let out = t(path, lang);
+    if (params) {
+      for (const [key, value] of Object.entries(params)) {
+        out = out.replaceAll(`{${key}}`, String(value));
+      }
+    }
+    return out;
+  }, [lang]);
 
   /* notify the rest of the app when language changes */
   useEffect(() => {

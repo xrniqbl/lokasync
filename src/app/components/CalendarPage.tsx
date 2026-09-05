@@ -423,7 +423,6 @@ export function CalendarPage() {
                             style={{
                               backgroundColor: isHighlighted ? `${ev.color}30` : `${ev.color}18`,
                               borderLeft: `3px solid ${ev.color}`,
-                              ringColor: isHighlighted ? ev.color : undefined,
                               boxShadow: isHighlighted ? `0 0 0 2px ${ev.color}60` : undefined,
                             }}>
                             <div className="flex-1 min-w-0">

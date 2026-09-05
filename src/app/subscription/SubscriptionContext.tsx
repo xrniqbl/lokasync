@@ -57,6 +57,7 @@ interface SubscriptionState {
 
 const SubscriptionContext = createContext<SubscriptionState>({
   plan: FALLBACK_FREE_PLAN,
+  workspacePlan: "free",
   subscription: null,
   transactions: [],
   loading: false,

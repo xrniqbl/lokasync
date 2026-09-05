@@ -637,18 +637,18 @@ export function AnalyticsPage() {
             <div className="bg-[#141414] border border-neutral-800/60 rounded-xl p-4 lg:p-5">
               <div className="text-neutral-50 text-[13px] font-['Lexend:SemiBold',_sans-serif] mb-5">{t("analytics.teamEfficiencyScores")}</div>
               <div className="space-y-5">
-                {(analyticsMetrics?.teamEfficiency.byTeam ?? []).map((t) => (
-                  <div key={t.team}>
+                {(analyticsMetrics?.teamEfficiency.byTeam ?? []).map((team) => (
+                  <div key={team.team}>
                     <div className="flex items-center justify-between mb-2">
-                      <span className="text-neutral-300 text-[13px]">{t.team}</span>
+                      <span className="text-neutral-300 text-[13px]">{team.team}</span>
                       <div className="flex items-center gap-4 text-[11px]">
-                        <span className="text-neutral-600">{t("analytics.velocity")}: <span className="text-neutral-400">{t.velocity} pts</span></span>
-                        <span className="text-neutral-600">{t("analytics.blocked")}: <span className="text-neutral-400">{t.blocked}%</span></span>
-                        <span style={{ color: t.color }} className="font-['Lexend:SemiBold',_sans-serif]">{t.score}%</span>
+                        <span className="text-neutral-600">{t("analytics.velocity")}: <span className="text-neutral-400">{team.velocity} pts</span></span>
+                        <span className="text-neutral-600">{t("analytics.blocked")}: <span className="text-neutral-400">{team.blocked}%</span></span>
+                        <span style={{ color: team.color }} className="font-['Lexend:SemiBold',_sans-serif]">{team.score}%</span>
                       </div>
                     </div>
                     <div className="h-2 bg-neutral-800 rounded-full overflow-hidden">
-                      <div className="h-full rounded-full" style={{ width: `${t.score}%`, backgroundColor: t.color }} />
+                      <div className="h-full rounded-full" style={{ width: `${team.score}%`, backgroundColor: team.color }} />
                     </div>
                   </div>
                 ))}

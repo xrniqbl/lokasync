@@ -4,14 +4,7 @@ import { FileText, Figma, FileCode, FileSpreadsheet, FileImage, GitBranch, Downl
 import * as Dialog from "@radix-ui/react-dialog";
 import * as api from "../../utils/api";
 
-interface FileItem {
-  name: string;
-  type: string;
-  size: string;
-  modified: string;
-  owner: string;
-  shared: boolean;
-}
+type FileItem = api.FileItem;
 
 interface FilePreviewModalProps {
   file: FileItem | null;
