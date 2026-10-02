@@ -319,6 +319,10 @@ function Logo({ small = false }: { small?: boolean }) {
       <img
         src="/lokasynclogo.png"
         alt="LokaSync"
+        width={small ? 96 : 128}
+        height={small ? 24 : 32}
+        fetchPriority="high"
+        decoding="async"
         className={small ? "h-6 w-auto" : "h-8 w-auto"}
         style={{ objectFit: "contain" }}
       />

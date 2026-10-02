@@ -1,0 +1,23 @@
+User-agent: *
+Allow: /
+Allow: /pricing
+Disallow: /app/
+Disallow: /admin
+Disallow: /checkout/
+Disallow: /payment/
+Disallow: /invite/
+Disallow: /onboarding
+
+User-agent: GPTBot
+Allow: /
+Allow: /pricing
+
+User-agent: ClaudeBot
+Allow: /
+Allow: /pricing
+
+User-agent: PerplexityBot
+Allow: /
+Allow: /pricing
+
+Sitemap: https://lokasync.app/sitemap.xml

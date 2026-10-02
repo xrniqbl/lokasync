@@ -33,6 +33,9 @@ export function AuthShell({
         <img
           src="/lokasynclogo.png"
           alt="LokaSync"
+          width={144}
+          height={36}
+          decoding="async"
           className="h-9 w-auto"
           style={{ objectFit: "contain" }}
         />

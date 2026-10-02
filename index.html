@@ -1,43 +1,100 @@
+<!DOCTYPE html>
+<html lang="id">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>LokaSync — Manajemen Proyek & Tugas Tim dalam Satu Workspace</title>
+    <meta name="description" content="LokaSync adalah aplikasi manajemen proyek untuk tim Indonesia: kelola tugas, proyek, kalender, file, dan laporan analitik dalam satu workspace minimal. Gratis hingga 3 proyek, bayar via transfer bank (Midtrans)." />
+    <meta name="keywords" content="manajemen proyek, aplikasi tugas tim, project management Indonesia, kerja tim, kalender tim, laporan proyek, LokaSync" />
+    <meta name="author" content="LokaSync" />
+    <meta name="robots" content="index, follow, max-image-preview:large" />
+    <link rel="icon" type="image/jpeg" href="/faviconlokasync.jpg" />
+    <link rel="apple-touch-icon" href="/faviconlokasync.jpg" />
+    <link rel="canonical" href="https://lokasync.app/" />
+    <link rel="alternate" hreflang="id" href="https://lokasync.app/" />
+    <link rel="alternate" hreflang="en" href="https://lokasync.app/" />
+    <link rel="alternate" hreflang="x-default" href="https://lokasync.app/" />
+    <meta name="theme-color" content="#0f0f0f" />
 
-  <!DOCTYPE html>
-  <html lang="en">
-    <head>
-      
-      <meta charset="UTF-8" />
-      <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-      <title>LokaSync — Every project, one place</title>
-      <meta name="description" content="LokaSync brings your team's tasks, timelines, files, and reporting into one minimal workspace. Free for up to 3 projects — pay in Rupiah via bank transfer (Midtrans)." />
-      <link rel="icon" type="image/jpeg" href="/faviconlokasync.jpg" />
-      <link rel="canonical" href="https://lokasync.app/" />
-      <meta name="theme-color" content="#0f0f0f" />
+    <!-- Open Graph -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="LokaSync" />
+    <meta property="og:url" content="https://lokasync.app/" />
+    <meta property="og:title" content="LokaSync — Every project, one place" />
+    <meta property="og:description" content="One minimal workspace for your team's projects, tasks, calendar, and reporting. Free for up to 3 projects." />
+    <meta property="og:image" content="https://lokasync.app/og-image.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="LokaSync workspace preview" />
+    <meta property="og:locale" content="id_ID" />
+    <meta property="og:locale:alternate" content="en_US" />
 
-      <!-- Open Graph -->
-      <meta property="og:type" content="website" />
-      <meta property="og:site_name" content="LokaSync" />
-      <meta property="og:url" content="https://lokasync.app/" />
-      <meta property="og:title" content="LokaSync — Every project, one place" />
-      <meta property="og:description" content="One minimal workspace for your team's projects, tasks, calendar, and reporting. Free for up to 3 projects." />
-      <meta property="og:image" content="https://lokasync.app/og-image.png" />
-      <meta property="og:image:width" content="1200" />
-      <meta property="og:image:height" content="630" />
-      <meta property="og:locale" content="id_ID" />
-      <meta property="og:locale:alternate" content="en_US" />
+    <!-- Twitter -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="LokaSync — Every project, one place" />
+    <meta name="twitter:description" content="One minimal workspace for your team's projects, tasks, calendar, and reporting. Free for up to 3 projects." />
+    <meta name="twitter:image" content="https://lokasync.app/og-image.png" />
+    <meta name="twitter:image:alt" content="LokaSync workspace preview" />
 
-      <!-- Twitter -->
-      <meta name="twitter:card" content="summary_large_image" />
-      <meta name="twitter:title" content="LokaSync — Every project, one place" />
-      <meta name="twitter:description" content="One minimal workspace for your team's projects, tasks, calendar, and reporting. Free for up to 3 projects." />
-      <meta name="twitter:image" content="https://lokasync.app/og-image.png" />
+    <!-- Structured data: product + FAQ (powers rich results & AI answers) -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "SoftwareApplication",
+      "name": "LokaSync",
+      "url": "https://lokasync.app/",
+      "applicationCategory": "BusinessApplication",
+      "operatingSystem": "Web",
+      "inLanguage": ["id", "en"],
+      "description": "Workspace manajemen proyek untuk tim: tugas, proyek, kalender bersama, file, dan analitik dalam satu tempat.",
+      "offers": { "@type": "Offer", "price": "0", "priceCurrency": "IDR" }
+    }
+    </script>
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "FAQPage",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "What is LokaSync?",
+          "acceptedAnswer": { "@type": "Answer", "text": "LokaSync is a project-management workspace for teams. It brings tasks, projects, a shared calendar, team workload, analytics, and files together in one place, so you don't have to jump between tools." }
+        },
+        {
+          "@type": "Question",
+          "name": "Is the Free plan really free?",
+          "acceptedAnswer": { "@type": "Answer", "text": "Yes. The Free plan gives you up to 3 projects with no time limit and no credit card required. Upgrade to Pro or Business when you need unlimited projects, Analytics, and Team management." }
+        },
+        {
+          "@type": "Question",
+          "name": "What payment methods can I use?",
+          "acceptedAnswer": { "@type": "Answer", "text": "Payments are processed securely by Midtrans, so you can pay with bank transfer (virtual account) and other popular payment methods in Indonesia. All prices are in Indonesian Rupiah." }
+        },
+        {
+          "@type": "Question",
+          "name": "Can I use a voucher code?",
+          "acceptedAnswer": { "@type": "Answer", "text": "Yes. Enter your voucher code on the checkout page and the discount is applied to your total before you pay." }
+        },
+        {
+          "@type": "Question",
+          "name": "What happens when my subscription ends?",
+          "acceptedAnswer": { "@type": "Answer", "text": "Your account automatically returns to the Free plan. Your data stays safe — paid features like Analytics and Team management simply lock until you renew." }
+        },
+        {
+          "@type": "Question",
+          "name": "Do I save money with yearly billing?",
+          "acceptedAnswer": { "@type": "Answer", "text": "Yes. Yearly billing costs the same as 10 months, so you get 2 months free compared to paying monthly." }
+        }
+      ]
+    }
+    </script>
 
-      <style>html, body { height: 100%; margin: 0; } #root { height: 100%; }</style>
-      
-    </head>
+    <style>html, body { height: 100%; margin: 0; background: #0f0f0f; } #root { height: 100%; }</style>
+  </head>
 
-    <body>
-      
-      <div id="root"></div>
-      <script type="module" src="/src/main.tsx"></script>
-      
-    </body>
-  </html>
-  
+  <body>
+    <noscript><p style="color:#e5e5e5;font-family:sans-serif;padding:2rem;text-align:center">LokaSync adalah workspace manajemen proyek untuk tim — butuh JavaScript untuk menjalankan aplikasi.</p></noscript>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

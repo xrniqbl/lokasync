@@ -1,15 +1,21 @@
-import { DashboardPage } from "./DashboardPage";
-import { TasksPage } from "./TasksPage";
-import { ProjectsPage } from "./ProjectsPage";
-import { CalendarPage } from "./CalendarPage";
-import { TeamsPage } from "./TeamsPage";
-import { AnalyticsPage } from "./AnalyticsPage";
-import { FilesPage } from "./FilesPage";
-import { SettingsPage } from "./SettingsPage";
-import { ProfilePage } from "./ProfilePage";
-import { BillingPage } from "./BillingPage";
+import { Suspense, lazy } from "react";
 import { PlanGate } from "./PlanGate";
 import { OwnerOnly } from "./OwnerOnly";
+import { Spinner } from "@/components/cossui/spinner";
+
+// In-app code splitting: each section loads on demand so switching tabs
+// never re-downloads the whole app. Dashboard stays eager (default view).
+import { DashboardPage } from "./DashboardPage";
+
+const TasksPage = lazy(() => import("./TasksPage").then((m) => ({ default: m.TasksPage })));
+const ProjectsPage = lazy(() => import("./ProjectsPage").then((m) => ({ default: m.ProjectsPage })));
+const CalendarPage = lazy(() => import("./CalendarPage").then((m) => ({ default: m.CalendarPage })));
+const TeamsPage = lazy(() => import("./TeamsPage").then((m) => ({ default: m.TeamsPage })));
+const AnalyticsPage = lazy(() => import("./AnalyticsPage").then((m) => ({ default: m.AnalyticsPage })));
+const FilesPage = lazy(() => import("./FilesPage").then((m) => ({ default: m.FilesPage })));
+const SettingsPage = lazy(() => import("./SettingsPage").then((m) => ({ default: m.SettingsPage })));
+const ProfilePage = lazy(() => import("./ProfilePage").then((m) => ({ default: m.ProfilePage })));
+const BillingPage = lazy(() => import("./BillingPage").then((m) => ({ default: m.BillingPage })));
 
 const GatedAnalyticsPage = () => (
   <PlanGate min="pro" feature="Analytics & reporting">
@@ -50,9 +56,25 @@ const pageMap: Record<string, React.ComponentType> = {
 
 export function MainContent({ activeSection }: { activeSection: string }) {
   const Page = pageMap[activeSection] ?? pageMap.dashboard;
+  // Dashboard renders synchronously; lazy sections get a spinner fallback.
+  if (activeSection === "dashboard") {
+    return (
+      <div className="flex-1 overflow-hidden bg-[#0f0f0f] h-full min-w-0">
+        <Page />
+      </div>
+    );
+  }
   return (
     <div className="flex-1 overflow-hidden bg-[#0f0f0f] h-full min-w-0">
-      <Page />
+      <Suspense
+        fallback={
+          <div className="flex h-full items-center justify-center" aria-busy="true" aria-label="Loading section">
+            <Spinner className="size-6 text-neutral-400" />
+          </div>
+        }
+      >
+        <Page />
+      </Suspense>
     </div>
   );
 }
