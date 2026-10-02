@@ -102,7 +102,7 @@ export function FilesPage() {
       api.getFiles().then(({ files: f, folders: fo }) => {
         setFiles(f);
         setFolders(fo);
-      }).catch((e) => console.log("Realtime files refresh error:", e));
+      }).catch((e) => console.error("Realtime files refresh error:", e));
     }
   });
 
@@ -111,7 +111,7 @@ export function FilesPage() {
       setFiles(f);
       setFolders(fo);
     }).catch((e) => {
-      console.log("Failed to load files:", e);
+      console.error("Failed to load files:", e);
       toast.error("Failed to load files");
     });
   }, []);
@@ -145,7 +145,7 @@ export function FilesPage() {
     setFiles((prev) => prev.filter((f) => f.name !== name));
     toast.success(t("filesPage.fileDeleted").replace("{name}", name.slice(0, 30)));
     try { await api.deleteFile(name); }
-    catch (e) { console.log("Failed to delete file:", e); }
+    catch (e) { console.error("Failed to delete file:", e); }
   };
 
   const startRename = (name: string) => {
@@ -160,7 +160,7 @@ export function FilesPage() {
       setFiles((prev) => prev.map((f) => f.name === oldName ? { ...f, name: newName } : f));
       toast.success(t("filesPage.fileRenamed"));
       try { await api.renameFile(oldName, newName); }
-      catch (e) { console.log("Failed to rename file:", e); }
+      catch (e) { console.error("Failed to rename file:", e); }
     }
     setRenamingFile(null);
     setRenameValue("");
@@ -169,7 +169,7 @@ export function FilesPage() {
   const handleFileRenameFromPreview = async (oldName: string, newName: string) => {
     setFiles((prev) => prev.map((f) => f.name === oldName ? { ...f, name: newName } : f));
     try { await api.renameFile(oldName, newName); }
-    catch (e) { console.log("Failed to rename file:", e); }
+    catch (e) { console.error("Failed to rename file:", e); }
   };
 
   const handleDownload = async (fileName: string) => {
@@ -204,7 +204,7 @@ export function FilesPage() {
         toast.error(t("filesPage.failedToGenerateDownload"));
       }
     } catch (e) {
-      console.log("Failed to generate share link:", e);
+      console.error("Failed to generate share link:", e);
       toast.error(t("filesPage.failedToGenerateDownload"));
     }
   };
@@ -217,7 +217,7 @@ export function FilesPage() {
         restored > 0 ? t("filesPage.filesRestored") : t("filesPage.noFilesHere"),
       );
     } catch (e) {
-      console.log("Failed to restore files:", e);
+      console.error("Failed to restore files:", e);
       toast.error(t("filesPage.failedToGenerateDownload"));
     }
   };
@@ -368,7 +368,7 @@ export function FilesPage() {
       <UploadModal open={showUpload} onClose={() => setShowUpload(false)} onUpload={(uploaded) => setFiles((prev) => [uploaded, ...prev])} />
       <NewFolderModal open={showNewFolder} onClose={() => setShowNewFolder(false)} onAdd={async (f) => {
         setFolders((prev) => [f, ...prev]);
-        try { await api.createFolder(f); } catch (e) { console.log("Failed to save folder:", e); }
+        try { await api.createFolder(f); } catch (e) { console.error("Failed to save folder:", e); }
       }} />
       <FilePreviewModal file={previewFile} onClose={() => setPreviewFile(null)} onRename={handleFileRenameFromPreview} />
     </div>

@@ -69,14 +69,14 @@ export function TeamsPage() {
   useRealtimeWorkspace(activeWorkspace?.id ?? null, (table) => {
     if (table === "teams" || table === "team_members") {
       api.getTeams().then((data) => setTeams(data)).catch((e) => {
-        console.log("Realtime teams refresh error:", e);
+        console.error("Realtime teams refresh error:", e);
       });
     }
   });
 
   useEffect(() => {
     api.getTeams().then((data) => setTeams(data)).catch((e) => {
-      console.log("Failed to load teams:", e);
+      console.error("Failed to load teams:", e);
       toast.error("Failed to load teams");
     });
   }, []);
@@ -198,7 +198,7 @@ export function TeamsPage() {
           const updatedTeam = await api.inviteMember(teamName, member);
           setTeams((prev) => prev.map((t) => t.name === teamName ? updatedTeam : t));
           toast.success(`${member.name} added to ${teamName}`);
-        } catch (e) { console.log("Failed to invite member:", e); toast.error("Failed to invite member"); }
+        } catch (e) { console.error("Failed to invite member:", e); toast.error("Failed to invite member"); }
       }} />
       {manageTeam && (
         <ManageTeamModal

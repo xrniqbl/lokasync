@@ -70,7 +70,7 @@ export function ProfilePage() {
     if (table === "profiles") {
       api.getSettings("profile").then((data) => {
         if (data) setProfile(data);
-      }).catch((e) => console.log("Realtime profile refresh error:", e));
+      }).catch((e) => console.error("Realtime profile refresh error:", e));
     }
   });
 

@@ -741,6 +741,8 @@ export const DICT = {
     newOwner: { en: "New owner", id: "Pemilik baru" },
     noAdminsFound: { en: "No admins found", id: "Tidak ada admin ditemukan" },
     transfer: { en: "Transfer ownership", id: "Pindahkan kepemilikan" },
+    transferring: { en: "Transferring…", id: "Memindahkan…" },
+    uploading: { en: "Uploading…", id: "Mengunggah…" },
     resetWorkspaceData: { en: "Reset Workspace Data", id: "Atur Ulang Data Ruang Kerja" },
     resetWorkspaceDataDesc: { en: "Permanently delete all tasks, projects, files, and settings. Members and billing are preserved.", id: "Hapus permanen semua tugas, proyek, berkas, dan pengaturan. Anggota dan tagihan dipertahankan." },
     typeResetToConfirm: { en: "Type RESET to confirm", id: "Ketik RESET untuk konfirmasi" },
@@ -1045,6 +1047,7 @@ export const DICT = {
     performanceNav: { en: "Performance", id: "Performa" },
     predictiveNav: { en: "Predictive", id: "Prediktif" },
     noDataLabel: { en: "No data", id: "Tidak ada data" },
+    sampleDataNote: { en: "Sample data for illustration — connect a finance source to see live figures", id: "Data contoh untuk ilustrasi — hubungkan sumber keuangan untuk melihat angka live" },
     /* ── focused sub-views ── */
     goalTracker: { en: "Goal Tracker", id: "Pelacak Tujuan" },
     progressAndStatus: { en: "Progress and status", id: "Kemajuan dan status" },
@@ -1282,6 +1285,8 @@ export const DICT = {
     failedToCreateProjectToast: { en: "Failed to create project", id: "Gagal membuat proyek" },
     projectsOverview: { en: "Projects overview", id: "Ikhtisar proyek" },
     remaining: { en: "remaining", id: "tersisa" },
+    markAsDone: { en: "Mark as done", id: "Tandai selesai" },
+    markAsNotDone: { en: "Mark as not done", id: "Batalkan selesai" },
   },
 
   profile: {

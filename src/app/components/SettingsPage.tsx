@@ -229,22 +229,22 @@ export function SettingsPage() {
         setMemberRoles(Object.fromEntries(data.rows.map((m: any) => [m.initials, m.role])));
       }
       if (data?.pending) setPendingList(data.pending);
-    }).catch((e) => console.log("Failed to load members settings:", e));
+    }).catch((e) => console.error("Failed to load members settings:", e));
 
     api.getSettings("api-keys").then((data) => {
       if (Array.isArray(data)) setApiKeysList(data);
-    }).catch((e) => console.log("Failed to load api-keys:", e));
+    }).catch((e) => console.error("Failed to load api-keys:", e));
 
     api.getSettings("webhooks").then((data) => {
       if (Array.isArray(data)) setWebhooksList(data);
-    }).catch((e) => console.log("Failed to load webhooks:", e));
+    }).catch((e) => console.error("Failed to load webhooks:", e));
 
     api.getSettings("audit-log").then((data) => {
       if (Array.isArray(data)) setAuditLogData(data.map((e: any) => ({
         actor: e.actor, name: e.actorName, action: e.action, target: e.target,
         ip: e.ip, time: e.timestamp, category: e.category,
       })));
-    }).catch((e) => console.log("Failed to load audit-log:", e));
+    }).catch((e) => console.error("Failed to load audit-log:", e));
 
     api.getSettings("appearance").then((data) => {
       if (data) {
@@ -253,7 +253,7 @@ export function SettingsPage() {
         if (data.fontSize) setFontSize(data.fontSize);
         if (data.density) setDensity(data.density);
       }
-    }).catch((e) => console.log("Failed to load appearance:", e));
+    }).catch((e) => console.error("Failed to load appearance:", e));
 
     api.getSettings("timezone").then((data) => {
       if (data) {
@@ -269,36 +269,36 @@ export function SettingsPage() {
         }
         if (typeof data.autoDetect === "boolean") setAutoDetectTz(data.autoDetect);
       }
-    }).catch((e) => console.log("Failed to load timezone:", e));
+    }).catch((e) => console.error("Failed to load timezone:", e));
 
     api.getSettings("notifications").then((data) => {
       if (data && typeof data === "object") setNotifState((prev) => ({ ...prev, ...data }));
-    }).catch((e) => console.log("Failed to load notifications:", e));
+    }).catch((e) => console.error("Failed to load notifications:", e));
 
     // Fetch integrations from Supabase
     api.getIntegrations().then((data) => {
       if (Array.isArray(data)) {
         setIntegrations(data.map((d: any) => ({ ...d, icon: integrationIcons[d.name] ?? <Zap size={16} /> })));
       }
-    }).catch((e) => console.log("Failed to load integrations:", e));
+    }).catch((e) => console.error("Failed to load integrations:", e));
 
     api.getSettings("billing").then((data) => {
       if (data) setBilling(data);
-    }).catch((e) => console.log("Failed to load billing:", e));
+    }).catch((e) => console.error("Failed to load billing:", e));
 
     api.getSettings("profile").then((data) => {
       if (data) setProfileData(data);
-    }).catch((e) => console.log("Failed to load profile:", e));
+    }).catch((e) => console.error("Failed to load profile:", e));
 
     api.getSettings("workspace").then((data) => {
       if (data) setWorkspaceData(data);
-    }).catch((e) => console.log("Failed to load workspace:", e));
+    }).catch((e) => console.error("Failed to load workspace:", e));
 
     // Fetch sessions from Supabase
     api.getSessions().then((data) => {
       if (data?.active) setSessions(data.active);
       if (data?.loginHistory) setLoginHistory(data.loginHistory);
-    }).catch((e) => console.log("Failed to load sessions:", e));
+    }).catch((e) => console.error("Failed to load sessions:", e));
   }, []);
 
   // Ownership-transfer candidates: workspace members excluding self.
@@ -312,7 +312,7 @@ export function SettingsPage() {
         setTransferCandidates(others);
         setTransferTarget((prev) => (others.some((m) => m.user_id === prev) ? prev : ""));
       })
-      .catch((e) => console.log("Failed to load transfer candidates:", e));
+      .catch((e) => console.error("Failed to load transfer candidates:", e));
   }, [activeNav, activeWorkspace, user?.id]);
 
   const handleTransferOwnership = async () => {
@@ -327,7 +327,7 @@ export function SettingsPage() {
       setTransferCandidates((prev) => prev.filter((m) => m.user_id !== transferTarget));
       setTransferTarget("");
     } catch (e) {
-      console.log("Failed to transfer ownership:", e);
+      console.error("Failed to transfer ownership:", e);
       toast.error(e instanceof Error ? e.message : "Failed to transfer ownership");
     } finally {
       setTransferring(false);
@@ -510,7 +510,7 @@ export function SettingsPage() {
     setApiKeysList(updated);
     setNewKeyName("");
     toast.success("API key generated — copy it now, it won't be shown again");
-    try { await api.saveSettings("api-keys", updated); } catch (e) { console.log("Failed to save api keys:", e); }
+    try { await api.saveSettings("api-keys", updated); } catch (e) { console.error("Failed to save api keys:", e); }
   };
 
   const copyKey = () => {
@@ -525,25 +525,25 @@ export function SettingsPage() {
     const updated = apiKeysList.filter((k) => k.name !== name);
     setApiKeysList(updated);
     toast.success(`API key "${name}" revoked`);
-    try { await api.saveSettings("api-keys", updated); } catch (e) { console.log("Failed to save api keys:", e); }
+    try { await api.saveSettings("api-keys", updated); } catch (e) { console.error("Failed to save api keys:", e); }
   };
 
   const toggleWebhook = async (idx: number) => {
     const updated = webhooksList.map((w, i) => i === idx ? { ...w, active: !w.active } : w);
     setWebhooksList(updated);
-    try { await api.saveSettings("webhooks", updated); } catch (e) { console.log("Failed to save webhooks:", e); }
+    try { await api.saveSettings("webhooks", updated); } catch (e) { console.error("Failed to save webhooks:", e); }
   };
 
   const deleteWebhook = async (idx: number) => {
     const updated = webhooksList.filter((_, i) => i !== idx);
     setWebhooksList(updated);
     toast.success("Webhook deleted");
-    try { await api.saveSettings("webhooks", updated); } catch (e) { console.log("Failed to save webhooks:", e); }
+    try { await api.saveSettings("webhooks", updated); } catch (e) { console.error("Failed to save webhooks:", e); }
   };
 
   const saveMembers = async (updatedMembers: any[], updatedPending?: any[]) => {
     const data = { rows: updatedMembers, pending: updatedPending ?? pendingList };
-    try { await api.saveSettings("members", data); } catch (e) { console.log("Failed to save members:", e); }
+    try { await api.saveSettings("members", data); } catch (e) { console.error("Failed to save members:", e); }
   };
 
   const saveAppearance = async () => {
@@ -551,7 +551,7 @@ export function SettingsPage() {
     try {
       await api.saveSettings("appearance", { theme, accent: accentLabel, fontSize, density, sidebarPosition: "left" });
       toast.success("Appearance settings saved");
-    } catch (e) { console.log("Failed to save appearance:", e); toast.error("Failed to save"); }
+    } catch (e) { console.error("Failed to save appearance:", e); toast.error("Failed to save"); }
   };
 
   const saveTimezone = async () => {
@@ -566,21 +566,21 @@ export function SettingsPage() {
       await api.saveSettings("timezone", { timezone: tz, dateFormat, timeFormat, firstDay: weekStart, autoDetect: autoDetectTz });
       setSelectedTimezone(tz);
       toast.success("Timezone settings saved");
-    } catch (e) { console.log("Failed to save timezone:", e); toast.error("Failed to save"); }
+    } catch (e) { console.error("Failed to save timezone:", e); toast.error("Failed to save"); }
   };
 
   const saveProfile = async () => {
     try {
       await api.saveSettings("profile", { firstName: "", lastName: "", email: "", phone: "", title: "", department: "Engineering", bio: "", github: "", linkedin: "", ...profileData });
       toast.success("Profile saved");
-    } catch (e) { console.log("Failed to save profile:", e); toast.error("Failed to save"); }
+    } catch (e) { console.error("Failed to save profile:", e); toast.error("Failed to save"); }
   };
 
   const saveNotifications = async () => {
     try {
       await api.saveSettings("notifications", notifState);
       toast.success("Notification settings saved");
-    } catch (e) { console.log("Failed to save notifications:", e); toast.error("Failed to save"); }
+    } catch (e) { console.error("Failed to save notifications:", e); toast.error("Failed to save"); }
   };
 
   const handleExport = async (label: string) => {
@@ -611,7 +611,7 @@ export function SettingsPage() {
       a.click();
       URL.revokeObjectURL(url);
       toast.success(`${label} exported as ${format}`);
-    } catch (e) { console.log("Export failed:", e); toast.error("Export failed"); }
+    } catch (e) { console.error("Export failed:", e); toast.error("Export failed"); }
   };
 
   const addWebhook = async () => {
@@ -624,7 +624,7 @@ export function SettingsPage() {
     setNewWebhookUrl("");
     setNewWebhookEvents("");
     toast.success("Webhook added");
-    try { await api.saveSettings("webhooks", updated); } catch (e) { console.log("Failed to save webhooks:", e); }
+    try { await api.saveSettings("webhooks", updated); } catch (e) { console.error("Failed to save webhooks:", e); }
   };
 
   const filteredLogs = auditFilter === "All" ? auditLogData : auditLogData.filter((l) => l.category === auditFilter);
@@ -898,7 +898,7 @@ export function SettingsPage() {
                         <button onClick={async () => {
                           setSessions(prev => prev.filter(x => x.device !== s.device));
                           toast.success(`Session revoked: ${s.device}`);
-                          try { await api.revokeSession(s.device); } catch (e) { console.log("Revoke failed:", e); }
+                          try { await api.revokeSession(s.device); } catch (e) { console.error("Revoke failed:", e); }
                         }} className="text-red-400 hover:text-red-300 text-[12px] px-2.5 py-1 rounded-lg border border-red-900/40 hover:bg-red-950/30 transition-colors shrink-0">{t("settings.revoke")}</button>
                       )}
                     </div>
@@ -1001,7 +1001,7 @@ export function SettingsPage() {
                   <div className="flex items-center gap-4">
                     <div className="w-14 h-14 rounded-xl bg-indigo-900/60 flex items-center justify-center text-indigo-300 text-[20px] font-['Lexend:SemiBold',_sans-serif] shrink-0">{workspaceData.name?.[0]?.toUpperCase() ?? "?"}</div>
                     <div>
-                      <button onClick={() => logoInputRef.current?.click()} disabled={uploadingLogo} className="border border-neutral-800 hover:bg-neutral-800 disabled:opacity-50 text-neutral-300 text-[12px] px-3 py-1.5 rounded-lg transition-colors">{uploadingLogo ? "Uploading…" : t("settings.uploadLogo")}</button>
+                      <button onClick={() => logoInputRef.current?.click()} disabled={uploadingLogo} className="border border-neutral-800 hover:bg-neutral-800 disabled:opacity-50 text-neutral-300 text-[12px] px-3 py-1.5 rounded-lg transition-colors">{uploadingLogo ? t("settings.uploading") : t("settings.uploadLogo")}</button>
                       <p className="text-neutral-600 text-[11px] mt-1">{t("settings.pngOrSvg")}</p>
                       <input ref={logoInputRef} type="file" accept="image/*" className="hidden" onChange={handleLogoChange} />
                     </div>
@@ -1069,7 +1069,7 @@ export function SettingsPage() {
               </Section>
               <SaveRow onSave={async () => {
                 try { await api.saveSettings("workspace", { name: "", url: "", industry: "", teamSize: "", region: "", ...workspaceData }); toast.success("Workspace settings saved"); }
-                catch (e) { console.log("Failed to save workspace:", e); toast.error("Failed to save"); }
+                catch (e) { console.error("Failed to save workspace:", e); toast.error("Failed to save"); }
               }} />
             </>
           )}
@@ -1265,7 +1265,7 @@ export function SettingsPage() {
                       newMember: false, digest: true, productUpdates: false, security: true,
                     });
                     toast.success("Default notification settings saved");
-                  } catch (e) { console.log("Failed to save defaults:", e); toast.error("Failed to save"); }
+                  } catch (e) { console.error("Failed to save defaults:", e); toast.error("Failed to save"); }
                 }} className="bg-indigo-600 hover:bg-indigo-500 text-white text-[13px] px-5 py-2 rounded-lg transition-colors">
                   {t("settings.saveDefaults")}
                 </button>
@@ -1730,7 +1730,7 @@ export function SettingsPage() {
                   </select>
                 </div>
                 <button onClick={handleTransferOwnership} disabled={transferring || !transferTarget} className="border border-amber-800/60 hover:bg-amber-950/30 disabled:opacity-40 disabled:cursor-not-allowed text-amber-400 hover:text-amber-300 text-[13px] px-4 py-2 rounded-lg transition-colors">
-                  {transferring ? "Transferring…" : t("settings.transfer")}
+                  {transferring ? t("settings.transferring") : t("settings.transfer")}
                 </button>
               </div>
 
@@ -1756,7 +1756,7 @@ export function SettingsPage() {
                       await api.resetWorkspaceData();
                       toast.success("Workspace data has been reset. Refresh to see changes.");
                       setDangerReset("");
-                    } catch (e) { console.log("Failed to reset workspace:", e); toast.error("Failed to reset workspace data"); }
+                    } catch (e) { console.error("Failed to reset workspace:", e); toast.error("Failed to reset workspace data"); }
                   }}
                   className="border border-red-800/60 hover:bg-red-950/30 text-red-400 hover:text-red-300 text-[13px] px-4 py-2 rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2"
                 >

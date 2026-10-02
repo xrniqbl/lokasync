@@ -60,7 +60,7 @@ export function TasksPage() {
       setTasks(data);
       setCheckedTasks(new Set(data.filter((t) => t.completed).map((t) => t.id)));
     }).catch((e) => {
-      console.log("Failed to load tasks:", e);
+      console.error("Failed to load tasks:", e);
       toast.error(t("tasks.failedToLoadTasks"));
     }).finally(() => setLoading(false));
   }
@@ -100,7 +100,7 @@ export function TasksPage() {
     try {
       await api.updateTask(id, { completed: nowCompleted, status: newStatus });
     } catch (e) {
-      console.log("Failed to update task:", e);
+      console.error("Failed to update task:", e);
       toast.error(t("tasks.failedToSaveTaskStatus"));
     }
   };
@@ -110,7 +110,7 @@ export function TasksPage() {
       const created = await api.createTask(task);
       setTasks((prev) => [created, ...prev]);
     } catch (e) {
-      console.log("Failed to create task:", e);
+      console.error("Failed to create task:", e);
       toast.error(t("tasks.failedToCreateTask"));
     }
   };
@@ -123,7 +123,7 @@ export function TasksPage() {
     try {
       await api.updateTask(updated.id, updated);
     } catch (e) {
-      console.log("Failed to update task:", e);
+      console.error("Failed to update task:", e);
       toast.error(t("tasks.failedToSaveTask"));
     }
   };
@@ -136,7 +136,7 @@ export function TasksPage() {
     try {
       await api.deleteTask(id);
     } catch (e) {
-      console.log("Failed to delete task:", e);
+      console.error("Failed to delete task:", e);
       toast.error(t("tasks.failedToDeleteTask"));
     }
   };

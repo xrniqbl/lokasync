@@ -200,7 +200,7 @@ async function broadcastAfterWrite(workspaceId: string, table: string) {
       });
     });
   } catch (e) {
-    console.log("broadcast error:", e);
+    console.error("broadcast error:", e);
   }
 }
 
@@ -708,7 +708,7 @@ app.get("/status", async (c) => {
       },
     });
   } catch (e) {
-    console.log("GET /status error:", e);
+    console.error("GET /status error:", e);
     return c.json({ error: String(e) }, 500);
   }
 });
@@ -737,7 +737,7 @@ app.get("/profile", async (c) => {
     }
     return c.json({ profile });
   } catch (e) {
-    console.log("GET /profile error:", e);
+    console.error("GET /profile error:", e);
     return c.json({ error: String(e) }, 500);
   }
 });
@@ -818,7 +818,7 @@ app.get("/2fa/setup", async (c) => {
     await kv.set(`2fa:pending:${user.id}`, { secret, backupCodes });
     return c.json({ secret, otpauthUrl, backupCodes });
   } catch (e) {
-    console.log("GET /2fa/setup error:", e);
+    console.error("GET /2fa/setup error:", e);
     return c.json({ error: String(e) }, 500);
   }
 });
@@ -846,7 +846,7 @@ app.post("/2fa/verify", async (c) => {
     await adminClient().auth.admin.updateUserById(user.id, { user_metadata: { ...user.user_metadata, totp_enabled: true } });
     return c.json({ ok: true });
   } catch (e) {
-    console.log("POST /2fa/verify error:", e);
+    console.error("POST /2fa/verify error:", e);
     return c.json({ error: String(e) }, 500);
   }
 });
@@ -899,7 +899,7 @@ app.delete("/2fa", async (c) => {
     await adminClient().auth.admin.updateUserById(user.id, { user_metadata: { ...user.user_metadata, totp_enabled: false, email_otp_enabled: false } });
     return c.json({ ok: true });
   } catch (e) {
-    console.log("DELETE /2fa error:", e);
+    console.error("DELETE /2fa error:", e);
     return c.json({ error: String(e) }, 500);
   }
 });
@@ -954,7 +954,7 @@ app.post("/2fa/verify-login", async (c) => {
     await kv.del(attemptKey);
     return c.json({ ok: true });
   } catch (e) {
-    console.log("POST /2fa/verify-login error:", e);
+    console.error("POST /2fa/verify-login error:", e);
     return c.json({ error: String(e) }, 500);
   }
 });
@@ -1001,7 +1001,7 @@ app.post("/email-otp/send", async (c) => {
 
     return c.json({ ok: true, expiresIn: 300 });
   } catch (e) {
-    console.log("POST /email-otp/send error:", e);
+    console.error("POST /email-otp/send error:", e);
     return c.json({ error: String(e) }, 500);
   }
 });
@@ -1040,7 +1040,7 @@ app.post("/email-otp/verify", async (c) => {
     });
     return c.json({ ok: true });
   } catch (e) {
-    console.log("POST /email-otp/verify error:", e);
+    console.error("POST /email-otp/verify error:", e);
     return c.json({ error: String(e) }, 500);
   }
 });
@@ -1081,7 +1081,7 @@ app.post("/email-otp/verify-login", async (c) => {
     await kv.del(`email-otp:${user.id}`);
     return c.json({ ok: true });
   } catch (e) {
-    console.log("POST /email-otp/verify-login error:", e);
+    console.error("POST /email-otp/verify-login error:", e);
     return c.json({ error: String(e) }, 500);
   }
 });
@@ -1125,7 +1125,7 @@ app.get("/plans", async (c) => {
       highlighted: p.highlighted,
     })));
   } catch (e) {
-    console.log("GET /plans error:", e);
+    console.error("GET /plans error:", e);
     return c.json({ error: String(e) }, 500);
   }
 });
@@ -1210,7 +1210,7 @@ app.post("/vouchers/validate", async (c) => {
       total: base - discount,
     });
   } catch (e) {
-    console.log("POST /vouchers/validate error:", e);
+    console.error("POST /vouchers/validate error:", e);
     return c.json({ error: String(e) }, 500);
   }
 });
@@ -1341,7 +1341,7 @@ async function applyTransactionStatus(tx: any, midtransData: any) {
       }
     } catch (emailErr) {
       // Email failure must never break the transaction
-      console.log("Receipt email failed:", emailErr);
+      console.error("Receipt email failed:", emailErr);
     }
   }
   return tx;
@@ -1457,7 +1457,7 @@ app.post("/payments/checkout", async (c) => {
     });
     if (!snapRes.ok) {
       const detail = await snapRes.text();
-      console.log("Midtrans Snap error:", snapRes.status, detail);
+      console.error("Midtrans Snap error:", snapRes.status, detail);
       return c.json(
         {
           error: "Could not start the payment. Please try again.",
@@ -1493,7 +1493,7 @@ app.post("/payments/checkout", async (c) => {
       is_production: config.isProduction,
     });
   } catch (e) {
-    console.log("POST /payments/checkout error:", e);
+    console.error("POST /payments/checkout error:", e);
     return c.json({ error: String(e) }, 500);
   }
 });
@@ -1518,7 +1518,7 @@ app.post("/payments/webhook", async (c) => {
       .map((b) => b.toString(16).padStart(2, "0"))
       .join("");
     if (expected !== signature_key) {
-      console.log("Webhook signature mismatch for order:", order_id);
+      console.error("Webhook signature mismatch for order:", order_id);
       return c.json({ error: "Invalid signature" }, 403);
     }
 
@@ -1528,7 +1528,7 @@ app.post("/payments/webhook", async (c) => {
     await applyTransactionStatus(tx, body);
     return c.json({ ok: true });
   } catch (e) {
-    console.log("POST /payments/webhook error:", e);
+    console.error("POST /payments/webhook error:", e);
     return c.json({ error: String(e) }, 500);
   }
 });
@@ -1574,7 +1574,7 @@ app.get("/payments/status/:orderId", async (c) => {
       subscription,
     });
   } catch (e) {
-    console.log("GET /payments/status error:", e);
+    console.error("GET /payments/status error:", e);
     return c.json({ error: String(e) }, 500);
   }
 });
@@ -1627,7 +1627,7 @@ app.get("/subscription", async (c) => {
       is_admin: isAdminUser(user),
     });
   } catch (e) {
-    console.log("GET /subscription error:", e);
+    console.error("GET /subscription error:", e);
     return c.json({ error: String(e) }, 500);
   }
 });
@@ -1662,7 +1662,7 @@ app.put("/profile", async (c) => {
     }
     return c.json({ profile });
   } catch (e) {
-    console.log("PUT /profile error:", e);
+    console.error("PUT /profile error:", e);
     return c.json({ error: String(e) }, 500);
   }
 });
@@ -1709,7 +1709,7 @@ app.post("/profile/avatar", async (c) => {
       .from("avatars")
       .upload(storagePath, bytes, { contentType: file.type, upsert: false });
     if (uploadErr) {
-      console.log("Avatar upload error:", uploadErr);
+      console.error("Avatar upload error:", uploadErr);
       return c.json({ error: uploadErr.message }, 500);
     }
 
@@ -1743,7 +1743,7 @@ app.post("/profile/avatar", async (c) => {
       user_metadata: { ...(user.user_metadata ?? {}), avatar_url: urlData.signedUrl },
     }).then(
       () => {},
-      (e: unknown) => console.log("Avatar metadata mirror failed:", e),
+      (e: unknown) => console.error("Avatar metadata mirror failed:", e),
     );
 
     if (prevPath && prevPath !== storagePath) {
@@ -1752,7 +1752,7 @@ app.post("/profile/avatar", async (c) => {
 
     return c.json({ url: urlData.signedUrl, path: storagePath, avatar_url: urlData.signedUrl }, 201);
   } catch (e) {
-    console.log("POST /profile/avatar error:", e);
+    console.error("POST /profile/avatar error:", e);
     return c.json({ error: String(e) }, 500);
   }
 });
@@ -1814,7 +1814,7 @@ app.get("/admin/overview", async (c) => {
       maintenance: { enabled: !!mt?.enabled, message: mt?.message ?? "" },
     });
   } catch (e) {
-    console.log("GET /admin/overview error:", e);
+    console.error("GET /admin/overview error:", e);
     return c.json({ error: String(e) }, 500);
   }
 });
@@ -1919,12 +1919,12 @@ app.post("/admin/migrate-workspaces", async (c) => {
       report.legacy_purged = true;
     }
 
-    console.log(
+    console.error(
       `migrate-workspaces ${dryRun ? "(dry run) " : ""}— users: ${report.users_processed}, copied: ${report.keys_copied}, skipped: ${report.keys_skipped}, purged: ${report.legacy_purged}`,
     );
     return c.json(report);
   } catch (e) {
-    console.log("POST /admin/migrate-workspaces error:", e);
+    console.error("POST /admin/migrate-workspaces error:", e);
     return c.json({ error: String(e) }, 500);
   }
 });
@@ -1939,7 +1939,7 @@ app.get("/admin/vouchers", async (c) => {
     const { data: vouchers } = await sql.getDbClient().from("vouchers").select("*").order("code");
     return c.json((vouchers ?? []).map(voucherToApi));
   } catch (e) {
-    console.log("GET /admin/vouchers error:", e);
+    console.error("GET /admin/vouchers error:", e);
     return c.json({ error: String(e) }, 500);
   }
 });
@@ -1996,7 +1996,7 @@ app.post("/admin/vouchers", async (c) => {
     await sql.getDbClient().from("vouchers").insert(voucher);
     return c.json(voucher, 201);
   } catch (e) {
-    console.log("POST /admin/vouchers error:", e);
+    console.error("POST /admin/vouchers error:", e);
     return c.json({ error: String(e) }, 500);
   }
 });
@@ -2020,7 +2020,7 @@ app.put("/admin/vouchers/:code", async (c) => {
     await sql.getDbClient().from("vouchers").update(voucher).eq("code", code);
     return c.json(voucher);
   } catch (e) {
-    console.log("PUT /admin/vouchers error:", e);
+    console.error("PUT /admin/vouchers error:", e);
     return c.json({ error: String(e) }, 500);
   }
 });
@@ -2035,7 +2035,7 @@ app.delete("/admin/vouchers/:code", async (c) => {
     await sql.getDbClient().from("vouchers").delete().eq("code", code);
     return c.json({ ok: true });
   } catch (e) {
-    console.log("DELETE /admin/vouchers error:", e);
+    console.error("DELETE /admin/vouchers error:", e);
     return c.json({ error: String(e) }, 500);
   }
 });
@@ -2070,7 +2070,7 @@ app.get("/admin/subscribers", async (c) => {
     rows.sort((a, b) => String(a.current_period_end) < String(b.current_period_end) ? 1 : -1);
     return c.json(rows);
   } catch (e) {
-    console.log("GET /admin/subscribers error:", e);
+    console.error("GET /admin/subscribers error:", e);
     return c.json({ error: String(e) }, 500);
   }
 });
@@ -2094,7 +2094,7 @@ app.put("/admin/maintenance", async (c) => {
     );
     return c.json({ maintenance });
   } catch (e) {
-    console.log("PUT /admin/maintenance error:", e);
+    console.error("PUT /admin/maintenance error:", e);
     return c.json({ error: String(e) }, 500);
   }
 });
@@ -2111,7 +2111,7 @@ app.get("/admin/notifications", async (c) => {
       .limit(50);
     return c.json(items ?? []);
   } catch (e) {
-    console.log("GET /admin/notifications error:", e);
+    console.error("GET /admin/notifications error:", e);
     return c.json({ error: String(e) }, 500);
   }
 });
@@ -2136,7 +2136,7 @@ app.post("/admin/notifications", async (c) => {
     if (!notification) return c.json({ error: "Failed to create notification" }, 500);
     return c.json(notification, 201);
   } catch (e) {
-    console.log("POST /admin/notifications error:", e);
+    console.error("POST /admin/notifications error:", e);
     return c.json({ error: String(e) }, 500);
   }
 });
@@ -2151,7 +2151,7 @@ app.delete("/admin/notifications/:id", async (c) => {
     await sql.getDbClient().from("notifications").delete().eq("id", id);
     return c.json({ ok: true });
   } catch (e) {
-    console.log("DELETE /admin/notifications error:", e);
+    console.error("DELETE /admin/notifications error:", e);
     return c.json({ error: String(e) }, 500);
   }
 });
@@ -2205,7 +2205,7 @@ app.post("/admin/send-reminders", async (c) => {
     }
     return c.json({ sent, skipped, daysAhead });
   } catch (e) {
-    console.log("POST /admin/send-reminders error:", e);
+    console.error("POST /admin/send-reminders error:", e);
     return c.json({ error: String(e) }, 500);
   }
 });
@@ -2233,7 +2233,7 @@ app.get("/notifications", async (c) => {
       }));
     return c.json(items);
   } catch (e) {
-    console.log("GET /notifications error:", e);
+    console.error("GET /notifications error:", e);
     return c.json({ error: String(e) }, 500);
   }
 });
@@ -2250,7 +2250,7 @@ app.put("/notifications/read", async (c) => {
     }
     return c.json({ ok: true });
   } catch (e) {
-    console.log("PUT /notifications/read error:", e);
+    console.error("PUT /notifications/read error:", e);
     return c.json({ error: String(e) }, 500);
   }
 });
@@ -2272,7 +2272,7 @@ app.get("/workspaces", async (c) => {
     }));
     return c.json({ workspaces: items, active: c.get("workspace").id });
   } catch (e) {
-    console.log("GET /workspaces error:", e);
+    console.error("GET /workspaces error:", e);
     return c.json({ error: String(e) }, 500);
   }
 });
@@ -2287,7 +2287,7 @@ app.post("/workspaces", async (c) => {
     await broadcastAfterWrite(created.workspace.id, "workspaces");
     return c.json({ ...created.workspace, role: created.membership.role }, 201);
   } catch (e) {
-    console.log("POST /workspaces error:", e);
+    console.error("POST /workspaces error:", e);
     return c.json({ error: String(e) }, 500);
   }
 });
@@ -2309,7 +2309,7 @@ app.put("/workspaces/:id", async (c) => {
     await broadcastAfterWrite(id, "workspaces");
     return c.json({ ...updated, role: membership.role });
   } catch (e) {
-    console.log("PUT /workspaces/:id error:", e);
+    console.error("PUT /workspaces/:id error:", e);
     return c.json({ error: String(e) }, 500);
   }
 });
@@ -2331,7 +2331,7 @@ app.delete("/workspaces/:id", async (c) => {
     await broadcastAfterWrite(id, "workspaces");
     return c.json({ ok: true });
   } catch (e) {
-    console.log("DELETE /workspaces/:id error:", e);
+    console.error("DELETE /workspaces/:id error:", e);
     return c.json({ error: String(e) }, 500);
   }
 });
@@ -2344,7 +2344,7 @@ app.get("/workspaces/:id/members", async (c) => {
     if (!membership) return c.json({ error: "Workspace not found" }, 404);
     return c.json(await ws.getMembers(id));
   } catch (e) {
-    console.log("GET /workspaces/:id/members error:", e);
+    console.error("GET /workspaces/:id/members error:", e);
     return c.json({ error: String(e) }, 500);
   }
 });
@@ -2369,7 +2369,7 @@ app.put("/workspaces/:id/members/:userId", async (c) => {
     if (!updated) return c.json({ error: "Member not found" }, 404);
     return c.json(updated);
   } catch (e) {
-    console.log("PUT /workspaces/:id/members/:userId error:", e);
+    console.error("PUT /workspaces/:id/members/:userId error:", e);
     return c.json({ error: String(e) }, 500);
   }
 });
@@ -2392,7 +2392,7 @@ app.delete("/workspaces/:id/members/:userId", async (c) => {
     await ws.removeMember(id, targetId);
     return c.json({ ok: true });
   } catch (e) {
-    console.log("DELETE /workspaces/:id/members/:userId error:", e);
+    console.error("DELETE /workspaces/:id/members/:userId error:", e);
     return c.json({ error: String(e) }, 500);
   }
 });
@@ -2420,7 +2420,7 @@ app.get("/workspaces/:id/invites", async (c) => {
       })),
     );
   } catch (e) {
-    console.log("GET /workspaces/:id/invites error:", e);
+    console.error("GET /workspaces/:id/invites error:", e);
     return c.json({ error: String(e) }, 500);
   }
 });
@@ -2456,7 +2456,7 @@ app.post("/workspaces/:id/invites", async (c) => {
 
     return c.json({ ...invitation, invite_url: inviteUrl, email_sent: emailSent }, 201);
   } catch (e) {
-    console.log("POST /workspaces/:id/invites error:", e);
+    console.error("POST /workspaces/:id/invites error:", e);
     return c.json({ error: String(e) }, 500);
   }
 });
@@ -2478,7 +2478,7 @@ app.delete("/workspaces/:id/invites/:token", async (c) => {
     await ws.saveInvitation({ ...invitation, status: "revoked" });
     return c.json({ ok: true });
   } catch (e) {
-    console.log("DELETE /workspaces/:id/invites/:token error:", e);
+    console.error("DELETE /workspaces/:id/invites/:token error:", e);
     return c.json({ error: String(e) }, 500);
   }
 });
@@ -2499,7 +2499,7 @@ app.get("/invites/:token", async (c) => {
       expires_at: fresh.expires_at,
     });
   } catch (e) {
-    console.log("GET /invites/:token error:", e);
+    console.error("GET /invites/:token error:", e);
     return c.json({ error: String(e) }, 500);
   }
 });
@@ -2545,7 +2545,7 @@ app.post("/invites/accept", async (c) => {
       workspace: { id: workspace.id, name: workspace.name, role: fresh.role },
     });
   } catch (e) {
-    console.log("POST /invites/accept error:", e);
+    console.error("POST /invites/accept error:", e);
     return c.json({ error: String(e) }, 500);
   }
 });
@@ -2567,7 +2567,7 @@ app.get("/workspace-plan", async (c) => {
       owner_id: workspace.owner_id,
     });
   } catch (e) {
-    console.log("GET /workspace-plan error:", e);
+    console.error("GET /workspace-plan error:", e);
     return c.json({ error: String(e) }, 500);
   }
 });
@@ -2680,7 +2680,7 @@ app.get("/member-home", async (c) => {
         team_activity: teamActivity.slice(0, 10),
       });
   } catch (e) {
-    console.log("GET /member-home error:", e);
+    console.error("GET /member-home error:", e);
     return c.json({ error: String(e) }, 500);
   }
 });
@@ -2703,7 +2703,7 @@ app.delete("/workspace-data", async (c) => {
     }
     return c.json({ ok: true });
   } catch (e) {
-    console.log("DELETE /workspace-data error:", e);
+    console.error("DELETE /workspace-data error:", e);
     return c.json({ error: String(e) }, 500);
   }
 });
@@ -2732,7 +2732,7 @@ app.post("/leave-workspace", async (c) => {
 
     return c.json({ ok: true });
   } catch (e) {
-    console.log("POST /leave-workspace error:", e);
+    console.error("POST /leave-workspace error:", e);
     return c.json({ error: String(e) }, 500);
   }
 });
@@ -2756,7 +2756,7 @@ app.get("/tasks", async (c) => {
     }));
     return c.json(mapped);
   } catch (e) {
-    console.log("GET /tasks error:", e);
+    console.error("GET /tasks error:", e);
     return c.json({ error: String(e) }, 500);
   }
 });
@@ -2783,7 +2783,7 @@ app.post("/tasks", async (c) => {
     await broadcastAfterWrite(workspace.id, "tasks");
     return c.json(newTask, 201);
   } catch (e) {
-    console.log("POST /tasks error:", e);
+    console.error("POST /tasks error:", e);
     return c.json({ error: String(e) }, 500);
   }
 });
@@ -2815,7 +2815,7 @@ app.put("/tasks/:id", async (c) => {
     await broadcastAfterWrite(workspace.id, "tasks");
     return c.json(sqlTask);
   } catch (e) {
-    console.log("PUT /tasks/:id error:", e);
+    console.error("PUT /tasks/:id error:", e);
     return c.json({ error: String(e) }, 500);
   }
 });
@@ -2833,7 +2833,7 @@ app.delete("/tasks/:id", async (c) => {
     await broadcastAfterWrite(workspace.id, "tasks");
     return c.json({ ok: true });
   } catch (e) {
-    console.log("DELETE /tasks/:id error:", e);
+    console.error("DELETE /tasks/:id error:", e);
     return c.json({ error: String(e) }, 500);
   }
 });
@@ -2857,7 +2857,7 @@ app.get("/projects", async (c) => {
     }));
     return c.json(mapped);
   } catch (e) {
-    console.log("GET /projects error:", e);
+    console.error("GET /projects error:", e);
     return c.json({ error: String(e) }, 500);
   }
 });
@@ -2896,7 +2896,7 @@ app.post("/projects", async (c) => {
     await broadcastAfterWrite(workspace.id, "projects");
     return c.json(newProject, 201);
   } catch (e) {
-    console.log("POST /projects error:", e);
+    console.error("POST /projects error:", e);
     return c.json({ error: String(e) }, 500);
   }
 });
@@ -2921,7 +2921,7 @@ app.put("/projects/:id", async (c) => {
     await broadcastAfterWrite(workspace.id, "projects");
     return c.json(updated);
   } catch (e) {
-    console.log("PUT /projects/:id error:", e);
+    console.error("PUT /projects/:id error:", e);
     return c.json({ error: String(e) }, 500);
   }
 });
@@ -2938,7 +2938,7 @@ app.delete("/projects/:id", async (c) => {
     await broadcastAfterWrite(workspace.id, "projects");
     return c.json({ ok: true });
   } catch (e) {
-    console.log("DELETE /projects/:id error:", e);
+    console.error("DELETE /projects/:id error:", e);
     return c.json({ error: String(e) }, 500);
   }
 });
@@ -2968,7 +2968,7 @@ app.get("/teams", async (c) => {
     }));
     return c.json(result.length ? result : SEED_TEAMS);
   } catch (e) {
-    console.log("GET /teams error:", e);
+    console.error("GET /teams error:", e);
     return c.json({ error: String(e) }, 500);
   }
 });
@@ -3004,7 +3004,7 @@ app.post("/teams/invite", async (c) => {
       })) ?? [],
     }, 201);
   } catch (e) {
-    console.log("POST /teams/invite error:", e);
+    console.error("POST /teams/invite error:", e);
     return c.json({ error: String(e) }, 500);
   }
 });
@@ -3029,7 +3029,7 @@ app.put("/teams/member", async (c) => {
     await broadcastAfterWrite(workspace.id, "teams");
     return c.json({ ...member, ...safePatch });
   } catch (e) {
-    console.log("PUT /teams/member error:", e);
+    console.error("PUT /teams/member error:", e);
     return c.json({ error: String(e) }, 500);
   }
 });
@@ -3049,7 +3049,7 @@ app.delete("/teams/member", async (c) => {
     await broadcastAfterWrite(workspace.id, "teams");
     return c.json({ ok: true });
   } catch (e) {
-    console.log("DELETE /teams/member error:", e);
+    console.error("DELETE /teams/member error:", e);
     return c.json({ error: String(e) }, 500);
   }
 });
@@ -3070,7 +3070,7 @@ app.get("/calendar", async (c) => {
     });
     return c.json(events);
   } catch (e) {
-    console.log("GET /calendar error:", e);
+    console.error("GET /calendar error:", e);
     return c.json({ error: String(e) }, 500);
   }
 });
@@ -3096,7 +3096,7 @@ app.post("/calendar/events", async (c) => {
     await broadcastAfterWrite(workspace.id, "calendar_events");
     return c.json({ id: sqlEvent.id, title: sqlEvent.title, time: event.time || "00:00", color: sqlEvent.color }, 201);
   } catch (e) {
-    console.log("POST /calendar/events error:", e);
+    console.error("POST /calendar/events error:", e);
     return c.json({ error: String(e) }, 500);
   }
 });
@@ -3110,7 +3110,7 @@ app.delete("/calendar/events", async (c) => {
     await broadcastAfterWrite(workspace.id, "calendar_events");
     return c.json({ ok: true });
   } catch (e) {
-    console.log("DELETE /calendar/events error:", e);
+    console.error("DELETE /calendar/events error:", e);
     return c.json({ error: String(e) }, 500);
   }
 });
@@ -3139,7 +3139,7 @@ app.get("/files", async (c) => {
     }));
     return c.json({ files, folders: sqlFolders });
   } catch (e) {
-    console.log("GET /files error:", e);
+    console.error("GET /files error:", e);
     return c.json({ error: String(e) }, 500);
   }
 });
@@ -3161,7 +3161,7 @@ app.post("/files", async (c) => {
     await broadcastAfterWrite(workspace.id, "files");
     return c.json({ ...file, id: sqlFile.id }, 201);
   } catch (e) {
-    console.log("POST /files error:", e);
+    console.error("POST /files error:", e);
     return c.json({ error: String(e) }, 500);
   }
 });
@@ -3175,7 +3175,7 @@ app.put("/files", async (c) => {
     await broadcastAfterWrite(workspace.id, "files");
     return c.json({ ok: true });
   } catch (e) {
-    console.log("PUT /files error:", e);
+    console.error("PUT /files error:", e);
     return c.json({ error: String(e) }, 500);
   }
 });
@@ -3192,7 +3192,7 @@ app.delete("/files/:name", async (c) => {
 
     if (client && file.storage_path) {
       const { error } = await client.storage.from("workspace-files").remove([file.storage_path]);
-      if (error) console.log("Storage delete error:", error);
+      if (error) console.error("Storage delete error:", error);
     }
 
     if (file.size_bytes) {
@@ -3203,7 +3203,7 @@ app.delete("/files/:name", async (c) => {
     await broadcastAfterWrite(workspace.id, "files");
     return c.json({ ok: true });
   } catch (e) {
-    console.log("DELETE /files/:name error:", e);
+    console.error("DELETE /files/:name error:", e);
     return c.json({ error: String(e) }, 500);
   }
 });
@@ -3235,7 +3235,7 @@ app.patch("/files/share", async (c) => {
     await broadcastAfterWrite(workspace.id, "files");
     return c.json({ name: file.name, shared: nextShared, url });
   } catch (e) {
-    console.log("PATCH /files/share error:", e);
+    console.error("PATCH /files/share error:", e);
     return c.json({ error: String(e) }, 500);
   }
 });
@@ -3251,7 +3251,7 @@ app.post("/files/restore", async (c) => {
     await broadcastAfterWrite(workspace.id, "files");
     return c.json({ ok: true, restored: archived.length });
   } catch (e) {
-    console.log("POST /files/restore error:", e);
+    console.error("POST /files/restore error:", e);
     return c.json({ error: String(e) }, 500);
   }
 });
@@ -3297,7 +3297,7 @@ app.post("/files/upload", async (c) => {
       });
 
     if (uploadErr) {
-      console.log("Storage upload error:", uploadErr);
+      console.error("Storage upload error:", uploadErr);
       return c.json({ error: uploadErr.message }, 500);
     }
 
@@ -3341,7 +3341,7 @@ app.post("/files/upload", async (c) => {
 
     return c.json(fileRecord, 201);
   } catch (e) {
-    console.log("POST /files/upload error:", e);
+    console.error("POST /files/upload error:", e);
     return c.json({ error: String(e) }, 500);
   }
 });
@@ -3366,7 +3366,7 @@ app.get("/files/download/:name", async (c) => {
     if (error) return c.json({ error: error.message }, 500);
     return c.json({ url: data.signedUrl, expiresIn: 3600 });
   } catch (e) {
-    console.log("GET /files/download error:", e);
+    console.error("GET /files/download error:", e);
     return c.json({ error: String(e) }, 500);
   }
 });
@@ -3377,7 +3377,7 @@ app.get("/files/quota", async (c) => {
     const { used, limit } = await getStorageUsage(c);
     return c.json({ used, limit, unlimited: limit === 0 });
   } catch (e) {
-    console.log("GET /files/quota error:", e);
+    console.error("GET /files/quota error:", e);
     return c.json({ error: String(e) }, 500);
   }
 });
@@ -3390,7 +3390,7 @@ app.post("/files/folders", async (c) => {
     await broadcastAfterWrite(workspace.id, "file_folders");
     return c.json(newFolder, 201);
   } catch (e) {
-    console.log("POST /files/folders error:", e);
+    console.error("POST /files/folders error:", e);
     return c.json({ error: String(e) }, 500);
   }
 });
@@ -3420,7 +3420,7 @@ app.get("/settings/:section", async (c) => {
     const data = rows.length ? rows[0].data : seed;
     return c.json(data);
   } catch (e) {
-    console.log("GET /settings/:section error:", e);
+    console.error("GET /settings/:section error:", e);
     return c.json({ error: String(e) }, 500);
   }
 });
@@ -3444,7 +3444,7 @@ app.put("/settings/:section", async (c) => {
     await broadcastAfterWrite(workspace.id, "workspace_settings");
     return c.json(body);
   } catch (e) {
-    console.log("PUT /settings/:section error:", e);
+    console.error("PUT /settings/:section error:", e);
     return c.json({ error: String(e) }, 500);
   }
 });
@@ -3515,7 +3515,7 @@ app.get("/financial", async (c) => {
     const data = row?.data ?? SEED_FINANCIAL;
     return c.json(data);
   } catch (e) {
-    console.log("GET /financial error:", e);
+    console.error("GET /financial error:", e);
     return c.json({ error: String(e) }, 500);
   }
 });
@@ -3531,7 +3531,7 @@ app.put("/financial", async (c) => {
     await broadcastAfterWrite(workspace.id, "workspace_financial");
     return c.json(updated);
   } catch (e) {
-    console.log("PUT /financial error:", e);
+    console.error("PUT /financial error:", e);
     return c.json({ error: String(e) }, 500);
   }
 });
@@ -3562,7 +3562,7 @@ app.get("/integrations", async (c) => {
     }));
     return c.json(data.length ? data : SEED_INTEGRATIONS);
   } catch (e) {
-    console.log("GET /integrations error:", e);
+    console.error("GET /integrations error:", e);
     return c.json({ error: String(e) }, 500);
   }
 });
@@ -3580,7 +3580,7 @@ app.put("/integrations/:name", async (c) => {
     await broadcastAfterWrite(workspace.id, "workspace_integrations");
     return c.json(updated);
   } catch (e) {
-    console.log("PUT /integrations/:name error:", e);
+    console.error("PUT /integrations/:name error:", e);
     return c.json({ error: String(e) }, 500);
   }
 });
@@ -3609,7 +3609,7 @@ app.get("/sessions", async (c) => {
     const data = row?.data ?? SEED_SESSIONS;
     return c.json(data);
   } catch (e) {
-    console.log("GET /sessions error:", e);
+    console.error("GET /sessions error:", e);
     return c.json({ error: String(e) }, 500);
   }
 });
@@ -3625,7 +3625,7 @@ app.delete("/sessions/:device", async (c) => {
     await broadcastAfterWrite(workspace.id, "workspace_sessions");
     return c.json({ ok: true });
   } catch (e) {
-    console.log("DELETE /sessions/:device error:", e);
+    console.error("DELETE /sessions/:device error:", e);
     return c.json({ error: String(e) }, 500);
   }
 });
@@ -3784,7 +3784,7 @@ app.get("/analytics/metrics", async (c) => {
     }
     return c.json(data);
   } catch (e) {
-    console.log("GET /analytics/metrics error:", e);
+    console.error("GET /analytics/metrics error:", e);
     return c.json({ error: String(e) }, 500);
   }
 });
@@ -3802,7 +3802,7 @@ app.put("/analytics/metrics", async (c) => {
     await broadcastAfterWrite(workspace.id, "workspace_analytics");
     return c.json(updated);
   } catch (e) {
-    console.log("PUT /analytics/metrics error:", e);
+    console.error("PUT /analytics/metrics error:", e);
     return c.json({ error: String(e) }, 500);
   }
 });
@@ -3884,7 +3884,7 @@ app.get("/dashboard/ops", async (c) => {
     const data = row?.data ?? SEED_DASHBOARD_OPS;
     return c.json(data);
   } catch (e) {
-    console.log("GET /dashboard/ops error:", e);
+    console.error("GET /dashboard/ops error:", e);
     return c.json({ error: String(e) }, 500);
   }
 });
@@ -3900,7 +3900,7 @@ app.put("/dashboard/ops", async (c) => {
     await broadcastAfterWrite(workspace.id, "workspace_dashboard");
     return c.json(updated);
   } catch (e) {
-    console.log("PUT /dashboard/ops error:", e);
+    console.error("PUT /dashboard/ops error:", e);
     return c.json({ error: String(e) }, 500);
   }
 });
@@ -4531,7 +4531,7 @@ app.get("/dashboard/details", async (c) => {
     const data = { ...SEED_DASHBOARD_DETAILS, ...stored };
     return c.json(data);
   } catch (e) {
-    console.log("GET /dashboard/details error:", e);
+    console.error("GET /dashboard/details error:", e);
     return c.json({ error: String(e) }, 500);
   }
 });
@@ -4547,7 +4547,7 @@ app.put("/dashboard/details", async (c) => {
     await broadcastAfterWrite(workspace.id, "workspace_dashboard");
     return c.json(updated);
   } catch (e) {
-    console.log("PUT /dashboard/details error:", e);
+    console.error("PUT /dashboard/details error:", e);
     return c.json({ error: String(e) }, 500);
   }
 });
@@ -4577,7 +4577,7 @@ app.get("/milestones/:project", async (c) => {
     const all = row?.data ?? SEED_MILESTONES;
     return c.json(all[project] ?? []);
   } catch (e) {
-    console.log("GET /milestones/:project error:", e);
+    console.error("GET /milestones/:project error:", e);
     return c.json({ error: String(e) }, 500);
   }
 });
@@ -4596,7 +4596,7 @@ app.put("/milestones/:project/:index", async (c) => {
     await broadcastAfterWrite(workspace.id, "workspace_milestones");
     return c.json(all[project][idx]);
   } catch (e) {
-    console.log("PUT /milestones/:project/:index error:", e);
+    console.error("PUT /milestones/:project/:index error:", e);
     return c.json({ error: String(e) }, 500);
   }
 });

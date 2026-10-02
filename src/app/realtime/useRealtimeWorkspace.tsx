@@ -20,7 +20,7 @@ export function useRealtimeWorkspace(
       })
       .subscribe((status: string) => {
         if (status === "SUBSCRIBED") {
-          console.log(`Realtime: subscribed to workspace:${workspaceId}`);
+          console.error(`Realtime: subscribed to workspace:${workspaceId}`);
         }
       });
     return () => {

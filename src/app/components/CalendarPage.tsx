@@ -166,7 +166,7 @@ export function CalendarPage() {
       setServerEvents(data);
       setEvents(serverEventsToLocal(data, monthKey));
     }).catch((e) => {
-      console.log("Failed to load calendar events:", e);
+      console.error("Failed to load calendar events:", e);
       toast.error("Failed to load calendar events");
     });
   }, []);
@@ -176,7 +176,7 @@ export function CalendarPage() {
       api.getCalendarEvents().then((data) => {
         setServerEvents(data);
         setEvents(serverEventsToLocal(data, monthKey));
-      }).catch((e) => console.log("Realtime calendar refresh error:", e));
+      }).catch((e) => console.error("Realtime calendar refresh error:", e));
     }
   });
 
@@ -226,7 +226,7 @@ export function CalendarPage() {
     try {
       await api.createCalendarEvent(dateKey, event);
     } catch (e) {
-      console.log("Failed to save event:", e);
+      console.error("Failed to save event:", e);
       toast.error("Failed to save event");
     }
   };

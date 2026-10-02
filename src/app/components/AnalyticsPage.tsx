@@ -304,8 +304,8 @@ export function AnalyticsPage() {
         benchmarks: merged.benchmarks,
         taskMetrics: merged.taskMetrics,
         timeTracking: merged.timeTracking,
-      }).catch((e) => console.log("Analytics snapshot save skipped:", e));
-    }).catch((e) => console.log("Analytics failed to load data:", e));
+      }).catch((e) => console.error("Analytics snapshot save skipped:", e));
+    }).catch((e) => console.error("Analytics failed to load data:", e));
   }, [refreshKey]);
 
   useEffect(() => {
@@ -353,7 +353,7 @@ export function AnalyticsPage() {
       URL.revokeObjectURL(url);
       toast.success("Report exported as CSV");
     } catch (e) {
-      console.log("Analytics export failed:", e);
+      console.error("Analytics export failed:", e);
       toast.error("Export failed");
     }
   };

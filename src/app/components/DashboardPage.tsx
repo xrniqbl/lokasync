@@ -1191,13 +1191,21 @@ function PredictiveAnalyticsView() {
 // ── Main DashboardPage ────────────────────────────────────────────────────────
 // ── Focused sub-views (drill-down from parent views) ─────────────────────────
 
-function FocusedView({ title, subtitle, stats, children }: {
+function FocusedView({ title, subtitle, stats, children, sampleData }: {
   title: string; subtitle: string;
   stats: { label: string; value: string; sub?: string; up?: boolean }[];
   children?: React.ReactNode;
+  sampleData?: boolean;
 }) {
+  const { t } = useLang();
   return (
     <div className="space-y-5">
+      {sampleData && (
+        <div className="flex items-center gap-2 rounded-lg border border-amber-500/20 bg-amber-950/20 px-3 py-2 text-[11px] text-amber-200/80">
+          <span className="inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-amber-400" />
+          {t("dashboard.sampleDataNote")}
+        </div>
+      )}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         {stats.map((s) => (
           <StatCard key={s.label} label={s.label} value={s.value} sub={s.sub}
@@ -1212,7 +1220,7 @@ function FocusedView({ title, subtitle, stats, children }: {
 // ── Executive sub-views ───────────────────────────────────────────────────────
 function ExecRevenueView() {
   return (
-    <FocusedView title="Revenue Overview" subtitle="Monthly actuals vs targets (USD k)"
+    <FocusedView sampleData title="Revenue Overview" subtitle="Monthly actuals vs targets (USD k)"
       stats={dd("execRevenue").stats ?? []}>
       <Card><SectionHeader title="Revenue vs Target" sub="Monthly (USD k)" />
         <ChartBar data={revenueData} bars={[{ key: "target", name: "Target", color: "#262626" }, { key: "revenue", name: "Revenue", color: "#818cf8" }]} xKey="month" height={200} />
@@ -1417,7 +1425,7 @@ function OpsCapacityView() {
 function FinBudgetView() {
   const data = budgetData;
   return (
-    <FocusedView title="Budget vs Actual" subtitle="Q2 2026 departmental spend (USD k)"
+    <FocusedView sampleData title="Budget vs Actual" subtitle="Q2 2026 departmental spend (USD k)"
       stats={dd("finBudget").stats ?? []}>
       <Card>
         <SectionHeader title="Department Budget Comparison" sub="Budget vs actual (USD k)" />
@@ -1450,7 +1458,7 @@ function FinBudgetView() {
 function FinCashflowView() {
   const data = cashFlowData;
   return (
-    <FocusedView title="Cash Flow Analysis" subtitle="Monthly inflow vs outflow (USD k)"
+    <FocusedView sampleData title="Cash Flow Analysis" subtitle="Monthly inflow vs outflow (USD k)"
       stats={dd("finCashflow").stats ?? []}>
       <Card>
         <SectionHeader title="Cash Flow Trend" sub="H1 2026 (USD k)" />
@@ -1471,7 +1479,7 @@ function FinCashflowView() {
 function FinExpenseView() {
   const breakdown = expenseBreakdown;
   return (
-    <FocusedView title="Expense Breakdown" subtitle="By department — Q2 2026"
+    <FocusedView sampleData title="Expense Breakdown" subtitle="By department — Q2 2026"
       stats={dd("finExpense").stats ?? []}>
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <Card>
@@ -1501,7 +1509,7 @@ function FinExpenseView() {
 function FinPLView() {
   const rows = dd("finPL").rows ?? [];
   return (
-    <FocusedView title="Profit & Loss Summary" subtitle="Q2 2026"
+    <FocusedView sampleData title="Profit & Loss Summary" subtitle="Q2 2026"
       stats={dd("finPL").stats ?? []}>
       <Card>
         <SectionHeader title="P&L Statement" sub="Q2 2026" />
@@ -1565,7 +1573,7 @@ function WeeklyCompletionView() {
 
 function WeeklyBudgetView() {
   return (
-    <FocusedView title="Budget Utilization" subtitle="Week of Jun 8–12"
+    <FocusedView sampleData title="Budget Utilization" subtitle="Week of Jun 8–12"
       stats={dd("weeklyBudget").stats ?? []}>
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <Card>
@@ -1591,7 +1599,7 @@ function WeeklyBudgetView() {
 
 function WeeklySatisfactionView() {
   return (
-    <FocusedView title="Client Satisfaction" subtitle="Week of Jun 8–12"
+    <FocusedView sampleData title="Client Satisfaction" subtitle="Week of Jun 8–12"
       stats={dd("weeklySatisfaction").stats ?? []}>
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <Card>
@@ -1617,7 +1625,7 @@ function WeeklySatisfactionView() {
 // ── Monthly sub-views ─────────────────────────────────────────────────────────
 function MonthlyRevenueView() {
   return (
-    <FocusedView title="Revenue Growth" subtitle="June 2026 analysis"
+    <FocusedView sampleData title="Revenue Growth" subtitle="June 2026 analysis"
       stats={dd("monthlyRevenue").stats ?? []}>
       <Card>
         <SectionHeader title="Revenue Growth Trend" sub="Monthly (USD k)" />
@@ -1642,7 +1650,7 @@ function MonthlyRevenueView() {
 
 function MonthlyClientsView() {
   return (
-    <FocusedView title="New Clients" subtitle="June 2026 acquisition"
+    <FocusedView sampleData title="New Clients" subtitle="June 2026 acquisition"
       stats={dd("monthlyClients").stats ?? []}>
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <Card>
@@ -1685,7 +1693,7 @@ function MonthlyExpansionView() {
 
 function MonthlyCostView() {
   return (
-    <FocusedView title="Cost Reduction" subtitle="Savings initiatives — June 2026"
+    <FocusedView sampleData title="Cost Reduction" subtitle="Savings initiatives — June 2026"
       stats={dd("monthlyCost").stats ?? []}>
       <Card>
         <SectionHeader title="Savings Trend" sub="Monthly cost reduction (USD k)" />
@@ -1709,7 +1717,7 @@ function MonthlyCostView() {
 // ── Quarterly sub-views ───────────────────────────────────────────────────────
 function QuarterlyMarketView() {
   return (
-    <FocusedView title="Market Position" subtitle="Q2 2026 competitive landscape"
+    <FocusedView sampleData title="Market Position" subtitle="Q2 2026 competitive landscape"
       stats={dd("quarterlyMarket").stats ?? []}>
       <Card>
         <SectionHeader title="Market Share Trend" sub="Quarterly %" />
@@ -1733,7 +1741,7 @@ function QuarterlyMarketView() {
 
 function QuarterlyROIView() {
   return (
-    <FocusedView title="Return on Investment" subtitle="Q2 2026 ROI analysis"
+    <FocusedView sampleData title="Return on Investment" subtitle="Q2 2026 ROI analysis"
       stats={dd("quarterlyROI").stats ?? []}>
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <Card>
@@ -1752,7 +1760,7 @@ function QuarterlyROIView() {
 function QuarterlyRetentionView() {
   const churnReasons = dd("quarterlyRetention").churnReasons ?? [];
   return (
-    <FocusedView title="Customer Retention" subtitle="Q2 2026 cohort analysis"
+    <FocusedView sampleData title="Customer Retention" subtitle="Q2 2026 cohort analysis"
       stats={dd("quarterlyRetention").stats ?? []}>
       <Card>
         <SectionHeader title="Retention Trend" sub="Quarterly cohort retention %" />
@@ -1776,7 +1784,7 @@ function QuarterlyRetentionView() {
 
 function QuarterlyInnovationView() {
   return (
-    <FocusedView title="Innovation Index" subtitle="Q2 2026 R&D and product metrics"
+    <FocusedView sampleData title="Innovation Index" subtitle="Q2 2026 R&D and product metrics"
       stats={dd("quarterlyInnovation").stats ?? []}>
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <Card>
@@ -1803,7 +1811,7 @@ function QuarterlyInnovationView() {
 // ── Performance Metrics sub-views ─────────────────────────────────────────────
 function PerfSalesView() {
   return (
-    <FocusedView title="Sales Conversion" subtitle="Funnel analysis — June 2026"
+    <FocusedView sampleData title="Sales Conversion" subtitle="Funnel analysis — June 2026"
       stats={dd("perfSales").stats ?? []}>
       <Card>
         <SectionHeader title="Conversion Funnel" sub="June 2026" />
@@ -1827,7 +1835,7 @@ function PerfSalesView() {
 
 function PerfResponseView() {
   return (
-    <FocusedView title="Lead Response Time" subtitle="Speed-to-lead metrics"
+    <FocusedView sampleData title="Lead Response Time" subtitle="Speed-to-lead metrics"
       stats={dd("perfResponse").stats ?? []}>
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <Card>
@@ -1853,7 +1861,7 @@ function PerfResponseView() {
 
 function PerfCLVView() {
   return (
-    <FocusedView title="Customer Lifetime Value" subtitle="CLV analysis by cohort"
+    <FocusedView sampleData title="Customer Lifetime Value" subtitle="CLV analysis by cohort"
       stats={dd("perfCLV").stats ?? []}>
       <Card>
         <SectionHeader title="CLV Trend" sub="Average per customer cohort (USD k)" />
@@ -1869,7 +1877,7 @@ function PerfCLVView() {
 
 function PerfChurnView() {
   return (
-    <FocusedView title="Churn Rate" subtitle="Customer churn analysis"
+    <FocusedView sampleData title="Churn Rate" subtitle="Customer churn analysis"
       stats={dd("perfChurn").stats ?? []}>
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <Card>
@@ -1898,7 +1906,7 @@ function PerfChurnView() {
 // ── Predictive Analytics sub-views ────────────────────────────────────────────
 function PredForecastView() {
   return (
-    <FocusedView title="Q4 Revenue Forecast" subtitle="Oct–Dec 2026 projection"
+    <FocusedView sampleData title="Q4 Revenue Forecast" subtitle="Oct–Dec 2026 projection"
       stats={dd("predForecast").stats ?? []}>
       <Card>
         <SectionHeader title="Q4 Monthly Revenue Forecast" sub="USD k with confidence range" />
@@ -2925,7 +2933,7 @@ function OwnerDashboard() {
         score: v.tasks > 0 ? Math.round(((v.done / v.tasks) * 0.7 + 0.3) * 100) : 70,
       }));
       tryCompute();
-    }).catch((e) => console.log("Dashboard failed to load tasks:", e));
+    }).catch((e) => console.error("Dashboard failed to load tasks:", e));
 
     api.getTeams().then((teams) => {
       if (cancelled) return;
@@ -2938,19 +2946,19 @@ function OwnerDashboard() {
       teamData = chart;
       setTaskStats((prev) => ({ ...prev, members: teams.reduce((acc, t) => acc + t.members.length, 0) }));
       tryCompute();
-    }).catch((e) => console.log("Dashboard failed to load teams:", e));
+    }).catch((e) => console.error("Dashboard failed to load teams:", e));
 
     api.getProjects().then((projects) => {
       if (cancelled) return;
       loadedProjects = projects;
       tryCompute();
-    }).catch((e) => console.log("Dashboard failed to load projects:", e));
+    }).catch((e) => console.error("Dashboard failed to load projects:", e));
 
     api.getCalendarEvents().then((events) => {
       if (cancelled) return;
       const todayEvts = events[todayKey] ?? [];
       setTodayEvents(todayEvts);
-    }).catch((e) => console.log("Dashboard failed to load calendar:", e));
+    }).catch((e) => console.error("Dashboard failed to load calendar:", e));
 
     return () => { cancelled = true; };
   }, [refreshKey]);
@@ -2963,7 +2971,7 @@ function OwnerDashboard() {
   const handleAddTask = async (task: { title: string; priority: string; assignee: string; due: string; status: string; description?: string; project?: string; completed?: boolean }) => {
     try {
       await api.createTask({ title: task.title, description: task.description ?? "", status: task.status, priority: task.priority, assignee: task.assignee, project: task.project ?? "Internal", due: task.due, completed: false });
-    } catch (e) { console.log("Failed to create task:", e); }
+    } catch (e) { console.error("Failed to create task:", e); }
     setRecentTasks((prev) => [
       { title: task.title, status: task.status, priority: task.priority, assignee: task.assignee, due: task.due },
       ...prev.slice(0, 4),

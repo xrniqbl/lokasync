@@ -35,7 +35,7 @@ export function ManageTeamModal({ open, onClose, teamName, members, onRemove }: 
       setList((prev) => prev.filter((m) => m.initials !== initials));
       toast.success(`${name} removed from ${teamName}`);
     } catch (e) {
-      console.log("Failed to remove member:", e);
+      console.error("Failed to remove member:", e);
       toast.error("Failed to remove member");
     } finally {
       setRemoving(null);

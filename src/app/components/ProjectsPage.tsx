@@ -287,7 +287,7 @@ function WebAppView({ onDrillDown, allTasks, webMilestones, projects, t, onToggl
           <SectionHeader title={t("projects.milestones")} sub={t("projects.keyDeliveryDates")} />
           <div className="space-y-3">
             {webMilestones.map((m, i) => (
-              <button key={m.milestone} onClick={() => onToggleMilestone("web", i, !m.done)} className="w-full flex items-center gap-3 p-2.5 rounded-lg bg-neutral-800/20 hover:bg-neutral-800/40 transition-colors text-left" title={m.done ? "Mark as not done" : "Mark as done"}>
+              <button key={m.milestone} onClick={() => onToggleMilestone("web", i, !m.done)} className="w-full flex items-center gap-3 p-2.5 rounded-lg bg-neutral-800/20 hover:bg-neutral-800/40 transition-colors text-left" title={m.done ? t("projects.markAsNotDone") : t("projects.markAsDone")}>
                 {m.done
                   ? <CheckCircle size={15} className="text-emerald-500 shrink-0" />
                   : <Circle size={15} className="text-neutral-600 shrink-0" />}
@@ -378,7 +378,7 @@ function MobileAppView({ onDrillDown, allTasks, mobileMilestones, projects, t, o
           <SectionHeader title={t("projects.milestones")} sub={t("projects.keyDeliveryDates")} />
           <div className="space-y-3">
             {mobileMilestones.map((m, i) => (
-              <button key={m.milestone} onClick={() => onToggleMilestone("mobile", i, !m.done)} className="w-full flex items-center gap-3 p-2.5 rounded-lg bg-neutral-800/20 hover:bg-neutral-800/40 transition-colors text-left" title={m.done ? "Mark as not done" : "Mark as done"}>
+              <button key={m.milestone} onClick={() => onToggleMilestone("mobile", i, !m.done)} className="w-full flex items-center gap-3 p-2.5 rounded-lg bg-neutral-800/20 hover:bg-neutral-800/40 transition-colors text-left" title={m.done ? t("projects.markAsNotDone") : t("projects.markAsDone")}>
                 {m.done
                   ? <CheckCircle size={15} className="text-emerald-500 shrink-0" />
                   : <Circle size={15} className="text-neutral-600 shrink-0" />}
@@ -676,11 +676,11 @@ export function ProjectsPage() {
 
   function fetchData() {
     api.getProjects().then((data) => setProjects(data)).catch((e) => {
-      console.log("Failed to load projects:", e);
+      console.error("Failed to load projects:", e);
       toast.error(t("projects.failedToLoadProjectsToast"));
     });
     api.getTasks().then((data) => setAllTasks(data)).catch((e) => {
-      console.log("Failed to load tasks:", e);
+      console.error("Failed to load tasks:", e);
     });
     api.getMilestones("web").then(setWebMilestones).catch(() => {});
     api.getMilestones("mobile").then(setMobileMilestones).catch(() => {});
@@ -696,7 +696,7 @@ export function ProjectsPage() {
     const setList = project === "web" ? setWebMilestones : setMobileMilestones;
     setList((prev) => prev.map((m, i) => (i === index ? { ...m, done } : m)));
     api.toggleMilestone(project, index, done).catch((e) => {
-      console.log("Failed to toggle milestone:", e);
+      console.error("Failed to toggle milestone:", e);
       toast.error(t("projects.failedToLoadProjectsToast"));
       setList((prev) => prev.map((m, i) => (i === index ? { ...m, done: !done } : m)));
     });
@@ -752,7 +752,7 @@ export function ProjectsPage() {
         <NewProjectModal open={showNew} onClose={() => setShowNew(false)} onAdd={async (p) => {
           try { const created = await api.createProject(p); setProjects((prev) => [created, ...prev]); }
           catch (e) {
-            console.log("Failed to create project:", e);
+            console.error("Failed to create project:", e);
             // The server enforces the plan limit too (in case the UI is stale)
             if (e instanceof api.ApiError && e.code === "project_limit") {
               toast.error(e.message, {

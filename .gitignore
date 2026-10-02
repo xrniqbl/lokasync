@@ -16,6 +16,8 @@ projectmanagement/
 # Editor/agent local config
 .claude/
 .agents/
+.vscode/
+.idea/
 
 # Logs
 *.log
