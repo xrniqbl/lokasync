@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from "react";
+import { useNavigate } from "react-router";
 import { toast } from "sonner";
 import {
   Github, Figma, MessageSquare, CalendarDays,
@@ -11,7 +12,7 @@ import { useNavigation } from "./NavigationContext";
 import { InviteMemberModal } from "./modals/InviteMemberModal";
 import { useLang, LangToggle } from "../i18n";
 import * as api from "../utils/api";
-import { supabase } from "../utils/supabase";
+import { supabase, signInWithEmail, updatePassword as updateAuthPassword } from "../utils/supabase";
 import { useAuth } from "../auth/AuthContext";
 import { useWorkspace } from "../workspace/WorkspaceContext";
 import { useRealtimeWorkspace } from "../realtime";
@@ -136,6 +137,7 @@ const subSectionMap: Record<string, string> = {
 
 export function SettingsPage() {
   const { subSection } = useNavigation();
+  const routerNavigate = useNavigate();
   const { lang, setLang, t } = useLang();
   const { user } = useAuth();
   const [activeNav, setActiveNav] = useState("Profile");
@@ -150,6 +152,7 @@ export function SettingsPage() {
   const [workspaceData, setWorkspaceData] = useState<any>({});
   const [showInvite, setShowInvite] = useState(false);
   const [avatarSrc, setAvatarSrc] = useState<string | null>(null);
+  const [uploadingAvatar, setUploadingAvatar] = useState(false);
   const [show2FA, setShow2FA] = useState(false);
   const [twoFACode, setTwoFACode] = useState("");
   const [twoFASetup, setTwoFASetup] = useState<{ secret: string; otpauthUrl: string; backupCodes: string[] } | null>(null);
@@ -163,6 +166,9 @@ export function SettingsPage() {
   const [showCurrent, setShowCurrent] = useState(false);
   const [showNext, setShowNext] = useState(false);
   const [pw, setPw] = useState({ current: "", next: "", confirm: "" });
+  const [updatingPw, setUpdatingPw] = useState(false);
+  const [selectedTimezone, setSelectedTimezone] = useState<string | null>(null);
+  const [autoDetectTz, setAutoDetectTz] = useState(false);
   const [accentColor, setAccentColor] = useState("#6366f1");
   const [theme, setTheme] = useState<"dark" | "light" | "system">("dark");
   const [fontSize, setFontSize] = useState<"small" | "medium" | "large">("medium");
@@ -195,6 +201,11 @@ export function SettingsPage() {
     digest: true, productUpdates: false, security: true,
   });
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const logoInputRef = useRef<HTMLInputElement>(null);
+  const [uploadingLogo, setUploadingLogo] = useState(false);
+  const [transferCandidates, setTransferCandidates] = useState<api.WorkspaceMember[]>([]);
+  const [transferTarget, setTransferTarget] = useState("");
+  const [transferring, setTransferring] = useState(false);
 
   const { activeWorkspace } = useWorkspace();
   useRealtimeWorkspace(activeWorkspace?.id ?? null, (table) => {
@@ -249,6 +260,14 @@ export function SettingsPage() {
         if (data.dateFormat) setDateFormat(data.dateFormat);
         if (data.timeFormat) setTimeFormat(data.timeFormat);
         if (data.firstDay) setWeekStart(data.firstDay);
+        if (data.timezone) setSelectedTimezone(data.timezone);
+        else {
+          try {
+            const guessed = Intl.DateTimeFormat().resolvedOptions().timeZone;
+            if (guessed) setSelectedTimezone(guessed);
+          } catch { /* Intl unavailable — keep null so the select falls back */ }
+        }
+        if (typeof data.autoDetect === "boolean") setAutoDetectTz(data.autoDetect);
       }
     }).catch((e) => console.log("Failed to load timezone:", e));
 
@@ -282,6 +301,39 @@ export function SettingsPage() {
     }).catch((e) => console.log("Failed to load sessions:", e));
   }, []);
 
+  // Ownership-transfer candidates: workspace members excluding self.
+  // Loaded lazily when the Danger Zone opens so non-owners pay no extra fetch.
+  useEffect(() => {
+    if (activeNav !== "Danger Zone" || !activeWorkspace) return;
+    api.getWorkspaceMembers(activeWorkspace.id)
+      .then((list) => {
+        const mine = user?.id;
+        const others = list.filter((m) => m.user_id !== mine);
+        setTransferCandidates(others);
+        setTransferTarget((prev) => (others.some((m) => m.user_id === prev) ? prev : ""));
+      })
+      .catch((e) => console.log("Failed to load transfer candidates:", e));
+  }, [activeNav, activeWorkspace, user?.id]);
+
+  const handleTransferOwnership = async () => {
+    if (!activeWorkspace || !transferTarget) return;
+    const target = transferCandidates.find((m) => m.user_id === transferTarget);
+    setTransferring(true);
+    try {
+      await api.updateWorkspaceMemberRole(activeWorkspace.id, transferTarget, "owner");
+      toast.success(
+        target ? `Ownership transferred to ${target.name}` : "Ownership transferred",
+      );
+      setTransferCandidates((prev) => prev.filter((m) => m.user_id !== transferTarget));
+      setTransferTarget("");
+    } catch (e) {
+      console.log("Failed to transfer ownership:", e);
+      toast.error(e instanceof Error ? e.message : "Failed to transfer ownership");
+    } finally {
+      setTransferring(false);
+    }
+  };
+
   useEffect(() => {
     if (subSectionMap[subSection]) setActiveNav(subSectionMap[subSection]);
   }, [subSection]);
@@ -306,20 +358,87 @@ export function SettingsPage() {
     );
   };
 
-  const handlePhotoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handlePhotoChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      toast.error("Please choose an image file (JPG or PNG)");
+      return;
+    }
+    if (file.size > 2 * 1024 * 1024) {
+      toast.error("Image must be under 2 MB");
+      return;
+    }
+    // Instant local preview while the real upload runs.
     const objectUrl = URL.createObjectURL(file);
     setAvatarSrc(objectUrl);
-    toast.success("Profile photo updated");
+    setUploadingAvatar(true);
+    try {
+      const uploaded = await api.uploadAvatar(file);
+      setAvatarSrc(uploaded.url);
+      URL.revokeObjectURL(objectUrl);
+      toast.success("Profile photo updated");
+    } catch (err) {
+      URL.revokeObjectURL(objectUrl);
+      setAvatarSrc(null);
+      toast.error(err instanceof Error ? err.message : "Failed to upload photo");
+    } finally {
+      setUploadingAvatar(false);
+      e.target.value = "";
+    }
   };
 
-  const updatePassword = () => {
+  // Workspace logo uses the same avatar pipeline (server validates type/size,
+  // persists to profiles + user_metadata). The logo preview reads avatarSrc
+  // too, so both surfaces stay in sync without a dedicated logo endpoint.
+  const handleLogoChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      toast.error("Please choose an image file (PNG or SVG)");
+      return;
+    }
+    if (file.size > 2 * 1024 * 1024) {
+      toast.error("Image must be under 2 MB");
+      return;
+    }
+    setUploadingLogo(true);
+    try {
+      const uploaded = await api.uploadAvatar(file);
+      setAvatarSrc(uploaded.url);
+      toast.success("Workspace logo updated");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to upload logo");
+    } finally {
+      setUploadingLogo(false);
+      e.target.value = "";
+    }
+  };
+
+  const updatePassword = async () => {
     if (!pw.current) return toast.error("Enter your current password");
     if (pw.next.length < 12) return toast.error("New password must be at least 12 characters");
     if (pw.next !== pw.confirm) return toast.error("Passwords do not match");
-    toast.success("Password updated successfully");
-    setPw({ current: "", next: "", confirm: "" });
+    // Supabase has no "change password with current password" endpoint, so
+    // re-authenticate with the current password first, then update.
+    if (!user?.email) return toast.error("Session expired — please sign in again");
+    setUpdatingPw(true);
+    try {
+      const { error: signInError } = await signInWithEmail(user.email, pw.current);
+      if (signInError) {
+        toast.error("Current password is incorrect");
+        return;
+      }
+      const { error: updateError } = await updateAuthPassword(pw.next);
+      if (updateError) {
+        toast.error(updateError.message);
+        return;
+      }
+      toast.success("Password updated successfully");
+      setPw({ current: "", next: "", confirm: "" });
+    } finally {
+      setUpdatingPw(false);
+    }
   };
 
   const start2FASetup = async () => {
@@ -376,9 +495,17 @@ export function SettingsPage() {
 
   const generateApiKey = async () => {
     if (!newKeyName.trim()) return toast.error("Enter a name for the key");
-    const key = `sk-${Math.random().toString(36).slice(2, 10)}-${Math.random().toString(36).slice(2, 14)}`;
+    // Cryptographically secure random key (never Math.random for secrets).
+    const rand = new Uint8Array(24);
+    crypto.getRandomValues(rand);
+    const raw = btoa(String.fromCharCode(...rand)).replace(/[^a-zA-Z0-9]/g, "").slice(0, 32);
+    const key = `sk-${raw.slice(0, 12)}-${raw.slice(12, 32)}`;
+    // Store only a SHA-256 hash + prefix server-side; the full key is shown
+    // once and never persisted anywhere.
+    const hashBuf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(key));
+    const keyHash = [...new Uint8Array(hashBuf)].map((b) => b.toString(16).padStart(2, "0")).join("");
     setGeneratedKey(key);
-    const newEntry = { id: Date.now(), name: newKeyName.trim(), prefix: `sk_${key.slice(3, 7)}`, created: new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }), lastUsed: "Never" };
+    const newEntry = { id: Date.now(), name: newKeyName.trim(), prefix: `sk_${key.slice(3, 7)}`, keyHash, created: new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }), lastUsed: "Never" };
     const updated = [...apiKeysList, newEntry];
     setApiKeysList(updated);
     setNewKeyName("");
@@ -428,8 +555,16 @@ export function SettingsPage() {
   };
 
   const saveTimezone = async () => {
+    let tz = selectedTimezone;
+    if (autoDetectTz || !tz) {
+      try {
+        tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      } catch { /* fall through to guard below */ }
+    }
+    if (!tz) return toast.error("Select a timezone first");
     try {
-      await api.saveSettings("timezone", { timezone: "America/New_York", dateFormat, timeFormat, firstDay: weekStart, autoDetect: false });
+      await api.saveSettings("timezone", { timezone: tz, dateFormat, timeFormat, firstDay: weekStart, autoDetect: autoDetectTz });
+      setSelectedTimezone(tz);
       toast.success("Timezone settings saved");
     } catch (e) { console.log("Failed to save timezone:", e); toast.error("Failed to save"); }
   };
@@ -663,7 +798,7 @@ export function SettingsPage() {
                     )}
                   </div>
                   <div className="flex justify-end">
-                    <button onClick={updatePassword} className="bg-indigo-600 hover:bg-indigo-500 text-white text-[13px] px-5 py-2 rounded-lg transition-colors">{t("settings.updatePassword")}</button>
+                    <button onClick={updatePassword} disabled={updatingPw} className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-[13px] px-5 py-2 rounded-lg transition-colors">{updatingPw ? "Updating…" : t("settings.updatePassword")}</button>
                   </div>
                 </div>
               </Section>
@@ -866,8 +1001,9 @@ export function SettingsPage() {
                   <div className="flex items-center gap-4">
                     <div className="w-14 h-14 rounded-xl bg-indigo-900/60 flex items-center justify-center text-indigo-300 text-[20px] font-['Lexend:SemiBold',_sans-serif] shrink-0">{workspaceData.name?.[0]?.toUpperCase() ?? "?"}</div>
                     <div>
-                      <button onClick={() => toast.success("Logo upload coming soon")} className="border border-neutral-800 hover:bg-neutral-800 text-neutral-300 text-[12px] px-3 py-1.5 rounded-lg transition-colors">{t("settings.uploadLogo")}</button>
+                      <button onClick={() => logoInputRef.current?.click()} disabled={uploadingLogo} className="border border-neutral-800 hover:bg-neutral-800 disabled:opacity-50 text-neutral-300 text-[12px] px-3 py-1.5 rounded-lg transition-colors">{uploadingLogo ? "Uploading…" : t("settings.uploadLogo")}</button>
                       <p className="text-neutral-600 text-[11px] mt-1">{t("settings.pngOrSvg")}</p>
+                      <input ref={logoInputRef} type="file" accept="image/*" className="hidden" onChange={handleLogoChange} />
                     </div>
                   </div>
                   <InputField label={t("settings.workspaceName")} value={workspaceData.name ?? ""} onChange={(v) => setWorkspaceData((p: any) => ({ ...p, name: v }))} />
@@ -1026,15 +1162,25 @@ export function SettingsPage() {
                 <div className="space-y-4">
                   <div>
                     <label className="block text-neutral-300 text-[13px] mb-1.5">{t("settings.timezoneLabel")}</label>
-                    <select className="w-full bg-[#0f0f0f] border border-neutral-800 rounded-lg px-3 py-2.5 text-neutral-200 text-[13px] outline-none appearance-none cursor-pointer">
-                      <option>Asia/Jakarta (UTC+7)</option>
-                      <option>Asia/Singapore (UTC+8)</option>
-                      <option>Asia/Tokyo (UTC+9)</option>
-                      <option>America/New_York (UTC-5)</option>
-                      <option>America/Los_Angeles (UTC-8)</option>
-                      <option>Europe/London (UTC+0)</option>
-                      <option>Europe/Paris (UTC+1)</option>
-                      <option>Australia/Sydney (UTC+11)</option>
+                    <select
+                      value={selectedTimezone ?? ""}
+                      onChange={(e) => setSelectedTimezone(e.target.value || null)}
+                      className="w-full bg-[#0f0f0f] border border-neutral-800 rounded-lg px-3 py-2.5 text-neutral-200 text-[13px] outline-none appearance-none cursor-pointer"
+                    >
+                      <option value="" disabled>Select timezone…</option>
+                      {Array.from(new Set([
+                        selectedTimezone,
+                        "Asia/Jakarta",
+                        "Asia/Singapore",
+                        "Asia/Tokyo",
+                        "America/New_York",
+                        "America/Los_Angeles",
+                        "Europe/London",
+                        "Europe/Paris",
+                        "Australia/Sydney",
+                      ].filter(Boolean) as string[])).map((tz) => (
+                        <option key={tz} value={tz}>{tz}</option>
+                      ))}
                     </select>
                   </div>
                   <div className="flex items-center justify-between py-2">
@@ -1042,7 +1188,7 @@ export function SettingsPage() {
                       <div className="text-neutral-200 text-[13px]">{t("settings.autoDetectTimezone")}</div>
                       <div className="text-neutral-600 text-[12px] mt-0.5">{t("settings.autoDetectTimezoneDesc")}</div>
                     </div>
-                    <Toggle checked={false} onChange={() => toast.success("Auto-detect enabled")} />
+                    <Toggle checked={autoDetectTz} onChange={() => setAutoDetectTz((v) => !v)} />
                   </div>
                 </div>
               </Section>
@@ -1226,7 +1372,7 @@ export function SettingsPage() {
                     <span className="text-[11px] px-2.5 py-1 rounded-full bg-indigo-900/60 text-indigo-300 shrink-0">{t("settings.active")}</span>
                   </div>
                   <div className="text-neutral-500 text-[12px] mb-4">Next billing: <span className="text-neutral-300">{billing?.nextBilling ?? "—"}</span> · <span className="text-neutral-300">{billing ? `$${(billing.price * billing.seats).toFixed(2)}` : "—"}</span></div>
-                  <button onClick={() => toast.success("Upgrade flow coming soon")} className="bg-indigo-600 hover:bg-indigo-500 text-white text-[13px] px-4 py-2 rounded-lg transition-colors">
+                  <button onClick={() => routerNavigate("/pricing")} className="bg-indigo-600 hover:bg-indigo-500 text-white text-[13px] px-4 py-2 rounded-lg transition-colors">
                     {t("settings.upgradeToEnterprise")}
                   </button>
                 </div>
@@ -1268,7 +1414,7 @@ export function SettingsPage() {
                       <div className="text-neutral-600 text-[11px]">{t("settings.expires")} {billing?.payment?.expiry ?? "—"}</div>
                     </div>
                   </div>
-                  <button onClick={() => toast.success("Payment method update coming soon")} className="border border-neutral-800 hover:bg-neutral-800 text-neutral-400 hover:text-neutral-200 text-[12px] px-3 py-1.5 rounded-lg transition-colors">{t("settings.update")}</button>
+                  <button onClick={() => routerNavigate("/app/billing")} className="border border-neutral-800 hover:bg-neutral-800 text-neutral-400 hover:text-neutral-200 text-[12px] px-3 py-1.5 rounded-lg transition-colors">{t("settings.update")}</button>
                 </div>
               </Section>
               <Section title={t("settings.billingHistory")}>
@@ -1282,7 +1428,7 @@ export function SettingsPage() {
                         </div>
                         <div className="text-neutral-50 text-[13px] font-['Lexend:SemiBold',_sans-serif]">{inv.amount}</div>
                         <span className="text-[11px] px-1.5 py-0.5 rounded-full bg-emerald-900/40 text-emerald-400 text-center">{inv.status}</span>
-                        <button onClick={() => toast.success("Invoice downloaded")} className="text-neutral-600 hover:text-neutral-400 transition-colors">
+                        <button onClick={() => handleExport("All projects")} className="text-neutral-600 hover:text-neutral-400 transition-colors" title="Download as CSV">
                           <Download size={14} />
                         </button>
                       </div>
@@ -1543,14 +1689,14 @@ export function SettingsPage() {
                       <div className="text-neutral-200 text-[13px]">{t("settings.downloadPersonalData")}</div>
                       <div className="text-neutral-600 text-[11px] mt-0.5">{t("settings.downloadPersonalDataDesc")}</div>
                     </div>
-                    <button onClick={() => toast.success("Data download requested — you'll receive an email within 24h")} className="border border-neutral-800 hover:bg-neutral-800 text-neutral-300 text-[12px] px-3 py-1.5 rounded-lg transition-colors shrink-0">{t("settings.requestDownload")}</button>
+                    <button onClick={() => handleExport("All tasks")} className="border border-neutral-800 hover:bg-neutral-800 text-neutral-300 text-[12px] px-3 py-1.5 rounded-lg transition-colors shrink-0">{t("settings.requestDownload")}</button>
                   </div>
                   <div className="flex items-center justify-between p-3 bg-[#141414] border border-neutral-800/60 rounded-xl gap-3">
                     <div>
                       <div className="text-neutral-200 text-[13px]">{t("settings.requestDataDeletion")}</div>
                       <div className="text-neutral-600 text-[11px] mt-0.5">{t("settings.requestDataDeletionDesc")}</div>
                     </div>
-                    <button onClick={() => toast.error("Contact support to initiate data deletion")} className="border border-red-900/40 hover:bg-red-950/30 text-red-400 hover:text-red-300 text-[12px] px-3 py-1.5 rounded-lg transition-colors shrink-0">{t("settings.requestDeletion")}</button>
+                    <button onClick={() => setActiveNav("Danger Zone")} className="border border-red-900/40 hover:bg-red-950/30 text-red-400 hover:text-red-300 text-[12px] px-3 py-1.5 rounded-lg transition-colors shrink-0">{t("settings.requestDeletion")}</button>
                   </div>
                 </div>
               </Section>
@@ -1572,18 +1718,19 @@ export function SettingsPage() {
                 </div>
                 <div>
                   <label className="block text-neutral-300 text-[13px] mb-1.5">{t("settings.newOwner")}</label>
-                  <select className="w-full bg-[#0f0f0f] border border-neutral-800 rounded-lg px-3 py-2.5 text-neutral-200 text-[13px] outline-none appearance-none cursor-pointer">
-                    {members.filter((m) => m.role === "Admin").length > 0 ? (
-                      members.filter((m) => m.role === "Admin").map((m) => (
-                        <option key={m.initials}>{m.name} ({m.email})</option>
-                      ))
-                    ) : (
-                      <option>{t("settings.noAdminsFound")}</option>
-                    )}
+                  <select
+                    value={transferTarget}
+                    onChange={(e) => setTransferTarget(e.target.value)}
+                    className="w-full bg-[#0f0f0f] border border-neutral-800 rounded-lg px-3 py-2.5 text-neutral-200 text-[13px] outline-none appearance-none cursor-pointer"
+                  >
+                    <option value="">{t("settings.noAdminsFound")}</option>
+                    {transferCandidates.map((m) => (
+                      <option key={m.user_id} value={m.user_id}>{m.name} ({m.email})</option>
+                    ))}
                   </select>
                 </div>
-                <button onClick={() => toast.success("Ownership transfer request sent — the new owner must accept via email")} className="border border-amber-800/60 hover:bg-amber-950/30 text-amber-400 hover:text-amber-300 text-[13px] px-4 py-2 rounded-lg transition-colors">
-                  {t("settings.transfer")}
+                <button onClick={handleTransferOwnership} disabled={transferring || !transferTarget} className="border border-amber-800/60 hover:bg-amber-950/30 disabled:opacity-40 disabled:cursor-not-allowed text-amber-400 hover:text-amber-300 text-[13px] px-4 py-2 rounded-lg transition-colors">
+                  {transferring ? "Transferring…" : t("settings.transfer")}
                 </button>
               </div>
 

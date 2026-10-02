@@ -26,6 +26,7 @@ export function FilePreviewModal({ file, onClose, onRename }: FilePreviewModalPr
   const [renaming, setRenaming] = useState(false);
   const [newName, setNewName] = useState(file?.name ?? "");
   const [ownerNames, setOwnerNames] = useState<Record<string, string>>({});
+  const [busy, setBusy] = useState<"download" | "share" | null>(null);
 
   useEffect(() => {
     if (!file) return;
@@ -49,13 +50,43 @@ export function FilePreviewModal({ file, onClose, onRename }: FilePreviewModalPr
     onClose();
   };
 
-  const handleDownload = () => {
-    toast.success(`Downloading "${file.name}"`);
+  const handleDownload = async () => {
+    if (busy) return;
+    if (!file.storagePath) {
+      toast.error("This file has no stored object to download yet");
+      return;
+    }
+    setBusy("download");
+    try {
+      const { url } = await api.getDownloadUrl(file.name);
+      window.open(url, "_blank");
+    } catch {
+      toast.error("Failed to generate download link");
+    } finally {
+      setBusy(null);
+    }
   };
 
-  const handleShare = () => {
-    navigator.clipboard?.writeText(`https://app.io/files/${encodeURIComponent(file.name)}`).catch(() => {});
-    toast.success("Share link copied to clipboard");
+  const handleShare = async () => {
+    if (busy) return;
+    if (!file.storagePath) {
+      toast.error("This file has no stored object to share yet");
+      return;
+    }
+    setBusy("share");
+    try {
+      const { url } = await api.shareFile(file.name, true);
+      if (!url) {
+        toast.error("Failed to generate share link");
+        return;
+      }
+      await navigator.clipboard?.writeText(url);
+      toast.success("Share link copied to clipboard");
+    } catch {
+      toast.error("Failed to generate share link");
+    } finally {
+      setBusy(null);
+    }
   };
 
   return (
@@ -121,15 +152,17 @@ export function FilePreviewModal({ file, onClose, onRename }: FilePreviewModalPr
             <div className="flex items-center gap-2">
               <button
                 onClick={handleDownload}
-                className="flex-1 flex items-center justify-center gap-2 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-[13px] rounded-lg transition-colors"
+                disabled={busy !== null}
+                className="flex-1 flex items-center justify-center gap-2 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-[13px] rounded-lg transition-colors"
               >
-                <Download size={13} /> Download
+                <Download size={13} /> {busy === "download" ? "Preparing…" : "Download"}
               </button>
               <button
                 onClick={handleShare}
-                className="flex-1 flex items-center justify-center gap-2 py-2 border border-neutral-800 hover:bg-neutral-800 text-neutral-300 text-[13px] rounded-lg transition-colors"
+                disabled={busy !== null}
+                className="flex-1 flex items-center justify-center gap-2 py-2 border border-neutral-800 hover:bg-neutral-800 disabled:opacity-50 text-neutral-300 text-[13px] rounded-lg transition-colors"
               >
-                <Share2 size={13} /> Share
+                <Share2 size={13} /> {busy === "share" ? "Copying…" : "Share"}
               </button>
               <button
                 onClick={onClose}

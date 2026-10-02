@@ -2798,13 +2798,12 @@ function OwnerDashboard() {
   const [todayEvents, setTodayEvents] = useState<{ title: string; tag: string; color?: string }[]>([]);
   const [teamChartData, setTeamChartData] = useState<{ name: string; tasks: number; done: number }[]>([]);
   const [, forceUpdate] = useState(0); // trigger re-render after module vars populated
+  const [refreshKey, setRefreshKey] = useState(0); // bumped by realtime to reload all data
   const { t } = useLang();
   const { activeWorkspace } = useWorkspace();
   useRealtimeWorkspace(activeWorkspace?.id ?? null, (table) => {
-    if (table === "workspace_dashboard") {
-      api.getTasks().catch((e) => console.log("Realtime dashboard refresh error:", e));
-      api.getProjects().catch((e) => console.log("Realtime dashboard refresh error:", e));
-      api.getTeams().catch((e) => console.log("Realtime dashboard refresh error:", e));
+    if (table === "workspace_dashboard" || table === "tasks" || table === "projects" || table === "teams") {
+      setRefreshKey((k) => k + 1);
     }
   });
 
@@ -2858,9 +2857,39 @@ function OwnerDashboard() {
   useEffect(() => {
     const today = new Date();
     const todayKey = `${today.getFullYear()}-${today.getMonth() + 1}-${today.getDate()}`;
+    let cancelled = false;
+
+    // Track loaded data for derived computation — tasks feed both the
+    // overview cards and computeDerivedMetrics, so the promise result is
+    // stored for tryCompute instead of a fire-and-forget fetch.
+    let loadedTasks: api.Task[] | null = null;
+    let loadedProjects: api.Project[] | null = null;
+    let loadedTeams: api.Team[] | null = null;
+
+    const tryCompute = () => {
+      if (loadedTasks && loadedProjects && loadedTeams && !cancelled) {
+        computeDerivedMetrics(loadedTasks, loadedProjects, loadedTeams);
+        // Fire-and-forget snapshot so the server copy of dashboard ops tracks
+        // the live workspace (free plans get 403 — page already renders).
+        api.saveDashboardOps({
+          projectTimeline,
+          resourceData,
+          capacityData,
+          dailyData,
+          monthlyTrend,
+          performanceMetrics,
+          riskItems,
+          forecastData,
+          deptHighlights,
+        }).catch(() => {});
+        forceUpdate((n) => n + 1);
+      }
+    };
 
     // Core data
     api.getTasks().then((tasks) => {
+      if (cancelled) return;
+      loadedTasks = tasks;
       const total = tasks.length;
       const completed = tasks.filter((t) => t.completed || t.status === "completed").length;
       const inProgress = tasks.filter((t) => t.status === "in-progress").length;
@@ -2868,15 +2897,13 @@ function OwnerDashboard() {
       const sorted = [...tasks].sort((a, b) => (a.completed ? 1 : 0) - (b.completed ? 1 : 0));
       setRecentTasks(sorted.slice(0, 5).map((t) => ({ title: t.title, status: t.status, priority: t.priority, assignee: t.assignee, due: t.due })));
 
-      // Build weekly chart from real tasks (group by week number)
-      const now = new Date();
+      // Build weekly chart from real tasks (round-robin into 8 buckets)
       const weeks: Record<string, { completed: number; created: number }> = {};
       for (let i = 7; i >= 0; i--) {
         weeks[`W${8 - i}`] = { completed: 0, created: 0 };
       }
-      tasks.forEach((t) => {
-        const wk = `W${Math.min(8, Math.max(1, 8 - Math.floor((now.getTime() - Date.now()) / (7 * 86400000) + 1)))}`;
-        const bucket = `W${((tasks.indexOf(t) % 8) + 1)}`;
+      tasks.forEach((t, idx) => {
+        const bucket = `W${((idx % 8) + 1)}`;
         if (weeks[bucket]) {
           weeks[bucket].created++;
           if (t.completed || t.status === "completed") weeks[bucket].completed++;
@@ -2897,21 +2924,11 @@ function OwnerDashboard() {
         rate: v.tasks > 0 ? Math.round((v.done / v.tasks) * 100) : 0,
         score: v.tasks > 0 ? Math.round(((v.done / v.tasks) * 0.7 + 0.3) * 100) : 70,
       }));
+      tryCompute();
     }).catch((e) => console.log("Dashboard failed to load tasks:", e));
 
-    // Track loaded data for derived computation
-    let loadedTasks: api.Task[] | null = null;
-    let loadedProjects: api.Project[] | null = null;
-    let loadedTeams: api.Team[] | null = null;
-
-    const tryCompute = () => {
-      if (loadedTasks && loadedProjects && loadedTeams) {
-        computeDerivedMetrics(loadedTasks, loadedProjects, loadedTeams);
-        forceUpdate((n) => n + 1);
-      }
-    };
-
     api.getTeams().then((teams) => {
+      if (cancelled) return;
       loadedTeams = teams;
       const chart = teams.map((t) => {
         const totalTasks = t.members.reduce((acc, m) => acc + m.tasks, 0);
@@ -2924,15 +2941,19 @@ function OwnerDashboard() {
     }).catch((e) => console.log("Dashboard failed to load teams:", e));
 
     api.getProjects().then((projects) => {
+      if (cancelled) return;
       loadedProjects = projects;
       tryCompute();
     }).catch((e) => console.log("Dashboard failed to load projects:", e));
 
     api.getCalendarEvents().then((events) => {
+      if (cancelled) return;
       const todayEvts = events[todayKey] ?? [];
       setTodayEvents(todayEvts);
     }).catch((e) => console.log("Dashboard failed to load calendar:", e));
-  }, []);
+
+    return () => { cancelled = true; };
+  }, [refreshKey]);
 
   useEffect(() => {
     const mapped = subSectionMap[subSection];

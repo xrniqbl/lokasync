@@ -242,7 +242,7 @@ function ProjectGrid({
 
 // ── View: Web Application overview ────────────────────────────────────────────
 
-function WebAppView({ onDrillDown, allTasks, webMilestones, projects, t }: { onDrillDown: (v: ProjView) => void; allTasks: TaskItem[]; webMilestones: { milestone: string; date: string; done: boolean }[]; projects: Project[]; t: (path: string) => string; }){
+function WebAppView({ onDrillDown, allTasks, webMilestones, projects, t, onToggleMilestone }: { onDrillDown: (v: ProjView) => void; allTasks: TaskItem[]; webMilestones: { milestone: string; date: string; done: boolean }[]; projects: Project[]; t: (path: string) => string; onToggleMilestone: (project: "web" | "mobile", index: number, done: boolean) => void; }){
   const proj = projects.find((p) => p.name.toLowerCase().includes("web app") || p.name.toLowerCase().includes("web application"));
   const webTasks = allTasks.filter((t) => t.project === "Web Application v2" || t.project === "Web App v2");
   const frontendTasks = webTasks.filter((t) => !t.title.toLowerCase().includes("api") && !t.title.toLowerCase().includes("test") && !t.title.toLowerCase().includes("auth endpoint"));
@@ -286,8 +286,8 @@ function WebAppView({ onDrillDown, allTasks, webMilestones, projects, t }: { onD
         <Card>
           <SectionHeader title={t("projects.milestones")} sub={t("projects.keyDeliveryDates")} />
           <div className="space-y-3">
-            {webMilestones.map((m) => (
-              <div key={m.milestone} className="flex items-center gap-3 p-2.5 rounded-lg bg-neutral-800/20">
+            {webMilestones.map((m, i) => (
+              <button key={m.milestone} onClick={() => onToggleMilestone("web", i, !m.done)} className="w-full flex items-center gap-3 p-2.5 rounded-lg bg-neutral-800/20 hover:bg-neutral-800/40 transition-colors text-left" title={m.done ? "Mark as not done" : "Mark as done"}>
                 {m.done
                   ? <CheckCircle size={15} className="text-emerald-500 shrink-0" />
                   : <Circle size={15} className="text-neutral-600 shrink-0" />}
@@ -295,7 +295,7 @@ function WebAppView({ onDrillDown, allTasks, webMilestones, projects, t }: { onD
                   <div className={`text-[12px] ${m.done ? "line-through text-neutral-600" : "text-neutral-300"}`}>{m.milestone}</div>
                 </div>
                 <span className="text-neutral-500 text-[11px] shrink-0">{m.date}</span>
-              </div>
+              </button>
             ))}
           </div>
         </Card>
@@ -332,7 +332,7 @@ function WebAppView({ onDrillDown, allTasks, webMilestones, projects, t }: { onD
 
 // ── View: Mobile App overview ─────────────────────────────────────────────────
 
-function MobileAppView({ onDrillDown, allTasks, mobileMilestones, projects, t }: { onDrillDown: (v: ProjView) => void; allTasks: TaskItem[]; mobileMilestones: { milestone: string; date: string; done: boolean }[]; projects: Project[]; t: (path: string) => string; }) {
+function MobileAppView({ onDrillDown, allTasks, mobileMilestones, projects, t, onToggleMilestone }: { onDrillDown: (v: ProjView) => void; allTasks: TaskItem[]; mobileMilestones: { milestone: string; date: string; done: boolean }[]; projects: Project[]; t: (path: string) => string; onToggleMilestone: (project: "web" | "mobile", index: number, done: boolean) => void; }) {
   const proj = projects.find((p) => p.name.toLowerCase().includes("mobile"));
   const mobileTasks = allTasks.filter((t) => t.project === "Mobile App");
   const designTasks = mobileTasks.filter((t) => t.title.toLowerCase().includes("design") || t.title.toLowerCase().includes("ui") || t.title.toLowerCase().includes("wireframe") || t.title.toLowerCase().includes("mockup"));
@@ -377,8 +377,8 @@ function MobileAppView({ onDrillDown, allTasks, mobileMilestones, projects, t }:
         <Card>
           <SectionHeader title={t("projects.milestones")} sub={t("projects.keyDeliveryDates")} />
           <div className="space-y-3">
-            {mobileMilestones.map((m) => (
-              <div key={m.milestone} className="flex items-center gap-3 p-2.5 rounded-lg bg-neutral-800/20">
+            {mobileMilestones.map((m, i) => (
+              <button key={m.milestone} onClick={() => onToggleMilestone("mobile", i, !m.done)} className="w-full flex items-center gap-3 p-2.5 rounded-lg bg-neutral-800/20 hover:bg-neutral-800/40 transition-colors text-left" title={m.done ? "Mark as not done" : "Mark as done"}>
                 {m.done
                   ? <CheckCircle size={15} className="text-emerald-500 shrink-0" />
                   : <Circle size={15} className="text-neutral-600 shrink-0" />}
@@ -386,7 +386,7 @@ function MobileAppView({ onDrillDown, allTasks, mobileMilestones, projects, t }:
                   <div className={`text-[12px] ${m.done ? "line-through text-neutral-600" : "text-neutral-300"}`}>{m.milestone}</div>
                 </div>
                 <span className="text-neutral-500 text-[11px] shrink-0">{m.date}</span>
-              </div>
+              </button>
             ))}
           </div>
         </Card>
@@ -687,8 +687,20 @@ export function ProjectsPage() {
   }
 
   useRealtimeWorkspace(activeWorkspace?.id ?? null, (table) => {
-    if (table === "projects" || table === "tasks") fetchData();
+    if (table === "projects" || table === "tasks" || table === "workspace_milestones") fetchData();
   });
+
+  // Toggle a milestone's done state (PUT /milestones/:project/:index).
+  // Optimistic update with rollback on failure.
+  const handleToggleMilestone = (project: "web" | "mobile", index: number, done: boolean) => {
+    const setList = project === "web" ? setWebMilestones : setMobileMilestones;
+    setList((prev) => prev.map((m, i) => (i === index ? { ...m, done } : m)));
+    api.toggleMilestone(project, index, done).catch((e) => {
+      console.log("Failed to toggle milestone:", e);
+      toast.error(t("projects.failedToLoadProjectsToast"));
+      setList((prev) => prev.map((m, i) => (i === index ? { ...m, done: !done } : m)));
+    });
+  };
 
   // Plan-based gating: the Free plan caps how many projects can be created
   const maxProjects = PLAN_LIMITS[plan.id as PlanId]?.maxProjects ?? null;
@@ -801,11 +813,11 @@ export function ProjectsPage() {
           const mobileTasks = allTasks.filter((t) => t.project === "Mobile App");
           return (
             <>
-              {view === "web-application" && <WebAppView onDrillDown={setView} allTasks={allTasks} webMilestones={webMilestones} projects={projects} t={t} />}
+              {view === "web-application" && <WebAppView onDrillDown={setView} allTasks={allTasks} webMilestones={webMilestones} projects={projects} t={t} onToggleMilestone={handleToggleMilestone} />}
               {view === "proj-web-frontend" && <ProjectAreaView tasks={webTasks.filter((t) => !t.title.toLowerCase().includes("api") && !t.title.toLowerCase().includes("test"))} label1={t("projects.tasksCompleted")} label2="Frontend area" teamLabel={t("projects.webFrontendTeam")} milestones={webMilestones} deadline={webProj?.due ?? "—"} t={t} />}
               {view === "proj-web-api" && <ProjectAreaView tasks={webTasks.filter((t) => t.title.toLowerCase().includes("api") || t.title.toLowerCase().includes("endpoint") || t.title.toLowerCase().includes("auth"))} label1={t("projects.tasksCompleted")} label2="API area" teamLabel={t("projects.backendTeam")} deadline={webProj?.due ?? "—"} t={t} />}
               {view === "proj-web-qa" && <ProjectAreaView tasks={webTasks.filter((t) => t.title.toLowerCase().includes("test") || t.title.toLowerCase().includes("qa") || t.title.toLowerCase().includes("bug"))} label1={t("projects.testsPassing")} label2="QA area" teamLabel={t("projects.qaTeam")} deadline={webProj?.due ?? "—"} t={t} />}
-              {view === "mobile-app" && <MobileAppView onDrillDown={setView} allTasks={allTasks} mobileMilestones={mobileMilestones} projects={projects} t={t} />}
+              {view === "mobile-app" && <MobileAppView onDrillDown={setView} allTasks={allTasks} mobileMilestones={mobileMilestones} projects={projects} t={t} onToggleMilestone={handleToggleMilestone} />}
               {view === "proj-mobile-design" && <ProjectAreaView tasks={mobileTasks.filter((t) => t.title.toLowerCase().includes("design") || t.title.toLowerCase().includes("ui") || t.title.toLowerCase().includes("wireframe"))} label1={t("projects.screensDone")} label2="Design area" teamLabel={t("projects.designTeam")} milestones={mobileMilestones} deadline={mobileProj?.due ?? "—"} t={t} />}
               {view === "proj-mobile-native" && <ProjectAreaView tasks={mobileTasks.filter((t) => !t.title.toLowerCase().includes("design") && !t.title.toLowerCase().includes("ui"))} label1={t("projects.tasksCompleted")} label2="Native dev area" teamLabel={t("projects.mobileDevTeam")} deadline={mobileProj?.due ?? "—"} t={t} />}
               {view === "proj-completed" && <CompletedView projects={projects} t={t} />}

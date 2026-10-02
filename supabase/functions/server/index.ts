@@ -1667,6 +1667,96 @@ app.put("/profile", async (c) => {
   }
 });
 
+// POST /profile/avatar — real avatar upload to the private `avatars` bucket.
+// Field name: "avatar". 2 MB max, images only. Returns a 7-day signed URL plus
+// the persisted avatar_url (mirrored to profiles + auth user_metadata so the
+// sidebar and session display stay in sync).
+const AVATAR_MAX_BYTES = 2 * 1024 * 1024;
+app.post("/profile/avatar", async (c) => {
+  try {
+    const user = await getAuthedUser(c);
+    if (!user) return c.json({ error: "Unauthorized" }, 401);
+    if (!(await checkRateLimit(`avatar:${user.id}`, 10, 10 * 60 * 1000))) {
+      return rateLimited(c);
+    }
+    const client = storageClient();
+    if (!client) return c.json({ error: "Storage not configured" }, 503);
+
+    const form = await c.req.formData();
+    const file = form.get("avatar");
+    if (!file || !(file instanceof File)) {
+      return c.json({ error: "Missing avatar field" }, 400);
+    }
+    if (file.size === 0) return c.json({ error: "Empty file" }, 400);
+    if (file.size > AVATAR_MAX_BYTES) {
+      return c.json({ error: "Image must be under 2 MB" }, 413);
+    }
+    if (!file.type.startsWith("image/")) {
+      return c.json({ error: "Only image files are allowed" }, 400);
+    }
+
+    // Remove the previous avatar so storage doesn't accumulate orphans.
+    const { data: prev } = await sql.getDbClient()
+      .from("profiles").select("avatar_url").eq("user_id", user.id).maybeSingle();
+    const prevPath = typeof prev?.avatar_url === "string" && prev.avatar_url.startsWith("avatars/")
+      ? prev.avatar_url
+      : null;
+
+    const ext = (file.name.split(".").pop() ?? "png").toLowerCase().replace(/[^a-z0-9]/g, "") || "png";
+    const storagePath = `avatars/${user.id}/${Date.now()}.${ext}`;
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    const { error: uploadErr } = await client.storage
+      .from("avatars")
+      .upload(storagePath, bytes, { contentType: file.type, upsert: false });
+    if (uploadErr) {
+      console.log("Avatar upload error:", uploadErr);
+      return c.json({ error: uploadErr.message }, 500);
+    }
+
+    const { data: urlData, error: urlErr } = await client.storage
+      .from("avatars")
+      .createSignedUrl(storagePath, 60 * 60 * 24 * 7);
+    if (urlErr || !urlData?.signedUrl) {
+      await client.storage.from("avatars").remove([storagePath]);
+      return c.json({ error: urlErr?.message ?? "Failed to sign URL" }, 500);
+    }
+
+    const now = new Date().toISOString();
+    const { data: existing } = await sql.getDbClient()
+      .from("profiles").select("id").eq("user_id", user.id).maybeSingle();
+    if (existing) {
+      await sql.getDbClient().from("profiles")
+        .update({ avatar_url: storagePath, updated_at: now }).eq("id", existing.id);
+    } else {
+      await sql.getDbClient().from("profiles").insert({
+        user_id: user.id,
+        email: user.email ?? "",
+        full_name: String(user.user_metadata?.full_name ?? ""),
+        phone: String(user.user_metadata?.phone ?? ""),
+        avatar_url: storagePath,
+        created_at: now,
+        updated_at: now,
+      });
+    }
+    // Best-effort mirror so AuthContext/sidebar show the photo without refetch.
+    await adminClient().auth.admin.updateUserById(user.id, {
+      user_metadata: { ...(user.user_metadata ?? {}), avatar_url: urlData.signedUrl },
+    }).then(
+      () => {},
+      (e: unknown) => console.log("Avatar metadata mirror failed:", e),
+    );
+
+    if (prevPath && prevPath !== storagePath) {
+      await client.storage.from("avatars").remove([prevPath.replace(/^avatars\//, "")]);
+    }
+
+    return c.json({ url: urlData.signedUrl, path: storagePath, avatar_url: urlData.signedUrl }, 201);
+  } catch (e) {
+    console.log("POST /profile/avatar error:", e);
+    return c.json({ error: String(e) }, 500);
+  }
+});
+
 // ── Founder panel (admin-only) ────────────────────────────────────────────────
 
 app.get("/admin/overview", async (c) => {
@@ -3114,6 +3204,54 @@ app.delete("/files/:name", async (c) => {
     return c.json({ ok: true });
   } catch (e) {
     console.log("DELETE /files/:name error:", e);
+    return c.json({ error: String(e) }, 500);
+  }
+});
+
+// PATCH /files/share — toggle the shared flag and return a fresh signed URL so
+// the client can copy a real link (seed/legacy rows without a storage object
+// get shared=true but url=null — the UI explains that instead of faking one).
+app.patch("/files/share", async (c) => {
+  try {
+    const workspace = c.get("workspace");
+    const { name, shared } = await c.req.json();
+    if (!name) return c.json({ error: "name is required" }, 400);
+    const rows = await sql.sqlQueryByWorkspace("files", workspace.id, "*", { name });
+    if (!rows.length) return c.json({ error: "File not found" }, 404);
+    const file = rows[0];
+    const nextShared = typeof shared === "boolean" ? shared : !file.shared;
+    await sql.sqlUpdate("files", file.id, { shared: nextShared });
+
+    let url: string | null = null;
+    if (nextShared && file.storage_path) {
+      const client = storageClient();
+      if (client) {
+        const { data, error } = await client.storage
+          .from("workspace-files")
+          .createSignedUrl(file.storage_path, 60 * 60 * 24 * 7); // 7 days
+        if (!error) url = data.signedUrl;
+      }
+    }
+    await broadcastAfterWrite(workspace.id, "files");
+    return c.json({ name: file.name, shared: nextShared, url });
+  } catch (e) {
+    console.log("PATCH /files/share error:", e);
+    return c.json({ error: String(e) }, 500);
+  }
+});
+
+// POST /files/restore — un-archive every archived file in the workspace.
+app.post("/files/restore", async (c) => {
+  try {
+    const workspace = c.get("workspace");
+    const archived = await sql.sqlQueryByWorkspace("files", workspace.id, "id", { archived: true });
+    for (const row of archived) {
+      await sql.sqlUpdate("files", row.id, { archived: false });
+    }
+    await broadcastAfterWrite(workspace.id, "files");
+    return c.json({ ok: true, restored: archived.length });
+  } catch (e) {
+    console.log("POST /files/restore error:", e);
     return c.json({ error: String(e) }, 500);
   }
 });

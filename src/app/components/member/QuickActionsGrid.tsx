@@ -1,11 +1,11 @@
 import { useNavigate } from "react-router";
 import { useLang } from "../../i18n";
 import { Plus, Clock, Video, Upload } from "lucide-react";
-import { toast } from "sonner";
 
 export function QuickActionsGrid({ onRefresh }: { onRefresh?: () => void }) {
   const { t } = useLang();
   const navigate = useNavigate();
+  void onRefresh;
 
   const actions = [
     {
@@ -17,8 +17,8 @@ export function QuickActionsGrid({ onRefresh }: { onRefresh?: () => void }) {
     {
       icon: Clock,
       label: t("memberHome.logTime"),
-      // Placeholder — opens toast
-      onClick: () => toast.info("Coming soon"),
+      href: "/app/tasks",
+      onClick: () => navigate("/app/tasks"),
     },
     {
       icon: Video,

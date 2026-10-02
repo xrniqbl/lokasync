@@ -50,11 +50,12 @@ export function AnalyticsPage() {
   const [livePerformers, setLivePerformers] = useState<{ name: string; initials: string; tasks: number; rate: number }[]>([]);
   const [liveMetrics, setLiveMetrics] = useState<{ total: number; completed: number; inProgress: number; todo: number } | null>(null);
   const [analyticsMetrics, setAnalyticsMetrics] = useState<AnalyticsMetrics | null>(null);
+  const [refreshKey, setRefreshKey] = useState(0);
 
   const { activeWorkspace } = useWorkspace();
   useRealtimeWorkspace(activeWorkspace?.id ?? null, (table) => {
-    if (table === "workspace_analytics") {
-      Promise.all([api.getTasks(), api.getTeams()]).catch((e) => console.log("Realtime analytics refresh error:", e));
+    if (table === "workspace_analytics" || table === "tasks" || table === "teams") {
+      setRefreshKey((k) => k + 1);
     }
   });
 
@@ -75,8 +76,15 @@ export function AnalyticsPage() {
   const q = Math.floor(now.getMonth() / 3) + 1;
 
   useEffect(() => {
-    // Fetch tasks + teams for live KPI cards and computed analytics
-    Promise.all([api.getTasks(), api.getTeams()]).then(([tasks, teams]) => {
+    // Fetch tasks + teams for live KPI cards and computed analytics, plus the
+    // last server-persisted snapshot (best-effort: free plans get 403, offline
+    // gets network error). Live task/team data is the source of truth; the
+    // server snapshot is only a fallback when the workspace has no tasks yet.
+    Promise.all([
+      api.getTasks(),
+      api.getTeams(),
+      api.getAnalyticsMetrics().catch(() => null),
+    ]).then(([tasks, teams, serverSnap]) => {
       const total = tasks.length;
       const completed = tasks.filter((t) => t.status === "completed" || t.completed).length;
       const inProgress = tasks.filter((t) => t.status === "in-progress").length;
@@ -278,9 +286,27 @@ export function AnalyticsPage() {
         },
       };
 
-      setAnalyticsMetrics(computedMetrics);
+      // Server snapshot is a fallback only when this workspace has no live
+      // tasks yet (fresh workspace): it seeds the charts so they don't render
+      // empty. With live tasks present, local computation wins.
+      const merged: AnalyticsMetrics =
+        tasks.length === 0 && serverSnap ? { ...computedMetrics, ...serverSnap } : computedMetrics;
+      setAnalyticsMetrics(merged);
+
+      // Persist the live-computed snapshot to the server (pro-gated endpoint)
+      // so other devices share the same analytics state. Failures are
+      // non-fatal: the page already renders from local data.
+      api.saveAnalyticsMetrics({
+        completionSeries: merged.completionSeries,
+        productivitySeries: merged.productivitySeries,
+        efficiencyScores: merged.efficiencyScores,
+        teamEfficiency: merged.teamEfficiency,
+        benchmarks: merged.benchmarks,
+        taskMetrics: merged.taskMetrics,
+        timeTracking: merged.timeTracking,
+      }).catch((e) => console.log("Analytics snapshot save skipped:", e));
     }).catch((e) => console.log("Analytics failed to load data:", e));
-  }, []);
+  }, [refreshKey]);
 
   useEffect(() => {
     const validViews: AnalyticsView[] = [
@@ -293,7 +319,43 @@ export function AnalyticsPage() {
   }, [subSection]);
 
   const handleExport = () => {
-    toast.success("Report exported as PDF");
+    try {
+      const rows: string[][] = [
+        ["section", "label", "value"],
+        ["summary", "period", period],
+        ["summary", "view", activeView],
+        ["summary", "total_tasks", String(liveMetrics?.total ?? 0)],
+        ["summary", "completed", String(liveMetrics?.completed ?? 0)],
+        ["summary", "in_progress", String(liveMetrics?.inProgress ?? 0)],
+        ["summary", "todo", String(liveMetrics?.todo ?? 0)],
+        ...(analyticsMetrics?.taskMetrics
+          ? [
+              ["task_metrics", "avg_cycle_time", analyticsMetrics.taskMetrics.avgCycleTime],
+              ["task_metrics", "completion_change", analyticsMetrics.taskMetrics.completionChange],
+              ["task_metrics", "overdue_change", analyticsMetrics.taskMetrics.overdueChange],
+            ] as string[][]
+          : []),
+        ...liveDistribution.map((d) => ["distribution", d.name, String(d.value)] as string[]),
+        ...livePerformers.map((p) => ["performer", p.name, `${p.tasks} tasks, ${p.rate}%`] as string[]),
+        ...(analyticsMetrics?.efficiencyScores ?? []).map((e) => [
+          "efficiency",
+          e.team,
+          `${e.score}%`,
+        ] as string[]),
+      ];
+      const csv = rows.map((r) => r.map((c) => JSON.stringify(c)).join(",")).join("\n");
+      const blob = new Blob([csv], { type: "text/csv" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `analytics-${activeView}-${periodKey}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+      toast.success("Report exported as CSV");
+    } catch (e) {
+      console.log("Analytics export failed:", e);
+      toast.error("Export failed");
+    }
   };
 
   return (

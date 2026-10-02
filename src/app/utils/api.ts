@@ -515,6 +515,16 @@ export const uploadFile = (
   });
 };
 
+/** Upload a profile avatar image via multipart/form-data (2 MB max, enforced server-side) */
+export const uploadAvatar = (file: File) => {
+  const form = new FormData();
+  form.append("avatar", file);
+  return request<{ url: string; path: string; avatar_url: string }>(
+    "/profile/avatar",
+    { method: "POST", body: form },
+  );
+};
+
 /** Get a signed download URL for a file */
 export const getDownloadUrl = (name: string) =>
   request<{ url: string; expiresIn: number }>(
@@ -811,6 +821,8 @@ export interface AnalyticsMetrics {
 }
 
 export const getAnalyticsMetrics = () => request<AnalyticsMetrics>("/analytics/metrics");
+export const saveAnalyticsMetrics = (data: Partial<AnalyticsMetrics>) =>
+  request<AnalyticsMetrics>("/analytics/metrics", { method: "PUT", body: JSON.stringify(data) });
 
 // ── Dashboard operational data ────────────────────────────────────────────────
 
@@ -827,6 +839,19 @@ export interface DashboardOps {
 }
 
 export const getDashboardOps = () => request<DashboardOps>("/dashboard/ops");
+export const saveDashboardOps = (data: Partial<DashboardOps>) =>
+  request<DashboardOps>("/dashboard/ops", { method: "PUT", body: JSON.stringify(data) });
+
+// ── Files sharing & restore (PATCH /files/share, POST /files/restore) ──────────
+
+export const shareFile = (name: string, shared?: boolean) =>
+  request<{ name: string; shared: boolean; url: string | null }>(
+    "/files/share",
+    { method: "PATCH", body: JSON.stringify({ name, shared }) },
+  );
+
+export const restoreFiles = () =>
+  request<{ ok: boolean; restored: number }>("/files/restore", { method: "POST" });
 
 // ── Milestones ────────────────────────────────────────────────────────────────
 

@@ -24,12 +24,13 @@ const typeConfig: Record<string, { label: string; color: string; bg: string; ico
   diagram: { label: "Diagram", color: "#6366f1", bg: "bg-indigo-950/40", icon: <GitBranch size={16} /> },
 };
 
-function FileMenu({ fileName, onDelete, onRename, onPreview, onDownload }: {
+function FileMenu({ fileName, onDelete, onRename, onPreview, onDownload, onShare }: {
   fileName: string;
   onDelete: () => void;
   onRename: () => void;
   onPreview: () => void;
   onDownload: () => void;
+  onShare: () => void;
 }) {
   const { t } = useLang();
   return (
@@ -52,7 +53,7 @@ function FileMenu({ fileName, onDelete, onRename, onPreview, onDownload }: {
             { label: t("filesPage.preview"), action: (e: React.MouseEvent) => { e.stopPropagation(); onPreview(); } },
             { label: t("filesPage.download"), action: (e: React.MouseEvent) => { e.stopPropagation(); onDownload(); } },
             { label: t("filesPage.rename"), action: (e: React.MouseEvent) => { e.stopPropagation(); onRename(); } },
-            { label: t("filesPage.share"), action: (e: React.MouseEvent) => { e.stopPropagation(); toast.success(t("filesPage.shareLinkCopied")); } },
+            { label: t("filesPage.share"), action: (e: React.MouseEvent) => { e.stopPropagation(); onShare(); } },
           ].map((item) => (
             <DropdownMenu.Item
               key={item.label}
@@ -185,6 +186,42 @@ export function FilesPage() {
     setTab("Recent");
   };
 
+  const handleShare = async (fileName: string) => {
+    // Files without a storagePath are legacy/seed rows with no real object —
+    // there is nothing to sign, so say so instead of faking a link.
+    const file = files.find((f) => f.name === fileName);
+    if (!file?.storagePath) {
+      toast.error(t("filesPage.failedToGenerateDownload"));
+      return;
+    }
+    try {
+      const { shared, url } = await api.shareFile(fileName, true);
+      setFiles((prev) => prev.map((f) => f.name === fileName ? { ...f, shared } : f));
+      if (url) {
+        await navigator.clipboard.writeText(url);
+        toast.success(t("filesPage.shareLinkCopied"));
+      } else {
+        toast.error(t("filesPage.failedToGenerateDownload"));
+      }
+    } catch (e) {
+      console.log("Failed to generate share link:", e);
+      toast.error(t("filesPage.failedToGenerateDownload"));
+    }
+  };
+
+  const handleRestoreAll = async () => {
+    try {
+      const { restored } = await api.restoreFiles();
+      setFiles((prev) => prev.map((f) => ({ ...f, archived: false })));
+      toast.success(
+        restored > 0 ? t("filesPage.filesRestored") : t("filesPage.noFilesHere"),
+      );
+    } catch (e) {
+      console.log("Failed to restore files:", e);
+      toast.error(t("filesPage.failedToGenerateDownload"));
+    }
+  };
+
   const tabLabels: Record<string, string> = {
     Recent: t("filesPage.recentDocuments"),
     Shared: t("filesPage.sharedWithMe"),
@@ -247,7 +284,7 @@ export function FilesPage() {
         {tab === "Archived" && (
           <div className="mb-4 flex items-center gap-2 bg-neutral-800/40 border border-neutral-800/60 rounded-lg px-4 py-2.5 text-[12px] text-neutral-500">
             <span className="text-neutral-600">{t("filesPage.archivedReadOnly")}</span>
-            <button className="ml-auto text-indigo-400 hover:text-indigo-300 transition-colors" onClick={() => toast.success(t("filesPage.filesRestored"))}>{t("filesPage.restoreAll")}</button>
+            <button className="ml-auto text-indigo-400 hover:text-indigo-300 transition-colors" onClick={handleRestoreAll}>{t("filesPage.restoreAll")}</button>
           </div>
         )}
         {tab === "Folders" && !currentFolder ? (
@@ -299,7 +336,7 @@ export function FilesPage() {
                     <div className="text-neutral-500 text-[12px] hidden md:block">{file.sizeHuman}</div>
                     <div className="text-neutral-500 text-[12px] hidden md:block">{file.modified}</div>
                     <div className="w-6 h-6 rounded-full bg-neutral-800 flex items-center justify-center text-[10px] text-neutral-400 hidden md:flex">{file.owner}</div>
-                    <FileMenu fileName={file.name} onDelete={() => deleteFile(file.name)} onRename={() => startRename(file.name)} onPreview={() => setPreviewFile(file)} onDownload={() => handleDownload(file.name)} />
+                    <FileMenu fileName={file.name} onDelete={() => deleteFile(file.name)} onRename={() => startRename(file.name)} onPreview={() => setPreviewFile(file)} onDownload={() => handleDownload(file.name)} onShare={() => handleShare(file.name)} />
                   </div>
                 );
               })}
@@ -315,7 +352,7 @@ export function FilesPage() {
                   <div className="text-neutral-200 text-[12px] truncate mb-1">{file.name}</div>
                   <div className="text-neutral-600 text-[11px]">{file.sizeHuman} · {file.modified}</div>
                   <div className="absolute top-3 right-3">
-                    <FileMenu fileName={file.name} onDelete={() => deleteFile(file.name)} onRename={() => startRename(file.name)} onPreview={() => setPreviewFile(file)} onDownload={() => handleDownload(file.name)} />
+                    <FileMenu fileName={file.name} onDelete={() => deleteFile(file.name)} onRename={() => startRename(file.name)} onPreview={() => setPreviewFile(file)} onDownload={() => handleDownload(file.name)} onShare={() => handleShare(file.name)} />
                   </div>
                 </div>
               );
