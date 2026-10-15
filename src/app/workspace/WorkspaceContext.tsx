@@ -15,7 +15,7 @@ import * as api from "../utils/api";
 // persisted per user; the server is the source of truth for membership, so a
 // stale selection (e.g. removed from a workspace) falls back to the default.
 
-const storageKey = (userId: string) => `lokasync.activeWorkspace.${userId}`;
+const storageKey = (userId: string) => `indologic.activeWorkspace.${userId}`;
 
 /** Persist the workspace to activate on next app load (used by InvitePage). */
 export const persistActiveWorkspace = (userId: string, workspaceId: string) => {

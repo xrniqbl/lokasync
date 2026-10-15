@@ -41,7 +41,7 @@ const SHELL_STRINGS = {
   },
 } as const;
 
-export const SUPPORT_EMAIL = "support@lokasync.com";
+export const SUPPORT_EMAIL = "support@indologic.com";
 
 export function LegalShell({ doc }: { doc: Record<Lang, LegalDoc> }) {
   const [lang, setLang] = useState<Lang>(detectLang);
@@ -75,9 +75,9 @@ export function LegalShell({ doc }: { doc: Record<Lang, LegalDoc> }) {
       {/* Top bar */}
       <header className="border-b border-neutral-800/70">
         <div className="mx-auto flex h-16 w-full max-w-3xl items-center justify-between px-6">
-          <Link to="/" aria-label="LokaSync home">
+          <Link to="/" aria-label="Indologic home">
             <span className="text-[14px] font-bold tracking-[0.08em] text-[#fafafa]">
-              LOKASYNC
+              INDOLOGIC
             </span>
           </Link>
           <div className="flex items-center gap-3">
@@ -142,7 +142,7 @@ export function LegalShell({ doc }: { doc: Record<Lang, LegalDoc> }) {
       <footer className="border-t border-neutral-800/70">
         <div className="mx-auto flex w-full max-w-3xl flex-col items-center justify-between gap-3 px-6 py-6 sm:flex-row">
           <p className="text-[12px] text-neutral-600">
-            © 2026 LokaSync. {t.rights}
+            © 2026 Indologic. {t.rights}
           </p>
           <nav className="flex items-center gap-4 text-[12px]">
             <Link

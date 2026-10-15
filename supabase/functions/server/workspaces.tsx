@@ -441,14 +441,14 @@ export async function sendInvitationEmail(
   const safeUrl = (u: string) =>
     u.startsWith("http://") || u.startsWith("https://") || u.startsWith("/") ? u : "/";
   const href = esc(safeUrl(inviteUrl));
-  const subject = `${invitation.invited_by} invited you to "${invitation.workspace_name}" on LokaSync`;
+  const subject = `${invitation.invited_by} invited you to "${invitation.workspace_name}" on Indologic`;
   return emails.sendEmail(
     invitation.email,
     subject,
     `<div style="font-family:sans-serif;max-width:480px;margin:0 auto">
       <h2>You're invited to ${esc(invitation.workspace_name)}</h2>
       <p><strong>${esc(invitation.invited_by)}</strong> invited you to join the
-      workspace <strong>${esc(invitation.workspace_name)}</strong> on LokaSync
+      workspace <strong>${esc(invitation.workspace_name)}</strong> on Indologic
       as a <strong>${esc(invitation.role)}</strong>.</p>
       <p><a href="${href}" style="display:inline-block;padding:10px 20px;background:#6366f1;color:#fff;border-radius:6px;text-decoration:none">Accept invitation</a></p>
       <p style="color:#888;font-size:13px">This invitation expires on

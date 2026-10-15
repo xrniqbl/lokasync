@@ -58,9 +58,9 @@ export function PricingPage() {
       className="dark flex min-h-screen w-full flex-col items-center bg-[#0f0f0f] px-4 py-12"
       style={{ fontFamily: "Lexend, sans-serif" }}
     >
-      <Link to="/" aria-label="LokaSync home">
+      <Link to="/" aria-label="Indologic home">
         <span className="text-lg font-bold tracking-[0.08em] text-[#fafafa]">
-          LOKASYNC
+          INDOLOGIC
         </span>
       </Link>
 

@@ -20,4 +20,4 @@ User-agent: PerplexityBot
 Allow: /
 Allow: /pricing
 
-Sitemap: https://lokasync.app/sitemap.xml
+Sitemap: https://indologic.net/sitemap.xml

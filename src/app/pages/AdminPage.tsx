@@ -545,7 +545,7 @@ function MaintenanceTab() {
           <Textarea
             value={message}
             onChange={(e) => setMessage(e.target.value)}
-            placeholder="We are upgrading LokaSync and will be back within the hour."
+            placeholder="We are upgrading Indologic and will be back within the hour."
             rows={3}
           />
         </Field>
@@ -660,7 +660,7 @@ function NotificationsTab() {
               <Textarea
                 value={message}
                 onChange={(e) => setMessage(e.target.value)}
-                placeholder="LokaSync will be briefly unavailable on Sunday 02:00–03:00 WIB."
+                placeholder="Indologic will be briefly unavailable on Sunday 02:00–03:00 WIB."
                 rows={3}
                 required
               />
@@ -931,9 +931,9 @@ export function AdminPage() {
       <header className="border-b border-neutral-800/70">
         <div className="mx-auto flex h-16 w-full max-w-5xl items-center justify-between px-6">
           <div className="flex items-center gap-3">
-            <Link to="/" aria-label="LokaSync home">
+            <Link to="/" aria-label="Indologic home">
               <span className="text-[14px] font-bold tracking-[0.08em] text-[#fafafa]">
-                LOKASYNC
+                INDOLOGIC
               </span>
             </Link>
             <span className="rounded-full bg-indigo-900/50 px-2.5 py-0.5 text-[11px] text-indigo-300">

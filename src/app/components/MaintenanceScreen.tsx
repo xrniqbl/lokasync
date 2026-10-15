@@ -12,7 +12,7 @@ export function MaintenanceScreen({ message }: { message: string }) {
       style={{ fontFamily: "Lexend, sans-serif" }}
     >
       <span className="text-[15px] font-bold tracking-[0.08em] text-[#fafafa]">
-        LOKASYNC
+        INDOLOGIC
       </span>
       <div className="flex size-14 items-center justify-center rounded-full bg-amber-950/50">
         <Wrench className="size-6 text-amber-400" />
@@ -23,7 +23,7 @@ export function MaintenanceScreen({ message }: { message: string }) {
         </h1>
         <p className="mx-auto mt-2 max-w-md text-[14px] leading-relaxed text-neutral-400">
           {message ||
-            "LokaSync is briefly down for maintenance. Your data is safe — please check back soon."}
+            "Indologic is briefly down for maintenance. Your data is safe — please check back soon."}
         </p>
       </div>
       <Button

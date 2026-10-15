@@ -3,7 +3,7 @@
 
 const RESEND_API_KEY = () => Deno.env.get("RESEND_API_KEY");
 const FROM_EMAIL = () =>
-  Deno.env.get("INVITE_FROM_EMAIL") ?? "LokaSync <onboarding@resend.dev>";
+  Deno.env.get("INVITE_FROM_EMAIL") ?? "Indologic <onboarding@resend.dev>";
 
 // ── Generic sender ─────────────────────────────────────────────────────────────
 
@@ -83,7 +83,7 @@ export function reminderHtml(params: {
     <h2 style="color:#111">Your subscription expires soon</h2>
     <p>Hi ${escapeHtml(userName)},</p>
     <p>Your <strong>${escapeHtml(planName)}</strong> plan will expire on <strong>${new Date(expiryDate).toLocaleDateString("id-ID")}</strong> (${daysLeft} day${daysLeft === 1 ? "" : "s"} left).</p>
-    <p><a href="https://lokasync.app/settings/billing" style="display:inline-block;padding:10px 20px;background:#6366f1;color:#fff;border-radius:6px;text-decoration:none">Renew subscription</a></p>
+    <p><a href="https://indologic.net/settings/billing" style="display:inline-block;padding:10px 20px;background:#6366f1;color:#fff;border-radius:6px;text-decoration:none">Renew subscription</a></p>
     <p style="color:#888;font-size:13px">If you don't renew, your workspace will be downgraded to the Free plan. Files over quota will remain accessible but new uploads will be blocked.</p>
   </div>`;
 }

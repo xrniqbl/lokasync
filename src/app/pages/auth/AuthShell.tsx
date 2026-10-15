@@ -29,10 +29,10 @@ export function AuthShell({
       className="dark flex min-h-screen w-full flex-col items-center justify-center gap-6 bg-[#0f0f0f] px-4 py-10"
       style={{ fontFamily: "Lexend, sans-serif" }}
     >
-      <Link to="/" aria-label="LokaSync home">
+      <Link to="/" aria-label="Indologic home">
         <img
-          src="/lokasynclogo.png"
-          alt="LokaSync"
+          src="/indologiclogo.png"
+          alt="Indologic"
           width={144}
           height={36}
           decoding="async"

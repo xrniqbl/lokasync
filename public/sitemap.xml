@@ -1,32 +1,32 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
   <url>
-    <loc>https://lokasync.app/</loc>
+    <loc>https://indologic.net/</loc>
     <changefreq>weekly</changefreq>
     <priority>1.0</priority>
   </url>
   <url>
-    <loc>https://lokasync.app/pricing</loc>
+    <loc>https://indologic.net/pricing</loc>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
   </url>
   <url>
-    <loc>https://lokasync.app/privacy</loc>
+    <loc>https://indologic.net/privacy</loc>
     <changefreq>yearly</changefreq>
     <priority>0.3</priority>
   </url>
   <url>
-    <loc>https://lokasync.app/terms</loc>
+    <loc>https://indologic.net/terms</loc>
     <changefreq>yearly</changefreq>
     <priority>0.3</priority>
   </url>
   <url>
-    <loc>https://lokasync.app/login</loc>
+    <loc>https://indologic.net/login</loc>
     <changefreq>yearly</changefreq>
     <priority>0.2</priority>
   </url>
   <url>
-    <loc>https://lokasync.app/register</loc>
+    <loc>https://indologic.net/register</loc>
     <changefreq>yearly</changefreq>
     <priority>0.5</priority>
   </url>

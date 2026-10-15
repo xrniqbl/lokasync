@@ -2805,7 +2805,7 @@ function buildDashDetails(
       competitors: [
         { company: "Competitor A", share: 28, color: "#525252" },
         { company: "Competitor B", share: 22, color: "#737373" },
-        { company: "LokaSync", share: 14, color: "#818cf8" },
+        { company: "Indologic", share: 14, color: "#818cf8" },
         { company: "Others", share: 36, color: "#262626" },
       ],
     },

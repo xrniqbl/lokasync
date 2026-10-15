@@ -5,7 +5,7 @@ const DOC: { en: LegalDoc; id: LegalDoc } = {
     title: "Privacy Policy",
     updated: "Last updated: 11 June 2026",
     intro:
-      "This Privacy Policy explains what information LokaSync (“we”, “us”) collects when you use the LokaSync project-management workspace, how we use it, and the choices you have. By creating an account or using LokaSync you agree to this policy.",
+      "This Privacy Policy explains what information Indologic (“we”, “us”) collects when you use the Indologic project-management workspace, how we use it, and the choices you have. By creating an account or using Indologic you agree to this policy.",
     sections: [
       {
         title: "Information we collect",
@@ -49,7 +49,7 @@ const DOC: { en: LegalDoc; id: LegalDoc } = {
       {
         title: "Cookies and local storage",
         blocks: [
-          "LokaSync uses browser storage for essential purposes only:",
+          "Indologic uses browser storage for essential purposes only:",
           [
             "Keeping you signed in (authentication session).",
             "Remembering preferences such as your language choice.",
@@ -74,7 +74,7 @@ const DOC: { en: LegalDoc; id: LegalDoc } = {
       {
         title: "Children",
         blocks: [
-          "LokaSync is not directed at children under 13, and we do not knowingly collect personal information from them.",
+          "Indologic is not directed at children under 13, and we do not knowingly collect personal information from them.",
         ],
       },
       {
@@ -89,7 +89,7 @@ const DOC: { en: LegalDoc; id: LegalDoc } = {
     title: "Kebijakan Privasi",
     updated: "Terakhir diperbarui: 11 Juni 2026",
     intro:
-      "Kebijakan Privasi ini menjelaskan informasi apa yang dikumpulkan LokaSync (“kami”) saat Anda menggunakan ruang kerja manajemen proyek LokaSync, bagaimana kami menggunakannya, dan pilihan yang Anda miliki. Dengan membuat akun atau menggunakan LokaSync, Anda menyetujui kebijakan ini.",
+      "Kebijakan Privasi ini menjelaskan informasi apa yang dikumpulkan Indologic (“kami”) saat Anda menggunakan ruang kerja manajemen proyek Indologic, bagaimana kami menggunakannya, dan pilihan yang Anda miliki. Dengan membuat akun atau menggunakan Indologic, Anda menyetujui kebijakan ini.",
     sections: [
       {
         title: "Informasi yang kami kumpulkan",
@@ -133,7 +133,7 @@ const DOC: { en: LegalDoc; id: LegalDoc } = {
       {
         title: "Cookie dan penyimpanan lokal",
         blocks: [
-          "LokaSync menggunakan penyimpanan browser hanya untuk keperluan esensial:",
+          "Indologic menggunakan penyimpanan browser hanya untuk keperluan esensial:",
           [
             "Menjaga Anda tetap masuk (sesi autentikasi).",
             "Mengingat preferensi seperti pilihan bahasa.",
@@ -158,7 +158,7 @@ const DOC: { en: LegalDoc; id: LegalDoc } = {
       {
         title: "Anak-anak",
         blocks: [
-          "LokaSync tidak ditujukan untuk anak di bawah 13 tahun, dan kami tidak dengan sengaja mengumpulkan informasi pribadi dari mereka.",
+          "Indologic tidak ditujukan untuk anak di bawah 13 tahun, dan kami tidak dengan sengaja mengumpulkan informasi pribadi dari mereka.",
         ],
       },
       {

@@ -1,6 +1,6 @@
-# LokaSync
+# Indologic
 
-> LokaSync adalah workspace manajemen proyek untuk tim Indonesia: tugas,
+> Indologic adalah workspace manajemen proyek untuk tim Indonesia: tugas,
 > proyek, kalender bersama, file, dan analitik dalam satu tempat minimal.
 > Gratis hingga 3 proyek. Harga dalam Rupiah, bayar via transfer bank (Midtrans).
 
@@ -22,7 +22,7 @@
 
 ## FAQ
 
-- **Apa itu LokaSync?** Workspace manajemen proyek untuk tim: tugas, proyek,
+- **Apa itu Indologic?** Workspace manajemen proyek untuk tim: tugas, proyek,
   kalender bersama, workload tim, analitik, dan file dalam satu tempat.
 - **Apakah paket Free benar-benar gratis?** Ya. Hingga 3 proyek, tanpa batas
   waktu, tanpa kartu kredit.
@@ -36,9 +36,9 @@
 
 ## Tautan
 
-- Beranda: https://lokasync.app/
-- Harga: https://lokasync.app/pricing
-- Daftar: https://lokasync.app/register
-- Masuk: https://lokasync.app/login
-- Kebijakan privasi: https://lokasync.app/privacy
-- Syarat layanan: https://lokasync.app/terms
+- Beranda: https://indologic.net/
+- Harga: https://indologic.net/pricing
+- Daftar: https://indologic.net/register
+- Masuk: https://indologic.net/login
+- Kebijakan privasi: https://indologic.net/privacy
+- Syarat layanan: https://indologic.net/terms

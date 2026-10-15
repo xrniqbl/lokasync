@@ -60,7 +60,7 @@ app.use("*", async (c, next) => {
     {
       error:
         mt.message ||
-        "LokaSync is briefly down for maintenance. Please check back soon.",
+        "Indologic is briefly down for maintenance. Please check back soon.",
       code: "maintenance",
     },
     503,
@@ -945,7 +945,7 @@ const SEED_PLANS = [
   {
     id: "free",
     name: "Free",
-    description: "For individuals getting started with LokaSync.",
+    description: "For individuals getting started with Indologic.",
     currency: "IDR",
     monthly: 0,
     yearly: 0,
@@ -1007,7 +1007,7 @@ app.get("/2fa/setup", async (c) => {
     if (user.user_metadata?.totp_enabled) return c.json({ error: "2FA already enabled" }, 400);
     const secret = generateSecret();
     const backupCodes = generateBackupCodes();
-    const issuer = "LokaSync";
+    const issuer = "Indologic";
     const otpauthUrl = `otpauth://totp/${issuer}:${encodeURIComponent(user.email ?? user.id)}?secret=${secret}&issuer=${issuer}`;
     // Store pending secret (not enabled until verified; expires in ~10 min)
     await kv.set(`2fa:pending:${user.id}`, { secret, backupCodes, created_at: new Date().toISOString() });
@@ -1218,7 +1218,7 @@ app.post("/email-otp/send", async (c) => {
     if (!user.email) return c.json({ error: "Account has no email address" }, 400);
     const sent = await emails.sendEmail(
       user.email,
-      "Your LokaSync verification code",
+      "Your Indologic verification code",
       `<!DOCTYPE html><html><body style="font-family:Lexend,sans-serif;background:#0f0f0f;color:#fafafa;padding:32px">
         <h2 style="margin:0 0 16px">Verification code</h2>
         <p style="margin:0 0 24px;color:#a3a3a3">Enter this code to verify your identity:</p>
@@ -1558,7 +1558,7 @@ async function applyTransactionStatus(tx: any, midtransData: any) {
           periodEnd: periodEndStr,
           paymentType: midtransData.payment_type ?? null,
         });
-        await emails.sendEmail(userEmail, "Your LokaSync payment receipt", html);
+        await emails.sendEmail(userEmail, "Your Indologic payment receipt", html);
       }
     } catch (emailErr) {
       // Email failure must never break the transaction
@@ -1645,7 +1645,7 @@ app.post("/payments/checkout", async (c) => {
         id: `${plan.id}-${interval}`,
         price: base,
         quantity: 1,
-        name: `LokaSync ${plan.name} — ${interval}`,
+        name: `Indologic ${plan.name} — ${interval}`,
       },
     ];
     if (discount > 0) {
@@ -2452,7 +2452,7 @@ app.post("/admin/send-reminders", async (c) => {
           });
           const ok = await emails.sendEmail(
             email,
-            "Your LokaSync subscription expires soon",
+            "Your Indologic subscription expires soon",
             html,
           );
           if (ok) {

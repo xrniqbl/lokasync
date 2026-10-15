@@ -1223,7 +1223,7 @@ function IconNavigation({
       {/* Logo */}
       <div className="mb-2 size-10 flex items-center justify-center">
         <div className="size-7">
-          <img src="/lokasynclogo.png" alt="LokaSync" className="w-full h-full object-contain" />
+          <img src="/indologiclogo.png" alt="Indologic" className="w-full h-full object-contain" />
         </div>
       </div>
 
