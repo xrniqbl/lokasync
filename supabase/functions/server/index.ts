@@ -1183,6 +1183,17 @@ app.post("/2fa/verify-login", async (c) => {
 // Alternative 2FA method: a 6-digit code sent via the transactional email
 // service, valid for 5 minutes with a per-code attempt counter.
 
+// ── OTP hashing ───────────────────────────────────────────────────────────────
+// Email OTP codes are single-use secrets: store only SHA-256(code) so a KV
+// read (backup, log, compromised key) never reveals a live code. Compare by
+// hashing the candidate. TOTP secrets intentionally stay reversible — HOTP
+// needs the raw secret every 30s (standard TOTP limitation); they are
+// protected by the service_role-only KV lockdown (migration 027) instead.
+async function sha256Hex(input: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(input));
+  return Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
 app.post("/email-otp/send", async (c) => {
   try {
     const user = await getAuthedUser(c);
@@ -1198,7 +1209,7 @@ app.post("/email-otp/send", async (c) => {
     const code = String((new DataView(bytes.buffer).getUint32(0) % 900000) + 100000);
 
     await kv.set(`email-otp:${user.id}`, {
-      code,
+      codeHash: await sha256Hex(code),
       attempts: 0,
       createdAt: new Date().toISOString(),
       expiresAt: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
@@ -1247,7 +1258,7 @@ app.post("/email-otp/verify", async (c) => {
       await kv.del(`email-otp:${user.id}`);
       return c.json({ error: "Too many incorrect attempts. Request a new code.", code: "too_many_attempts" }, 429);
     }
-    if (String(record.code) !== String(code)) {
+    if (record.codeHash !== (await sha256Hex(String(code)))) {
       record.attempts += 1;
       await kv.set(`email-otp:${user.id}`, record);
       return c.json({ error: "Invalid code" }, 400);
@@ -1290,7 +1301,7 @@ app.post("/email-otp/verify-login", async (c) => {
       await kv.del(`email-otp:${user.id}`);
       return c.json({ error: "Too many incorrect attempts.", code: "too_many_attempts" }, 429);
     }
-    if (String(record.code) !== String(code)) {
+    if (record.codeHash !== (await sha256Hex(String(code)))) {
       record.attempts += 1;
       await kv.set(`email-otp:${user.id}`, record);
       return c.json({ error: "Invalid code" }, 400);
@@ -1857,6 +1868,10 @@ app.put("/profile", async (c) => {
   try {
     const user = await getAuthedUser(c);
     if (!user) return c.json({ error: "Unauthorized" }, 401);
+    // Anti-churn: max 30 profile writes per hour per user.
+    if (!await checkRateLimit(`profile:${user.id}`, 30, 60 * 60 * 1000)) {
+      return rateLimited(c);
+    }
     const body = await c.req.json();
     const full_name = String(body.full_name ?? "").trim();
     const phone = String(body.phone ?? "").trim();
@@ -2523,6 +2538,10 @@ app.get("/workspaces", async (c) => {
 app.post("/workspaces", async (c) => {
   try {
     const user = c.get("user");
+    // Anti-spam: max 10 workspace creations per hour per user.
+    if (!await checkRateLimit(`ws-create:${user.id}`, 10, 60 * 60 * 1000)) {
+      return rateLimited(c);
+    }
     const body = await c.req.json();
     const name = String(body.name ?? "").trim().slice(0, 80);
     if (!name) return c.json({ error: "Workspace name is required" }, 400);
@@ -2669,6 +2688,10 @@ app.post("/workspaces/:id/invites", async (c) => {
     if (!membership) return c.json({ error: "Workspace not found" }, 404);
     if (membership.role !== "owner") {
       return c.json({ error: "Only the owner can invite members", code: "owner_required" }, 403);
+    }
+    // Anti invite-spam (each invite costs a Resend email): 20/hour per user.
+    if (!await checkRateLimit(`invite-create:${user.id}`, 20, 60 * 60 * 1000)) {
+      return rateLimited(c);
     }
     const body = await c.req.json();
     const email = String(body.email ?? "").trim().toLowerCase();
@@ -3541,6 +3564,11 @@ app.post("/files/upload", async (c) => {
   try {
     const client = storageClient();
     if (!client) return c.json({ error: "Storage not configured" }, 503);
+    const user = c.get("user");
+    // Anti-churn: max 30 uploads per hour per user (quota already caps bytes).
+    if (user && !await checkRateLimit(`upload:${user.id}`, 30, 60 * 60 * 1000)) {
+      return rateLimited(c);
+    }
 
     const form = await c.req.formData();
     const file = form.get("file");
@@ -3919,28 +3947,19 @@ app.put("/integrations/:name", async (c) => {
 });
 
 // ── Sessions (active device sessions) ────────────────────────────────────────
-
-const SEED_SESSIONS = {
-  active: [
-    { device: "Chrome on macOS", location: "Jakarta, ID", ip: "103.41.22.5", lastActive: "Now — current session", current: true },
-    { device: "Safari on iPhone 15", location: "Jakarta, ID", ip: "103.41.22.9", lastActive: "2 hours ago", current: false },
-    { device: "Chrome on Windows 11", location: "Singapore, SG", ip: "128.76.14.3", lastActive: "3 days ago", current: false },
-  ],
-  loginHistory: [
-    { date: "Jun 8, 2026 09:14", ip: "103.41.22.5", device: "Chrome / macOS", status: "success" },
-    { date: "Jun 7, 2026 18:30", ip: "103.41.22.9", device: "Safari / iOS", status: "success" },
-    { date: "Jun 6, 2026 22:01", ip: "91.198.174.0", device: "Firefox / Unknown", status: "failed" },
-    { date: "Jun 5, 2026 10:55", ip: "103.41.22.5", device: "Chrome / macOS", status: "success" },
-    { date: "Jun 3, 2026 08:22", ip: "128.76.14.3", device: "Chrome / Windows", status: "success" },
-  ],
-};
+// Lists the user's REAL Supabase Auth sessions (no seed data — fake IPs and
+// device names would mislead users into trusting or revoking phantom devices).
 
 app.get("/sessions", async (c) => {
   try {
-    // NOTE: this list is a device-history placeholder, not live Auth sessions.
-    const workspace = c.get("workspace");
-    const row = await sql.sqlQueryFirst("workspace_sessions", workspace.id, "data");
-    const data = row?.data ?? SEED_SESSIONS;
+    const user = c.get("user");
+    const { data, error } = await adminClient().auth.admin.listUserSessions
+      ? await adminClient().auth.admin.listUserSessions(user.id)
+      : { data: null, error: new Error("listUserSessions unavailable") };
+    if (error || !data) {
+      // SDK without session listing: return honest empty state, not fake data.
+      return c.json({ active: [], loginHistory: [], note: "session_list_unavailable" });
+    }
     return c.json(data);
   } catch (e) {
     return serverError(c, "GET /sessions error:", e);
@@ -3950,14 +3969,8 @@ app.get("/sessions", async (c) => {
 app.delete("/sessions/:device", async (c) => {
   try {
     const user = c.get("user");
-    const workspace = c.get("workspace");
-    const device = decodeURIComponent(c.req.param("device"));
-    const row = await sql.sqlQueryFirst("workspace_sessions", workspace.id, "data");
-    const data = row?.data ?? SEED_SESSIONS;
-    data.active = data.active.filter((s: any) => s.device !== device);
-    await sql.sqlUpsert("workspace_sessions", { workspace_id: workspace.id, data, updated_at: new Date().toISOString() }, "workspace_id");
-    await broadcastAfterWrite(workspace.id, "workspace_sessions");
-    // Best-effort: also revoke Auth refresh tokens so the device can't refresh.
+    // Revoke Auth refresh tokens server-side so the device can't refresh.
+    // Per-session revoke depends on SDK support; global sign-out always works.
     try {
       if (user?.id) await adminClient().auth.admin.signOut(user.id);
     } catch { /* best-effort */ }

@@ -552,6 +552,7 @@ export const deleteCalendarEvent = (id: string) =>
 // ── Files ─────────────────────────────────────────────────────────────────────
 
 export interface FileItem {
+  id?: string;
   name: string;
   type: string;
   size: number;          // bytes
@@ -560,6 +561,7 @@ export interface FileItem {
   owner: string;
   shared: boolean;
   archived: boolean;
+  folderId?: string | null;
   storagePath: string | null;
   url: string | null;
   urlExpiresAt: string | null;
@@ -572,6 +574,7 @@ export interface QuotaInfo {
 }
 
 export interface Folder {
+  id?: string;
   name: string;
   files: number;
   modified: string;

@@ -7,6 +7,33 @@
 -- NOTE: This migration assumes the new tables are already created (001).
 -- Run after applying 001, 002, 003.
 
+-- Unique targets so re-runs are true no-ops (bare ON CONFLICT DO NOTHING
+-- errors when no inferable unique index exists; patched audit 2026-10-15).
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'uq_projects_workspace_legacy') THEN
+    ALTER TABLE projects ADD CONSTRAINT uq_projects_workspace_legacy UNIQUE (workspace_id, legacy_id);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'uq_tasks_workspace_legacy') THEN
+    ALTER TABLE tasks ADD CONSTRAINT uq_tasks_workspace_legacy UNIQUE (workspace_id, legacy_id);
+  END IF;
+END $$;
+
+-- Defensive free-text date parser: KV stores "Jun 9", "Jul 15, 2026", ISO,
+-- or garbage — never abort the whole migration on one bad value.
+CREATE OR REPLACE FUNCTION public.kv_to_date(raw TEXT)
+RETURNS DATE LANGUAGE plpgsql IMMUTABLE AS $$
+BEGIN
+  IF raw IS NULL OR btrim(raw) = '' THEN RETURN NULL; END IF;
+  IF raw ~ '^\d{4}-\d{1,2}-\d{1,2}' THEN
+    BEGIN RETURN (regexp_match(raw, '^(\d{4}-\d{1,2}-\d{1,2})'))[1]::date;
+    EXCEPTION WHEN OTHERS THEN RETURN NULL; END;
+  END IF;
+  BEGIN RETURN raw::date;
+  EXCEPTION WHEN OTHERS THEN RETURN NULL; END;
+END;
+$$;
+
 -- ── Workspaces ────────────────────────────────────────────────────────────────
 -- workspace:{id} → workspaces
 INSERT INTO workspaces (id, name, owner_id, plan_id, created_at)
@@ -47,7 +74,7 @@ SELECT
   elem->>'description',
   COALESCE(elem->>'status', 'active'),
   COALESCE((elem->>'progress')::INTEGER, 0),
-  (elem->>'due')::date as due_date,  -- stored as text in KV; may need manual cleanup
+  public.kv_to_date(elem->>'due') as due_date,
   COALESCE(
     (SELECT array_agg(x::text) FROM jsonb_array_elements_text(elem->'tags') as x),
     ARRAY[]::TEXT[]
@@ -57,7 +84,7 @@ SELECT
 FROM kv_store_827698a1,
 jsonb_array_elements(value) as elem
 WHERE key LIKE 'ws:%:projects:list'
-ON CONFLICT DO NOTHING;
+ON CONFLICT (workspace_id, legacy_id) DO NOTHING;
 
 -- ── Tasks ─────────────────────────────────────────────────────────────────────
 -- ws:{wsId}:tasks:list → tasks
@@ -74,7 +101,7 @@ SELECT
   COALESCE(elem->>'status', 'todo'),
   COALESCE(elem->>'priority', 'medium'),
   elem->>'assignee',
-  (elem->>'due')::date as due_date,
+  public.kv_to_date(elem->>'due') as due_date,
   now(),
   now()
 FROM kv_store_827698a1 t
@@ -86,26 +113,24 @@ LEFT JOIN LATERAL (
   LIMIT 1
 ) p ON true
 WHERE t.key LIKE 'ws:%:tasks:list'
-ON CONFLICT DO NOTHING;
+ON CONFLICT (workspace_id, legacy_id) DO NOTHING;
 
 -- ── Calendar Events ───────────────────────────────────────────────────────────
 -- ws:{wsId}:calendar:events → calendar_events
 -- KV key format: ws:{wsId}:calendar:events  value: {"YYYY-M-D": [{id,title,time,color}]}
+-- start_time is NOT NULL: rows with unparseable dates/times are skipped via
+-- the WHERE guard below instead of aborting the migration.
 INSERT INTO calendar_events (workspace_id, title, start_time, end_time, color, created_at, updated_at)
 SELECT
   split_part(t.key, ':', 2)::UUID as workspace_id,
   elem->>'title',
-  (CASE
-    WHEN date_keys.date_key ~ '^\d+-\d+-\d+$' THEN
-      TO_TIMESTAMP(
-        split_part(date_keys.date_key, '-', 1) || '-' ||
-        lpad(split_part(date_keys.date_key, '-', 2), 2, '0') || '-' ||
-        lpad(split_part(date_keys.date_key, '-', 3), 2, '0') || ' ' ||
-        COALESCE(elem->>'time', '00:00') || ':00',
-        'YYYY-MM-DD HH24:MI:SS'
-      )
-    ELSE NULL
-  END) as start_time,
+  TO_TIMESTAMP(
+    split_part(date_keys.date_key, '-', 1) || '-' ||
+    lpad(split_part(date_keys.date_key, '-', 2), 2, '0') || '-' ||
+    lpad(split_part(date_keys.date_key, '-', 3), 2, '0') || ' ' ||
+    COALESCE(NULLIF(elem->>'time', ''), '00:00') || ':00',
+    'YYYY-MM-DD HH24:MI:SS'
+  ) as start_time,
   NULL as end_time,
   COALESCE(elem->>'color', '#6366f1'),
   now(),
@@ -114,6 +139,8 @@ FROM kv_store_827698a1 t,
 lateral jsonb_each(t.value) as date_keys(date_key, events),
 lateral jsonb_array_elements(date_keys.events) as elem
 WHERE t.key LIKE 'ws:%:calendar:events'
+  AND date_keys.date_key ~ '^\d{4}-\d{1,2}-\d{1,2}$'
+  AND COALESCE(NULLIF(elem->>'time', ''), '00:00') ~ '^\d{1,2}:\d{2}(:\d{2})?$'
 ON CONFLICT DO NOTHING;
 
 -- ── Mentions (seed-only; real mentions are generated from assignee changes) ────
@@ -125,7 +152,7 @@ SELECT
   elem->>'actor',
   elem->>'text',
   elem->>'mentionee',
-  COALESCE((elem->>'time')::TIMESTAMPTZ, now())
+  now()
 FROM kv_store_827698a1,
 jsonb_array_elements(value) as elem
 WHERE key LIKE 'ws:%:mentions:list'
@@ -139,7 +166,7 @@ SELECT
   elem->>'actor',
   elem->>'action',
   elem->>'target',
-  COALESCE((elem->>'time')::TIMESTAMPTZ, now())
+  now()
 FROM kv_store_827698a1,
 jsonb_array_elements(value) as elem
 WHERE key LIKE 'ws:%:team_activity:list'

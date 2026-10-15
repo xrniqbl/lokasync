@@ -20,6 +20,9 @@ npx supabase secrets set \
   MIDTRANS_CLIENT_KEY=... \
   MIDTRANS_IS_PRODUCTION=true \
   ADMIN_EMAILS=founder@domain.com \
+  ADMIN_USER_IDS=<uuid-founder-1>,<uuid-founder-2> \
+  APP_URL=https://lokasync.app \
+  ALLOWED_ORIGINS=https://lokasync.app,https://staging.lokasync.app \
   RESEND_API_KEY=re_... \
   INVITE_FROM_EMAIL="LokaSync <noreply@domain.com>"
 ```

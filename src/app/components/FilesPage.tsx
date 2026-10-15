@@ -158,11 +158,15 @@ export function FilesPage() {
 
   const nonArchivedFiles = files.filter((f) => !f.archived);
   const archivedFiles = files.filter((f) => f.archived);
-  // FileItem carries no folderId (the API exposes no file→folder linkage),
-  // so a folder view matches on the full folder name — never a truncated
-  // prefix, which false-positives on unrelated names.
+  // Folder view matches on the real folderId linkage (server-backed since the
+  // audit). Legacy rows without folderId fall back to full-name match — never
+  // a truncated prefix, which false-positives on unrelated names.
+  const currentFolderId = folders.find((fo) => fo.name === currentFolder)?.id ?? null;
   const displayFiles = currentFolder
-    ? nonArchivedFiles.filter((f) => f.name.toLowerCase().includes(currentFolder.toLowerCase()))
+    ? nonArchivedFiles.filter((f) =>
+        currentFolderId ? f.folderId === currentFolderId
+        : f.name.toLowerCase().includes(currentFolder.toLowerCase()),
+      )
     : nonArchivedFiles;
   const filtered = tab === "Shared"
     ? nonArchivedFiles.filter((f) => f.shared)
