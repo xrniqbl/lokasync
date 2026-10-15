@@ -52,14 +52,14 @@ type Tab =
   | "reminders"
   | "migration";
 
-const TABS: { id: Tab; label: string; icon: typeof LayoutDashboard }[] = [
-  { id: "overview", label: "Overview", icon: LayoutDashboard },
-  { id: "vouchers", label: "Vouchers", icon: Ticket },
-  { id: "subscribers", label: "Subscribers", icon: Users },
-  { id: "maintenance", label: "Maintenance", icon: Wrench },
-  { id: "notifications", label: "Notifications", icon: BellRing },
-  { id: "reminders", label: "Reminders", icon: MailWarning },
-  { id: "migration", label: "Migration", icon: Database },
+const TABS: { id: Tab; labelKey: `admin.${string}`; icon: typeof LayoutDashboard }[] = [
+  { id: "overview", labelKey: "admin.tabOverview", icon: LayoutDashboard },
+  { id: "vouchers", labelKey: "admin.tabVouchers", icon: Ticket },
+  { id: "subscribers", labelKey: "admin.tabSubscribers", icon: Users },
+  { id: "maintenance", labelKey: "admin.tabMaintenance", icon: Wrench },
+  { id: "notifications", labelKey: "admin.tabNotifications", icon: BellRing },
+  { id: "reminders", labelKey: "admin.tabReminders", icon: MailWarning },
+  { id: "migration", labelKey: "admin.tabMigration", icon: Database },
 ];
 
 
@@ -113,9 +113,7 @@ function OverviewTab() {
   }
 
   const activePro = data.active_subscriptions.pro ?? 0;
-  const activeBusiness = data.active_subscriptions.business ?? 0;
-
-  return (
+  const activeBusiness = data.active_subscriptions.business ?? 0;  return (
     <div className="flex flex-col gap-4">
       {data.maintenance.enabled && (
         <div className="rounded-2xl border border-amber-500/30 bg-amber-950/30 px-4 py-3 text-[13px] text-amber-200">
@@ -127,7 +125,7 @@ function OverviewTab() {
         <StatCard
           label={t("admin.activeSubscriptions")}
           value={String(activePro + activeBusiness)}
-          sub={`${activePro} ${t("admin.proBusiness").split(" · ")[0]} · ${activeBusiness} ${t("admin.proBusiness").split(" · ")[1]}`}
+          sub={`${activePro} Pro · ${activeBusiness} Business}`}
         />
         <StatCard label={t("admin.expiredSubscriptions")} value={String(data.expired_subscriptions)} />
         <StatCard label={t("admin.vouchers")} value={String(data.voucher_count)} />
@@ -186,11 +184,13 @@ function VouchersTab() {
         return;
       }
       const created = await api.adminCreateVoucher({
-        code: form.code,
+        code: form.code.trim().toUpperCase(),
         type: form.type,
         value: Number(form.value),
         max_uses: form.max_uses ? Number(form.max_uses) : null,
-        expires_at: form.expires_at ? new Date(form.expires_at).toISOString() : null,
+        // Date inputs are local-midnight; convert explicitly so the UTC
+        // day doesn't shift back by one.
+        expires_at: form.expires_at ? new Date(`${form.expires_at}T00:00:00`).toISOString() : null,
         applies_to,
       });
       setVouchers((prev) => (prev ? [created, ...prev] : [created]));
@@ -244,7 +244,7 @@ function VouchersTab() {
               <Input
                 value={form.code}
                 onChange={(e) =>
-                  setForm({ ...form, code: e.target.value.toUpperCase() })
+                  setForm({ ...form, code: e.target.value.trim().toUpperCase() })
                 }
                 placeholder="LAUNCH30"
                 required
@@ -539,7 +539,7 @@ function MaintenanceTab() {
         </div>
         <Field>
           <FieldLabel>
-            Message shown to users{" "}
+            {t("admin.messageShownToUsers")}{" "}
             <span className="font-normal text-neutral-500">(optional)</span>
           </FieldLabel>
           <Textarea
@@ -636,7 +636,7 @@ function NotificationsTab() {
                 />
               </Field>
               <Field>
-                <FieldLabel>Audience</FieldLabel>
+                <FieldLabel>{t("admin.audience")}</FieldLabel>
                 <select
                   value={audience}
                   onChange={(e) =>
@@ -724,22 +724,19 @@ function NotificationsTab() {
 function RemindersTab() {
   const { t } = useLang();
   const [result, setResult] = useState<{ sent: number; skipped: number; daysAhead: number } | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [sendingDays, setSendingDays] = useState<number | null>(null);
 
   const send = async (days: number) => {
-    setLoading(true);
+    setSendingDays(days);
     try {
       const res = await api.sendReminders(days);
       setResult(res);
-      toast.success(
-        res.sent === 1
-          ? t("admin.remindersSent", { count: res.sent }) + " " + t("admin.reminderEmail_one")
-          : t("admin.remindersSent", { count: res.sent }) + " " + t("admin.reminderEmail_other")
-      );
+      // One count-based message only — reminderEmail_one/other would duplicate it.
+      toast.success(t("admin.remindersSent", { count: res.sent }));
     } catch {
       toast.error(t("admin.failedToSendReminders"));
     } finally {
-      setLoading(false);
+      setSendingDays(null);
     }
   };
 
@@ -753,13 +750,13 @@ function RemindersTab() {
       </CardHeader>
       <CardPanel className="flex flex-col gap-4">
         <div className="flex gap-2">
-          <Button onClick={() => send(7)} loading={loading}>
+          <Button onClick={() => send(7)} loading={sendingDays === 7}>
             {t("admin.send7dayReminders")}
           </Button>
-          <Button onClick={() => send(14)} loading={loading} variant="outline">
+          <Button onClick={() => send(14)} loading={sendingDays === 14} variant="outline">
             {t("admin.send14dayReminders")}
           </Button>
-          <Button onClick={() => send(30)} loading={loading} variant="outline">
+          <Button onClick={() => send(30)} loading={sendingDays === 30} variant="outline">
             {t("admin.send30dayReminders")}
           </Button>
         </div>
@@ -955,7 +952,7 @@ export function AdminPage() {
 
       <main className="mx-auto w-full max-w-5xl px-6 py-8">
         <nav className="flex flex-wrap gap-2" aria-label="Founder panel sections">
-          {TABS.map(({ id, label, icon: Icon }) => (
+          {TABS.map(({ id, labelKey, icon: Icon }) => (
             <button
               key={id}
               type="button"
@@ -967,7 +964,7 @@ export function AdminPage() {
               }`}
             >
               <Icon className="size-3.5" />
-              {label}
+              {t(labelKey as any)}
             </button>
           ))}
         </nav>

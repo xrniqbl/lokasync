@@ -22,9 +22,9 @@ interface TodayPanelProps {
 }
 
 const priorityColor: Record<string, string> = {
-  high: "text-red-400",
-  medium: "text-amber-400",
-  low: "text-emerald-400",
+  high: "bg-red-400",
+  medium: "bg-amber-400",
+  low: "bg-emerald-400",
 };
 
 export function TodayPanel({ events, dueTasks }: TodayPanelProps) {

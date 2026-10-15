@@ -26,6 +26,12 @@ npx supabase secrets set \
 
 - `SUPABASE_URL` dan `SUPABASE_SERVICE_ROLE_KEY` di-inject Supabase otomatis.
 - Lihat `.env.example` untuk penjelasan tiap variabel.
+- `ADMIN_USER_IDS`: comma-separated Supabase user IDs dengan akses owner-only
+  (Danger Zone dkk) — alternatif selain allowlist email `ADMIN_EMAILS`.
+- `ALLOWED_ORIGINS`: comma-separated origin yang boleh memanggil edge function
+  (CORS allowlist), mis. `https://lokasync.app,https://staging.lokasync.app`.
+- `APP_URL`: canonical public URL frontend (dipakai untuk invite link & redirect
+  email), mis. `https://lokasync.app`.
 - Tanpa `RESEND_API_KEY`: invite/receipt/email OTP tidak terkirim (endpoint
   OTP mengembalikan 503). TOTP 2FA tetap berfungsi.
 

@@ -1,5 +1,5 @@
 import { useLang } from "../i18n";
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useContext, createContext } from "react";
 import { useWorkspace } from "../workspace/WorkspaceContext";
 import { useRealtimeWorkspace } from "../realtime";
 import { MemberHome } from "./MemberHome";
@@ -21,6 +21,36 @@ type DashView =
   | "performance-metrics" | "perf-sales" | "perf-response" | "perf-clv" | "perf-churn"
   | "predictive" | "pred-forecast" | "pred-resources" | "pred-trends" | "pred-risks";
 
+// ── Shared dashboard helpers ────────────────────────────────────────────────────
+// Clamp a percent value into the 0..100 range so ProgressBar widths never blow out.
+function clampPct(v: number): number {
+  if (!Number.isFinite(v)) return 0;
+  return Math.min(100, Math.max(0, v));
+}
+
+// Div-by-zero-safe percent (0 when total is 0 instead of NaN).
+function pct(done: number, total: number): number {
+  if (!total) return 0;
+  return (done / total) * 100;
+}
+
+const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}(?:[T ].*)?$/;
+
+// Only parse strict ISO dates ("2026-06-08" / "2026-06-08T..."). Display strings
+// like "Jun 8", "No due date" or "TBD" return null so they are never treated as dates.
+function parseISODate(v: unknown): Date | null {
+  if (typeof v !== "string" || !ISO_DATE_RE.test(v.trim())) return null;
+  const d = new Date(v);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+// Missing/unparseable due dates are NOT overdue — only real ISO dates in the past count.
+function isOverdueISO(due: unknown, now: Date, status?: string): boolean {
+  if (status === "completed") return false;
+  const d = parseISODate(due);
+  return d !== null && d < now;
+}
+
 // ── Custom chart components ───────────────────────────────────────────────────
 
 function ChartArea({
@@ -35,7 +65,7 @@ function ChartArea({
   height?: number;
 }) {
   const { t } = useLang();
-  const [tooltip, setTooltip] = useState<{ x: number; y: number; idx: number } | null>(null);
+  const [tooltip, setTooltip] = useState<{ x: number; y: number; idx: number; flip: boolean } | null>(null);
   const svgRef = useRef<SVGSVGElement>(null);
 
   if (!data || data.length === 0) return <div style={{ height }} className="flex items-center justify-center text-neutral-700 text-[11px]">{t("dashboard.noDataLabel")}</div>;
@@ -134,7 +164,8 @@ function ChartArea({
               const rect = svgRef.current?.getBoundingClientRect();
               if (!rect) return;
               const ratio = rect.width / vbW;
-              setTooltip({ x: px(i) * ratio, y: py(Math.max(...series.map((s) => (data[i][s.key] as number) ?? 0))) * (rect.height / vbH), idx: i });
+              const tipX = px(i) * ratio;
+              setTooltip({ x: tipX, y: py(Math.max(...series.map((s) => (data[i][s.key] as number) ?? 0))) * (rect.height / vbH), idx: i, flip: tipX > rect.width * 0.65 });
             }}
             onMouseLeave={() => setTooltip(null)}
           />
@@ -145,7 +176,8 @@ function ChartArea({
         <div
           style={{
             position: "absolute",
-            left: tooltip.x + 8,
+            left: tooltip.flip ? undefined : tooltip.x + 8,
+            right: tooltip.flip ? 8 : undefined,
             top: Math.max(0, tooltip.y - 8),
             pointerEvents: "none",
             zIndex: 10,
@@ -178,7 +210,7 @@ function ChartBar({
 }) {
   const [tooltip, setTooltip] = useState<{ idx: number } | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-  const [tipPos, setTipPos] = useState({ x: 0, y: 0 });
+  const [tipPos, setTipPos] = useState({ x: 0, y: 0, flip: false });
 
   if (!data || data.length === 0) return <div style={{ height }} className="flex items-center justify-center text-neutral-700 text-[11px]">No data</div>;
 
@@ -206,7 +238,8 @@ function ChartBar({
               const rect = containerRef.current?.getBoundingClientRect();
               const elRect = (e.currentTarget as HTMLElement).getBoundingClientRect();
               if (!rect) return;
-              setTipPos({ x: elRect.left - rect.left + elRect.width / 2, y: elRect.top - rect.top });
+              const cx = elRect.left - rect.left + elRect.width / 2;
+              setTipPos({ x: cx, y: elRect.top - rect.top, flip: cx > rect.width * 0.65 });
               setTooltip({ idx: di });
             }}
             onMouseLeave={() => setTooltip(null)}
@@ -214,16 +247,16 @@ function ChartBar({
             <div style={{ display: "flex", alignItems: "flex-end", gap: 2, flex: 1, width: "100%" }}>
               {bars.map((b, bi) => {
                 const val = (d[b.key] as number) ?? 0;
-                const pct = (val / maxVal) * 100;
+                const p = (val / maxVal) * 100;
+                if (!(val > 0)) return null;
                 return (
                   <div
                     key={bi}
                     style={{
                       flex: 1,
-                      height: `${pct}%`,
+                      height: `${Math.max(p, 4)}%`,
                       backgroundColor: b.color,
                       borderRadius: "3px 3px 0 0",
-                      minHeight: 2,
                     }}
                   />
                 );
@@ -256,7 +289,8 @@ function ChartBar({
         <div
           style={{
             position: "absolute",
-            left: tipPos.x + 8,
+            left: tipPos.flip ? undefined : tipPos.x + 8,
+            right: tipPos.flip ? 8 : undefined,
             top: Math.max(0, tipPos.y - 4),
             pointerEvents: "none",
             zIndex: 10,
@@ -334,13 +368,14 @@ function ChartDonut({
   if (!data || data.length === 0) return <div style={{ height: size }} className="flex items-center justify-center text-neutral-700 text-[11px]">No data</div>;
 
   const total = data.reduce((a, b) => a + b.value, 0);
+  const safeTotal = total > 0 ? total : 1;
   const r = 30;
   const strokeWidth = 14;
   const circumference = 2 * Math.PI * r;
 
   let offset = 0;
   const slices = data.map((d, i) => {
-    const dash = (d.value / total) * circumference;
+    const dash = total > 0 ? (d.value / safeTotal) * circumference : 0;
     const gap = circumference - dash;
     const slice = { ...d, dash, gap, offset, idx: i };
     offset += dash;
@@ -388,32 +423,74 @@ function ChartDonut({
   );
 }
 
-// ── Data defaults (populated from Supabase via useDashboardData hook) ─────────
-// These are overridden by live API data fetched in DashboardPage useEffect.
+// ── Dashboard data (component state, provided via context) ─────────────────────
+// These were previously module-global mutable `let` bindings, mutated in effects
+// with a forceUpdate hack — which leaked one workspace's data into another.
+// They now live in OwnerDashboard state and flow to views through context.
+interface WeeklyBucket { week: string; completed: number; created: number }
+interface TeamBucket { name: string; tasks: number; done: number }
+interface RevenueBucket { month: string; revenue: number; target: number }
+interface KpiBucket { name: string; value: number; target: number; color: string }
+interface StrategicGoal { goal: string; progress: number; status: string; due: string }
+interface DeptHighlight { dept: string; metric: string; sub: string; up: boolean }
+interface TimelineBucket { project: string; start: number; duration: number; status: string }
+interface ResourceBucket { team: string; allocated: number; available: number }
+interface CapacityBucket { week: string; capacity: number; utilization: number }
+interface BudgetBucket { category: string; budget: number; actual: number }
+interface CashFlowBucket { month: string; inflow: number; outflow: number }
+interface ExpenseSlice { name: string; value: number; color: string }
+interface DailyBucket { day: string; tasks: number; hours: number; bugs: number }
+interface MonthlyBucket { month: string; delivered: number; planned: number; velocity: number }
+interface QuarterlyBucket { quarter: string; revenue: number; expenses: number; profit: number }
+interface PerformerBucket { name: string; tasks: number; rate: number; score: number }
+interface PerfMetric { metric: string; value: string; change: string; up: boolean }
+interface ForecastBucket { month: string; actual: number | null; forecast: number; lower: number; upper: number }
+interface RiskBucket { risk: string; likelihood: string; impact: string; color: string }
 
-let weeklyData: { week: string; completed: number; created: number }[] = [];
-let teamData: { name: string; tasks: number; done: number }[] = [];
-let revenueData: { month: string; revenue: number; target: number }[] = [];
-let kpiData: { name: string; value: number; target: number; color: string }[] = [];
-let strategicGoals: { goal: string; progress: number; status: string; due: string }[] = [];
-let deptHighlights: { dept: string; metric: string; sub: string; up: boolean }[] = [];
-let projectTimeline: { project: string; start: number; duration: number; status: string }[] = [];
-let resourceData: { team: string; allocated: number; available: number }[] = [];
-let capacityData: { week: string; capacity: number; utilization: number }[] = [];
-let budgetData: { category: string; budget: number; actual: number }[] = [];
-let cashFlowData: { month: string; inflow: number; outflow: number }[] = [];
-let expenseBreakdown: { name: string; value: number; color: string }[] = [];
-let dailyData: { day: string; tasks: number; hours: number; bugs: number }[] = [];
-let monthlyTrend: { month: string; delivered: number; planned: number; velocity: number }[] = [];
-let quarterlyData: { quarter: string; revenue: number; expenses: number; profit: number }[] = [];
-let performerData: { name: string; tasks: number; rate: number; score: number }[] = [];
-let performanceMetrics: { metric: string; value: string; change: string; up: boolean }[] = [];
-let forecastData: { month: string; actual: number | null; forecast: number; lower: number; upper: number }[] = [];
-let riskItems: { risk: string; likelihood: string; impact: string; color: string }[] = [];
-let dashDetails: Partial<api.DashboardDetails> = {};
+interface DashboardData {
+  weeklyData: WeeklyBucket[];
+  teamData: TeamBucket[];
+  revenueData: RevenueBucket[];
+  kpiData: KpiBucket[];
+  strategicGoals: StrategicGoal[];
+  deptHighlights: DeptHighlight[];
+  projectTimeline: TimelineBucket[];
+  resourceData: ResourceBucket[];
+  capacityData: CapacityBucket[];
+  budgetData: BudgetBucket[];
+  cashFlowData: CashFlowBucket[];
+  expenseBreakdown: ExpenseSlice[];
+  dailyData: DailyBucket[];
+  monthlyTrend: MonthlyBucket[];
+  quarterlyData: QuarterlyBucket[];
+  performerData: PerformerBucket[];
+  performanceMetrics: PerfMetric[];
+  forecastData: ForecastBucket[];
+  riskItems: RiskBucket[];
+  details: Partial<api.DashboardDetails>;
+}
 
-function dd<K extends keyof api.DashboardDetails>(key: K): Partial<api.DashboardDetails[K]> {
-  return (dashDetails[key] ?? {}) as Partial<api.DashboardDetails[K]>;
+const emptyDashboardData: DashboardData = {
+  weeklyData: [], teamData: [], revenueData: [], kpiData: [], strategicGoals: [],
+  deptHighlights: [], projectTimeline: [], resourceData: [], capacityData: [],
+  budgetData: [], cashFlowData: [], expenseBreakdown: [], dailyData: [],
+  monthlyTrend: [], quarterlyData: [], performerData: [], performanceMetrics: [],
+  forecastData: [], riskItems: [], details: {},
+};
+
+const DashboardDataContext = createContext<DashboardData>(emptyDashboardData);
+
+function useDash(): DashboardData {
+  return useContext(DashboardDataContext);
+}
+
+// Bound `dd()` accessor for sub-views: reads the details section for `key`
+// from context state (empty object when not yet loaded).
+function useDd() {
+  const dash = useDash();
+  return function dd<K extends keyof api.DashboardDetails>(key: K): Partial<api.DashboardDetails[K]> {
+    return (dash.details[key] ?? {}) as Partial<api.DashboardDetails[K]>;
+  };
 }
 
 // ── Config helpers ─────────────────────────────────────────────────────────────
@@ -476,56 +553,13 @@ function Card({ children, className = "" }: { children: React.ReactNode; classNa
 }
 
 function ProgressBar({ value, color = "#818cf8" }: { value: number; color?: string }) {
+  const v = clampPct(value);
   return (
     <div className="w-full h-1.5 bg-neutral-800 rounded-full overflow-hidden">
-      <div className="h-full rounded-full transition-all" style={{ width: `${value}%`, backgroundColor: color }} />
+      <div className="h-full rounded-full transition-all" style={{ width: `${v}%`, backgroundColor: color }} />
     </div>
   );
 }
-
-const VIEW_LABELS: Record<DashView, string> = {
-  "overview": "Overview",
-  "executive-summary": "Executive Summary",
-  "exec-revenue": "Revenue Overview",
-  "exec-kpis": "Key Performance Indicators",
-  "exec-goals": "Strategic Goals Progress",
-  "exec-departments": "Department Highlights",
-  "operations": "Operations Dashboard",
-  "ops-timeline": "Project Timeline",
-  "ops-resources": "Resource Allocation",
-  "ops-performance": "Team Performance",
-  "ops-capacity": "Capacity Planning",
-  "financial": "Financial Dashboard",
-  "fin-budget": "Budget vs Actual",
-  "fin-cashflow": "Cash Flow Analysis",
-  "fin-expense": "Expense Breakdown",
-  "fin-pl": "Profit & Loss Summary",
-  "weekly": "Weekly Reports",
-  "weekly-productivity": "Team Productivity",
-  "weekly-completion": "Project Completion",
-  "weekly-budget": "Budget Utilization",
-  "weekly-satisfaction": "Client Satisfaction",
-  "monthly": "Monthly Insights",
-  "monthly-revenue": "Revenue Growth",
-  "monthly-clients": "New Clients",
-  "monthly-expansion": "Team Expansion",
-  "monthly-cost": "Cost Reduction",
-  "quarterly": "Quarterly Analysis",
-  "quarterly-market": "Market Position",
-  "quarterly-roi": "Return on Investment",
-  "quarterly-retention": "Customer Retention",
-  "quarterly-innovation": "Innovation Index",
-  "performance-metrics": "Performance Metrics",
-  "perf-sales": "Sales Conversion",
-  "perf-response": "Lead Response Time",
-  "perf-clv": "Customer Lifetime Value",
-  "perf-churn": "Churn Rate",
-  "predictive": "Predictive Analytics",
-  "pred-forecast": "Q4 Revenue Forecast",
-  "pred-resources": "Resource Demand",
-  "pred-trends": "Market Trends",
-  "pred-risks": "Risk Assessment",
-};
 
 // ── Sub-view components ───────────────────────────────────────────────────────
 
@@ -537,6 +571,10 @@ function OverviewView({ recentTasks, onNavigate, showNewTask, taskStats, todayEv
   todayEvents: { title: string; tag: string; color?: string }[];
   teamChartData: { name: string; tasks: number; done: number }[];
 }) {
+  const { navigate } = useNavigation();
+  const dash = useDash();
+  const weeklyData = dash.weeklyData;
+  const teamData = dash.teamData;
   const today = new Date().toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
   const completionRate = taskStats.total > 0 ? Math.round((taskStats.completed / taskStats.total) * 100) : 0;
   return (
@@ -618,7 +656,7 @@ function OverviewView({ recentTasks, onNavigate, showNewTask, taskStats, todayEv
               <div className="text-neutral-600 text-[12px] text-center py-4">No events today</div>
             )}
             {todayEvents.map((event, i) => (
-              <div key={i} onClick={() => toast.info(event.title)} className="flex items-start gap-3 cursor-pointer hover:opacity-80 transition-opacity">
+              <div key={i} onClick={() => navigate("tasks")} className="flex items-start gap-3 cursor-pointer hover:opacity-80 transition-opacity">
                 <div className="flex-1 min-w-0">
                   <div className="text-neutral-300 text-[12px] lg:text-[13px] leading-tight mb-1.5">{event.title}</div>
                   <span className={`inline-block text-[10px] px-2 py-0.5 rounded-full ${tagConfig[event.tag] ?? "bg-neutral-800 text-neutral-400"}`}>{event.tag}</span>
@@ -632,12 +670,31 @@ function OverviewView({ recentTasks, onNavigate, showNewTask, taskStats, todayEv
   );
 }
 
+function SampleBadge() {
+  const { t } = useLang();
+  return (
+    <div className="flex items-center gap-2 rounded-lg border border-amber-500/20 bg-amber-950/20 px-3 py-2 text-[11px] text-amber-200/80">
+      <span className="inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-amber-400" />
+      {t("dashboard.sampleDataNote")}
+    </div>
+  );
+}
+
 function ExecutiveSummaryView() {
+  const dd = useDd();
+  const dash = useDash();
+  const revenueData = dash.revenueData;
+  const kpiData = dash.kpiData;
+  const strategicGoals = dash.strategicGoals;
+  const deptHighlights = dash.deptHighlights;
+
   const goalStatusColor: Record<string, string> = {
     "on-track": "#10b981", "at-risk": "#f59e0b", "ahead": "#818cf8",
   };
+  const FALLBACK_GOAL_COLOR = "#525252";
   return (
     <div className="space-y-5">
+      <SampleBadge />
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         {(dd("executiveSummary").stats ?? []).map((s) => (
           <StatCard key={s.label} label={s.label} value={s.value} trend={s.up !== undefined ? { value: s.sub ?? "", up: s.up } : undefined} sub={s.up === undefined ? s.sub : undefined} />
@@ -667,7 +724,7 @@ function ExecutiveSummaryView() {
                   <span className="text-neutral-300 text-[12px]">{kpi.name}</span>
                   <span className="text-neutral-400 text-[12px]">{kpi.value}% <span className="text-neutral-600">/ {kpi.target}%</span></span>
                 </div>
-                <ProgressBar value={(kpi.value / kpi.target) * 100} color={kpi.color} />
+                <ProgressBar value={pct(kpi.value, kpi.target)} color={kpi.color} />
               </div>
             ))}
           </div>
@@ -684,13 +741,13 @@ function ExecutiveSummaryView() {
                   <span className="text-neutral-300 text-[12px] truncate mr-2">{g.goal}</span>
                   <div className="flex items-center gap-2 shrink-0">
                     <span className="text-neutral-600 text-[11px]">{g.due}</span>
-                    <span className="text-[10px] px-2 py-0.5 rounded-full" style={{ color: goalStatusColor[g.status], backgroundColor: `${goalStatusColor[g.status]}18` }}>
+                    <span className="text-[10px] px-2 py-0.5 rounded-full" style={{ color: goalStatusColor[g.status] ?? FALLBACK_GOAL_COLOR, backgroundColor: `${goalStatusColor[g.status] ?? FALLBACK_GOAL_COLOR}18` }}>
                       {g.status}
                     </span>
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
-                  <ProgressBar value={g.progress} color={goalStatusColor[g.status]} />
+                  <ProgressBar value={g.progress} color={goalStatusColor[g.status] ?? FALLBACK_GOAL_COLOR} />
                   <span className="text-neutral-500 text-[11px] w-8 text-right shrink-0">{g.progress}%</span>
                 </div>
               </div>
@@ -720,11 +777,19 @@ function ExecutiveSummaryView() {
 }
 
 function OperationsView() {
+  const dd = useDd();
+  const dash = useDash();
+  const projectTimeline = dash.projectTimeline;
+  const resourceData = dash.resourceData;
+  const capacityData = dash.capacityData;
+  const teamData = dash.teamData;
   const statusColor: Record<string, string> = {
     "in-progress": "#f59e0b", "completed": "#10b981", "planning": "#818cf8",
   };
+  const FALLBACK_STATUS_COLOR = "#525252";
   return (
     <div className="space-y-5">
+      <SampleBadge />
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         {(dd("operations").stats ?? []).map((s) => (
           <StatCard key={s.label} label={s.label} value={s.value} trend={s.up !== undefined ? { value: s.sub ?? "", up: s.up } : undefined} sub={s.up === undefined ? s.sub : undefined} />
@@ -738,12 +803,12 @@ function OperationsView() {
             <div key={p.project}>
               <div className="flex items-center justify-between mb-1.5">
                 <span className="text-neutral-300 text-[12px]">{p.project}</span>
-                <span className="text-[10px] px-2 py-0.5 rounded-full" style={{ color: statusColor[p.status], backgroundColor: `${statusColor[p.status]}18` }}>
+                <span className="text-[10px] px-2 py-0.5 rounded-full" style={{ color: statusColor[p.status] ?? FALLBACK_STATUS_COLOR, backgroundColor: `${statusColor[p.status] ?? FALLBACK_STATUS_COLOR}18` }}>
                   {p.status}
                 </span>
               </div>
               <div className="relative h-2 bg-neutral-800 rounded-full overflow-hidden">
-                <div className="absolute h-full rounded-full" style={{ left: `${p.start}%`, width: `${p.duration}%`, backgroundColor: statusColor[p.status], opacity: 0.7 }} />
+                <div className="absolute h-full rounded-full" style={{ left: `${p.start}%`, width: `${p.duration}%`, backgroundColor: statusColor[p.status] ?? FALLBACK_STATUS_COLOR, opacity: 0.7 }} />
               </div>
             </div>
           ))}
@@ -784,9 +849,9 @@ function OperationsView() {
           {teamData.map((t) => (
             <div key={t.name} className="p-3 bg-neutral-800/20 rounded-lg text-center">
               <div className="text-neutral-400 text-[11px] mb-1">{t.name === "Dev" ? "Engineering" : t.name === "PM" ? "Product" : t.name}</div>
-              <div className="text-neutral-50 text-[22px] font-['Lexend:SemiBold',_sans-serif]">{Math.round((t.done / t.tasks) * 100)}%</div>
+              <div className="text-neutral-50 text-[22px] font-['Lexend:SemiBold',_sans-serif]">{Math.round(pct(t.done, t.tasks))}%</div>
               <div className="text-neutral-600 text-[11px] mt-0.5">{t.done}/{t.tasks} done</div>
-              <div className="mt-2"><ProgressBar value={(t.done / t.tasks) * 100} color="#818cf8" /></div>
+              <div className="mt-2"><ProgressBar value={pct(t.done, t.tasks)} color="#818cf8" /></div>
             </div>
           ))}
         </div>
@@ -796,8 +861,14 @@ function OperationsView() {
 }
 
 function FinancialView() {
+  const dd = useDd();
+  const dash = useDash();
+  const budgetData = dash.budgetData;
+  const cashFlowData = dash.cashFlowData;
+  const expenseBreakdown = dash.expenseBreakdown;
   return (
     <div className="space-y-5">
+      <SampleBadge />
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         {(dd("financial").stats ?? []).map((s) => (
           <StatCard key={s.label} label={s.label} value={s.value} trend={s.up !== undefined ? { value: s.sub ?? "", up: s.up } : undefined} sub={s.up === undefined ? s.sub : undefined} />
@@ -863,8 +934,12 @@ function FinancialView() {
 }
 
 function WeeklyReportView() {
+  const dd = useDd();
+  const dash = useDash();
+  const dailyData = dash.dailyData;
   return (
     <div className="space-y-5">
+      <SampleBadge />
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         {(dd("weeklyReport").stats ?? []).map((s) => (
           <StatCard key={s.label} label={s.label} value={s.value} trend={s.up !== undefined ? { value: s.sub ?? "", up: s.up } : undefined} sub={s.up === undefined ? s.sub : undefined} />
@@ -940,8 +1015,12 @@ const highlightIcons: Record<string, React.ReactNode> = {
 };
 
 function MonthlyInsightsView() {
+  const dd = useDd();
+  const dash = useDash();
+  const monthlyTrend = dash.monthlyTrend;
   return (
     <div className="space-y-5">
+      <SampleBadge />
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         {(dd("monthlyInsights").stats ?? []).map((s) => (
           <StatCard key={s.label} label={s.label} value={s.value} trend={s.up !== undefined ? { value: s.sub ?? "", up: s.up } : undefined} sub={s.up === undefined ? s.sub : undefined} />
@@ -995,8 +1074,12 @@ function MonthlyInsightsView() {
 }
 
 function QuarterlyAnalysisView() {
+  const dd = useDd();
+  const dash = useDash();
+  const quarterlyData = dash.quarterlyData;
   return (
     <div className="space-y-5">
+      <SampleBadge />
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         {(dd("quarterlyAnalysis").stats ?? []).map((s) => (
           <StatCard key={s.label} label={s.label} value={s.value} trend={s.up !== undefined ? { value: s.sub ?? "", up: s.up } : undefined} sub={s.up === undefined ? s.sub : undefined} />
@@ -1060,8 +1143,13 @@ function QuarterlyAnalysisView() {
 }
 
 function PerformanceMetricsView() {
+  const dd = useDd();
+  const dash = useDash();
+  const performanceMetrics = dash.performanceMetrics;
+  const performerData = dash.performerData;
   return (
     <div className="space-y-5">
+      <SampleBadge />
       <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
         {(dd("performanceMetrics").stats ?? []).map((s) => (
           <StatCard key={s.label} label={s.label} value={s.value} trend={s.up !== undefined ? { value: s.sub ?? "", up: s.up } : undefined} sub={s.up === undefined ? s.sub : undefined} />
@@ -1124,8 +1212,13 @@ function PerformanceMetricsView() {
 }
 
 function PredictiveAnalyticsView() {
+  const dd = useDd();
+  const dash = useDash();
+  const forecastData = dash.forecastData;
+  const riskItems = dash.riskItems;
   return (
     <div className="space-y-5">
+      <SampleBadge />
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         {(dd("predictive").stats ?? []).map((s) => (
           <StatCard key={s.label} label={s.label} value={s.value} trend={s.up !== undefined ? { value: s.sub ?? "", up: s.up } : undefined} sub={s.up === undefined ? s.sub : undefined} />
@@ -1219,6 +1312,9 @@ function FocusedView({ title, subtitle, stats, children, sampleData }: {
 
 // ── Executive sub-views ───────────────────────────────────────────────────────
 function ExecRevenueView() {
+  const dd = useDd();
+  const dash = useDash();
+  const revenueData = dash.revenueData;
   return (
     <FocusedView sampleData title="Revenue Overview" subtitle="Monthly actuals vs targets (USD k)"
       stats={dd("execRevenue").stats ?? []}>
@@ -1233,9 +1329,10 @@ function ExecRevenueView() {
 }
 
 function ExecKpisView() {
+  const dd = useDd();
   const kpis = dd("execKpis").kpis ?? [];
   return (
-    <FocusedView title="Key Performance Indicators" subtitle="vs targets"
+    <FocusedView sampleData title="Key Performance Indicators" subtitle="vs targets"
       stats={dd("execKpis").stats ?? []}>
       <Card>
         <SectionHeader title="KPI Dashboard" sub="Current performance vs targets" />
@@ -1246,7 +1343,7 @@ function ExecKpisView() {
                 <span className="text-neutral-300 text-[12px]">{k.name}</span>
                 <span className="text-neutral-400 text-[12px]">{k.value}% <span className="text-neutral-600">/ {k.target}%</span></span>
               </div>
-              <ProgressBar value={(k.value / k.target) * 100} color={k.color} />
+              <ProgressBar value={pct(k.value, k.target)} color={k.color} />
             </div>
           ))}
         </div>
@@ -1256,10 +1353,11 @@ function ExecKpisView() {
 }
 
 function ExecGoalsView() {
+  const dd = useDd();
   const goals = dd("execGoals").goals ?? [];
-  const c = (s: string) => s === "ahead" ? "#818cf8" : s === "on-track" ? "#10b981" : "#f59e0b";
+  const c = (s: string) => s === "ahead" ? "#818cf8" : s === "on-track" ? "#10b981" : s === "at-risk" ? "#f59e0b" : "#525252";
   return (
-    <FocusedView title="Strategic Goals Progress" subtitle="2026 initiatives"
+    <FocusedView sampleData title="Strategic Goals Progress" subtitle="2026 initiatives"
       stats={dd("execGoals").stats ?? []}>
       <Card>
         <SectionHeader title="Goal Tracker" sub="Progress and status" />
@@ -1286,9 +1384,10 @@ function ExecGoalsView() {
 }
 
 function ExecDepartmentsView() {
+  const dd = useDd();
   const depts = dd("execDepartments").depts ?? [];
   return (
-    <FocusedView title="Department Highlights" subtitle="Month-over-month performance"
+    <FocusedView sampleData title="Department Highlights" subtitle="Month-over-month performance"
       stats={dd("execDepartments").stats ?? []}>
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
         {depts.map((d) => (
@@ -1311,6 +1410,7 @@ function ExecDepartmentsView() {
 
 // ── Operations sub-views ──────────────────────────────────────────────────────
 function OpsTimelineView() {
+  const dd = useDd();
   const projects = dd("opsTimeline").projects ?? [];
   const sc = (s: string) => ({ "in-progress": "#f59e0b", "completed": "#10b981", "planning": "#818cf8", "review": "#3b82f6" }[s] ?? "#525252");
   return (
@@ -1337,6 +1437,7 @@ function OpsTimelineView() {
 }
 
 function OpsResourcesView() {
+  const dd = useDd();
   const resources = dd("opsResources").resources ?? [];
   return (
     <FocusedView title="Resource Allocation" subtitle="Team utilization rates"
@@ -1367,6 +1468,7 @@ function OpsResourcesView() {
 }
 
 function OpsPerformanceView() {
+  const dd = useDd();
   return (
     <FocusedView title="Team Performance" subtitle="Cross-team completion metrics"
       stats={dd("opsPerformance").stats ?? []}>
@@ -1377,7 +1479,7 @@ function OpsPerformanceView() {
             {(dd("opsPerformance").scorecard ?? []).map((t) => (
               <div key={t.team} className="flex items-center gap-3">
                 <span className="text-neutral-400 text-[12px] w-24 shrink-0">{t.team}</span>
-                <div className="flex-1"><ProgressBar value={(t.done / t.total) * 100} color={t.color} /></div>
+                <div className="flex-1"><ProgressBar value={pct(t.done, t.total)} color={t.color} /></div>
                 <span className="text-neutral-300 text-[12px] w-14 text-right shrink-0">{t.done}/{t.total}</span>
               </div>
             ))}
@@ -1396,6 +1498,7 @@ function OpsPerformanceView() {
 }
 
 function OpsCapacityView() {
+  const dd = useDd();
   return (
     <FocusedView title="Capacity Planning" subtitle="Team bandwidth forecast"
       stats={dd("opsCapacity").stats ?? []}>
@@ -1423,6 +1526,9 @@ function OpsCapacityView() {
 
 // ── Financial sub-views ───────────────────────────────────────────────────────
 function FinBudgetView() {
+  const dd = useDd();
+  const dash = useDash();
+  const budgetData = dash.budgetData;
   const data = budgetData;
   return (
     <FocusedView sampleData title="Budget vs Actual" subtitle="Q2 2026 departmental spend (USD k)"
@@ -1456,6 +1562,9 @@ function FinBudgetView() {
 }
 
 function FinCashflowView() {
+  const dd = useDd();
+  const dash = useDash();
+  const cashFlowData = dash.cashFlowData;
   const data = cashFlowData;
   return (
     <FocusedView sampleData title="Cash Flow Analysis" subtitle="Monthly inflow vs outflow (USD k)"
@@ -1477,6 +1586,9 @@ function FinCashflowView() {
 }
 
 function FinExpenseView() {
+  const dd = useDd();
+  const dash = useDash();
+  const expenseBreakdown = dash.expenseBreakdown;
   const breakdown = expenseBreakdown;
   return (
     <FocusedView sampleData title="Expense Breakdown" subtitle="By department — Q2 2026"
@@ -1507,6 +1619,7 @@ function FinExpenseView() {
 }
 
 function FinPLView() {
+  const dd = useDd();
   const rows = dd("finPL").rows ?? [];
   return (
     <FocusedView sampleData title="Profit & Loss Summary" subtitle="Q2 2026"
@@ -1528,6 +1641,9 @@ function FinPLView() {
 
 // ── Weekly sub-views ──────────────────────────────────────────────────────────
 function WeeklyProductivityView() {
+  const dd = useDd();
+  const dash = useDash();
+  const dailyData = dash.dailyData;
   return (
     <FocusedView title="Team Productivity" subtitle="Week of Jun 8–12, 2026"
       stats={dd("weeklyProductivity").stats ?? []}>
@@ -1546,6 +1662,7 @@ function WeeklyProductivityView() {
 }
 
 function WeeklyCompletionView() {
+  const dd = useDd();
   const projects = dd("weeklyCompletion").projects ?? [];
   return (
     <FocusedView title="Project Completion" subtitle="Week of Jun 8–12"
@@ -1572,6 +1689,7 @@ function WeeklyCompletionView() {
 }
 
 function WeeklyBudgetView() {
+  const dd = useDd();
   return (
     <FocusedView sampleData title="Budget Utilization" subtitle="Week of Jun 8–12"
       stats={dd("weeklyBudget").stats ?? []}>
@@ -1598,6 +1716,7 @@ function WeeklyBudgetView() {
 }
 
 function WeeklySatisfactionView() {
+  const dd = useDd();
   return (
     <FocusedView sampleData title="Client Satisfaction" subtitle="Week of Jun 8–12"
       stats={dd("weeklySatisfaction").stats ?? []}>
@@ -1624,6 +1743,7 @@ function WeeklySatisfactionView() {
 
 // ── Monthly sub-views ─────────────────────────────────────────────────────────
 function MonthlyRevenueView() {
+  const dd = useDd();
   return (
     <FocusedView sampleData title="Revenue Growth" subtitle="June 2026 analysis"
       stats={dd("monthlyRevenue").stats ?? []}>
@@ -1649,6 +1769,7 @@ function MonthlyRevenueView() {
 }
 
 function MonthlyClientsView() {
+  const dd = useDd();
   return (
     <FocusedView sampleData title="New Clients" subtitle="June 2026 acquisition"
       stats={dd("monthlyClients").stats ?? []}>
@@ -1674,6 +1795,7 @@ function MonthlyClientsView() {
 }
 
 function MonthlyExpansionView() {
+  const dd = useDd();
   return (
     <FocusedView title="Team Expansion" subtitle="Headcount growth — June 2026"
       stats={dd("monthlyExpansion").stats ?? []}>
@@ -1692,6 +1814,7 @@ function MonthlyExpansionView() {
 }
 
 function MonthlyCostView() {
+  const dd = useDd();
   return (
     <FocusedView sampleData title="Cost Reduction" subtitle="Savings initiatives — June 2026"
       stats={dd("monthlyCost").stats ?? []}>
@@ -1716,6 +1839,7 @@ function MonthlyCostView() {
 
 // ── Quarterly sub-views ───────────────────────────────────────────────────────
 function QuarterlyMarketView() {
+  const dd = useDd();
   return (
     <FocusedView sampleData title="Market Position" subtitle="Q2 2026 competitive landscape"
       stats={dd("quarterlyMarket").stats ?? []}>
@@ -1740,6 +1864,7 @@ function QuarterlyMarketView() {
 }
 
 function QuarterlyROIView() {
+  const dd = useDd();
   return (
     <FocusedView sampleData title="Return on Investment" subtitle="Q2 2026 ROI analysis"
       stats={dd("quarterlyROI").stats ?? []}>
@@ -1758,6 +1883,7 @@ function QuarterlyROIView() {
 }
 
 function QuarterlyRetentionView() {
+  const dd = useDd();
   const churnReasons = dd("quarterlyRetention").churnReasons ?? [];
   return (
     <FocusedView sampleData title="Customer Retention" subtitle="Q2 2026 cohort analysis"
@@ -1783,6 +1909,7 @@ function QuarterlyRetentionView() {
 }
 
 function QuarterlyInnovationView() {
+  const dd = useDd();
   return (
     <FocusedView sampleData title="Innovation Index" subtitle="Q2 2026 R&D and product metrics"
       stats={dd("quarterlyInnovation").stats ?? []}>
@@ -1810,6 +1937,7 @@ function QuarterlyInnovationView() {
 
 // ── Performance Metrics sub-views ─────────────────────────────────────────────
 function PerfSalesView() {
+  const dd = useDd();
   return (
     <FocusedView sampleData title="Sales Conversion" subtitle="Funnel analysis — June 2026"
       stats={dd("perfSales").stats ?? []}>
@@ -1834,6 +1962,7 @@ function PerfSalesView() {
 }
 
 function PerfResponseView() {
+  const dd = useDd();
   return (
     <FocusedView sampleData title="Lead Response Time" subtitle="Speed-to-lead metrics"
       stats={dd("perfResponse").stats ?? []}>
@@ -1860,6 +1989,7 @@ function PerfResponseView() {
 }
 
 function PerfCLVView() {
+  const dd = useDd();
   return (
     <FocusedView sampleData title="Customer Lifetime Value" subtitle="CLV analysis by cohort"
       stats={dd("perfCLV").stats ?? []}>
@@ -1876,6 +2006,7 @@ function PerfCLVView() {
 }
 
 function PerfChurnView() {
+  const dd = useDd();
   return (
     <FocusedView sampleData title="Churn Rate" subtitle="Customer churn analysis"
       stats={dd("perfChurn").stats ?? []}>
@@ -1905,6 +2036,7 @@ function PerfChurnView() {
 
 // ── Predictive Analytics sub-views ────────────────────────────────────────────
 function PredForecastView() {
+  const dd = useDd();
   return (
     <FocusedView sampleData title="Q4 Revenue Forecast" subtitle="Oct–Dec 2026 projection"
       stats={dd("predForecast").stats ?? []}>
@@ -1932,6 +2064,7 @@ function PredForecastView() {
 }
 
 function PredResourcesView() {
+  const dd = useDd();
   return (
     <FocusedView title="Resource Demand" subtitle="Workforce demand forecast — H2 2026"
       stats={dd("predResources").stats ?? []}>
@@ -1958,6 +2091,7 @@ function PredResourcesView() {
 }
 
 function PredTrendsView() {
+  const dd = useDd();
   return (
     <FocusedView title="Market Trends" subtitle="Industry signals — H2 2026"
       stats={dd("predTrends").stats ?? []}>
@@ -1981,6 +2115,7 @@ function PredTrendsView() {
 }
 
 function PredRisksView() {
+  const dd = useDd();
   const risks = dd("predRisks").risks ?? [];
   return (
     <FocusedView title="Risk Assessment" subtitle="Identified risks by severity"
@@ -2036,39 +2171,70 @@ const subSectionMap: Record<string, DashView> = {
   "pred-trends": "pred-trends", "pred-risks": "pred-risks",
 };
 
-// ── Compute all module-level dashboard variables from real API data ─────────────
-// Replaces the removed getFinancial, getDashboardOps, getDashboardDetails calls.
-// Called after tasks, projects, and teams are all loaded.
+// ── Derive all per-workspace dashboard data from real API data ───────────────────
+// Pure function returning fresh state (no module globals, no mutation), so one
+// workspace can never leak chart data into another.
 function computeDerivedMetrics(
   tasks: api.Task[],
   projects: api.Project[],
   teams: api.Team[],
-) {
+  loadedWeekly: WeeklyBucket[] | null,
+  loadedPerformers: PerformerBucket[] | null,
+): DashboardData | null {
+  if (!tasks || !projects || !teams) return null;
   const now = new Date();
   const completedTasks = tasks.filter((t) => t.completed || t.status === "completed");
   const activeTasks = tasks.filter((t) => t.status !== "completed");
 
-  // ── weeklyData: completed vs created per week (last 8 weeks) ────────────────
-  const weekBuckets: { completed: number; created: number }[] = Array.from({ length: 8 }, (_, i) => ({
+  // ── weeklyData: tasks bucketed by real ISO date into last-8-week buckets ────
+  // Single O(n) pass: parse due strictly as ISO; undated/unparseable tasks are
+  // skipped (never faked via indexOf % 8).
+  const weekBuckets: { completed: number; created: number }[] = Array.from({ length: 8 }, () => ({
     completed: 0, created: 0,
   }));
-  tasks.forEach((t) => {
-    const idx = tasks.indexOf(t) % 8;
+  const startOfWeek = (d: Date) => {
+    const c = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+    c.setDate(c.getDate() - c.getDay());
+    return c.getTime();
+  };
+  const currentWeekStart = startOfWeek(now);
+  const WEEK_MS = 7 * 86400000;
+  let datedTasks = 0;
+  for (const t of tasks) {
+    const d = parseISODate(t.due);
+    if (!d) continue;
+    datedTasks++;
+    const bucket = Math.floor((currentWeekStart - startOfWeek(d)) / WEEK_MS);
+    if (bucket < 0 || bucket > 7) continue;
+    const idx = 7 - bucket;
     weekBuckets[idx].created++;
     if (t.completed || t.status === "completed") weekBuckets[idx].completed++;
-  });
-  weeklyData = weekBuckets.map((v, i) => ({ week: `W${i + 1}`, ...v }));
+  }
+  if (datedTasks === 0 && loadedWeekly && loadedWeekly.length === 8) {
+    // No ISO dates anywhere: reuse the task-count overview series as-is.
+    loadedWeekly.forEach((w, i) => {
+      if (weekBuckets[i]) { weekBuckets[i].created = w.created; weekBuckets[i].completed = w.completed; }
+    });
+  }
+  const weeklyData = weekBuckets.map((v, i) => ({ week: `W${i + 1}`, ...v }));
 
   // ── teamData: tasks per team ─────────────────────────────────────────────────
-  teamData = teams.map((t) => ({
-    name: t.name.split(" ")[0].slice(0, 8),
-    tasks: t.members.reduce((a, m) => a + m.tasks, 0),
-    done: Math.round(t.members.reduce((a, m) => a + m.tasks, 0) * 0.6),
-  }));
+  // `done` is derived from the real workspace completion ratio
+  // (completed tasks / total tasks), prorated onto each team — never a
+  // fabricated constant.
+  const completionRatio = tasks.length > 0 ? completedTasks.length / tasks.length : 0;
+  const teamData: TeamBucket[] = teams.map((t) => {
+    const total = t.members.reduce((a, m) => a + m.tasks, 0);
+    return {
+      name: t.name.split(" ")[0].slice(0, 8),
+      tasks: total,
+      done: total > 0 ? Math.round(completionRatio * total) : 0,
+    };
+  });
 
   // ── revenueData: task completion velocity per month (PM proxy for revenue) ──
   const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun"];
-  revenueData = months.map((month, i) => {
+  const revenueData = months.map((month, i) => {
     const baseline = Math.round(50 + i * 8 + completedTasks.length * 0.5);
     return { month, revenue: baseline, target: baseline + 10 };
   });
@@ -2077,7 +2243,7 @@ function computeDerivedMetrics(
   const projStatusCounts: Record<string, number> = {};
   projects.forEach((p) => { projStatusCounts[p.status] = (projStatusCounts[p.status] ?? 0) + 1; });
   const totalProjects = projects.length || 1;
-  kpiData = [
+  const kpiData = [
     { name: "On-Time", value: Math.round((projStatusCounts["completed"] ?? 0) / totalProjects * 100), target: 85, color: "#10b981" },
     { name: "Velocity", value: Math.round(completedTasks.length / Math.max(tasks.length, 1) * 100), target: 80, color: "#818cf8" },
     { name: "Quality", value: Math.round(85 + (projStatusCounts["review"] ?? 0) * 2), target: 90, color: "#3b82f6" },
@@ -2085,7 +2251,7 @@ function computeDerivedMetrics(
   ];
 
   // ── strategicGoals: map active projects as goals ────────────────────────────
-  strategicGoals = projects.slice(0, 5).map((p) => ({
+  const strategicGoals: StrategicGoal[] = projects.slice(0, 5).map((p) => ({
     goal: p.name,
     progress: p.progress,
     status: p.status === "completed" ? "ahead" : p.progress > 60 ? "on-track" : "at-risk",
@@ -2093,7 +2259,7 @@ function computeDerivedMetrics(
   }));
 
   // ── deptHighlights: derived from teams ─────────────────────────────────────
-  deptHighlights = teams.slice(0, 4).map((t, i) => ({
+  const deptHighlights: DeptHighlight[] = teams.slice(0, 4).map((t, i) => ({
     dept: t.name,
     metric: `${t.members.length} members`,
     sub: `${Math.round(t.members.reduce((a, m) => a + m.tasks, 0))} tasks`,
@@ -2101,8 +2267,7 @@ function computeDerivedMetrics(
   }));
 
   // ── projectTimeline: relative progress from projects ───────────────────────
-  const maxProgress = Math.max(...projects.map((p) => p.progress), 1);
-  projectTimeline = projects.map((p) => ({
+  const projectTimeline: TimelineBucket[] = projects.map((p) => ({
     project: p.name,
     start: 0,
     duration: Math.max(p.progress, 5),
@@ -2110,29 +2275,30 @@ function computeDerivedMetrics(
   }));
 
   // ── resourceData: team allocation from teams ────────────────────────────────
-  resourceData = teams.map((t) => {
+  const resourceData: ResourceBucket[] = teams.map((t) => {
     const totalTasks = t.members.reduce((a, m) => a + m.tasks, 0);
     return { team: t.name.split(" ")[0], allocated: Math.min(95, 50 + totalTasks * 3), available: Math.max(5, 100 - 50 - totalTasks * 3) };
   });
 
   // ── capacityData: weekly utilization estimate ───────────────────────────────
   const capacityTotal = teams.reduce((a, t) => a + t.members.reduce((b, m) => b + m.tasks, 0), 0);
-  capacityData = weeklyData.map((w, i) => ({
+  const capacityBase = capacityTotal * 0.3;
+  const capacityData: CapacityBucket[] = weeklyData.map((w, i) => ({
     week: w.week,
-    capacity: Math.round(capacityTotal * 0.3 * (1 + i * 0.05)),
-    utilization: w.completed > 0 ? Math.min(98, Math.round((w.completed / (capacityTotal * 0.3)) * 100)) : 0,
+    capacity: Math.round(capacityBase * (1 + i * 0.05)),
+    utilization: w.completed > 0 && capacityBase > 0 ? Math.min(98, Math.round((w.completed / capacityBase) * 100)) : 0,
   }));
 
   // ── budgetData: team-size-proxy budget allocation ───────────────────────────
   const totalMembers = teams.reduce((a, t) => a + t.members.length, 0) || 1;
-  budgetData = teams.slice(0, 5).map((t, i) => {
+  const budgetData: BudgetBucket[] = teams.slice(0, 5).map((t, i) => {
     const budget = Math.round(100 + totalMembers * 8 + i * 15);
     return { category: t.name.split(" ")[0], budget, actual: Math.round(budget * (0.75 + (i % 3) * 0.1)) };
   });
 
   // ── cashFlowData: task inflow/outflow proxy ─────────────────────────────────
   const activeCount = activeTasks.length || 1;
-  cashFlowData = months.map((month, i) => ({
+  const cashFlowData: CashFlowBucket[] = months.map((month, i) => ({
     month,
     inflow: Math.round(20 + completedTasks.length * (i + 1) * 0.3),
     outflow: Math.round(15 + activeCount * (i + 1) * 0.2),
@@ -2145,40 +2311,53 @@ function computeDerivedMetrics(
     value: Math.round(100 / (teams.length || 1)),
     color: effortColors[i % effortColors.length],
   }));
-  expenseBreakdown = effortByTeam.length > 0 ? effortByTeam : [
+  const expenseBreakdown: ExpenseSlice[] = effortByTeam.length > 0 ? effortByTeam : [
     { name: "Engineering", value: 40, color: "#818cf8" },
     { name: "Design", value: 25, color: "#10b981" },
     { name: "Product", value: 20, color: "#f59e0b" },
     { name: "QA", value: 15, color: "#3b82f6" },
   ];
 
-  // ── quarterlyData: task completion per quarter ──────────────────────────────
-  const q1Done = completedTasks.filter((_, i) => i % 4 < 2).length;
-  const q2Done = completedTasks.filter((_, i) => i % 4 >= 2).length;
-  quarterlyData = [
+  // ── quarterlyData: task completion per quarter (real ISO due dates) ─────────
+  // Single O(n) pass: undated/unparseable tasks are excluded, never faked by index.
+  let q1Done = 0, q2Done = 0;
+  for (const t of completedTasks) {
+    const d = parseISODate(t.due);
+    if (!d) continue;
+    const q = Math.floor(d.getMonth() / 3);
+    if (q <= 1) q1Done++;
+    else q2Done++;
+  }
+  const quarterlyData: QuarterlyBucket[] = [
     { quarter: "Q1", revenue: q1Done * 12, expenses: q1Done * 7, profit: q1Done * 5 },
     { quarter: "Q2", revenue: q2Done * 14, expenses: q2Done * 8, profit: q2Done * 6 },
   ];
 
-  // ── dailyData: tasks by day of week ─────────────────────────────────────────
+  // ── dailyData: tasks by real ISO due-date weekday ────────────────────────────
+  // Single O(n) pass; undated/unparseable tasks are excluded, never sliced by index.
   const days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
-  const dayBucketSize = Math.max(1, Math.ceil(tasks.length / 7));
-  dailyData = days.map((day, i) => {
-    const tasksOnDay = tasks.slice(i * dayBucketSize, (i + 1) * dayBucketSize);
-    return { day, tasks: tasksOnDay.length, hours: tasksOnDay.length * 2, bugs: 0 };
+  const dayCounts = [0, 0, 0, 0, 0, 0, 0];
+  for (const t of tasks) {
+    const d = parseISODate(t.due);
+    if (!d) continue;
+    dayCounts[(d.getDay() + 6) % 7]++;
+  }
+  const dailyData: DailyBucket[] = days.map((day, i) => {
+    const n = dayCounts[i];
+    return { day, tasks: n, hours: n * 2, bugs: 0 };
   });
 
   // ── monthlyTrend: delivery velocity by month ────────────────────────────────
-  monthlyTrend = months.map((month, i) => ({
+  const monthlyTrend: MonthlyBucket[] = months.map((month, i) => ({
     month,
     delivered: Math.round(completedTasks.length / 6 * (1 + i * 0.1)),
     planned: Math.round(tasks.length / 6),
-    velocity: Math.round(70 + (i * 5) + (completedTasks.length / tasks.length) * 30),
+    velocity: tasks.length > 0 ? Math.round(70 + (i * 5) + (completedTasks.length / tasks.length) * 30) : Math.round(70 + i * 5),
   }));
 
   // ── performanceMetrics: engineering metrics from task data ─────────────────
   const completionRate = tasks.length > 0 ? Math.round((completedTasks.length / tasks.length) * 100) : 0;
-  performanceMetrics = [
+  const performanceMetrics: PerfMetric[] = [
     { metric: "Completion Rate", value: `${completionRate}%`, change: `${completionRate > 70 ? "+" : "-"}${Math.abs(completionRate - 70)}%`, up: completionRate > 70 },
     { metric: "Velocity", value: `${Math.round(completedTasks.length / Math.max(teams.length, 1))}`, change: "+12%", up: true },
     { metric: "Quality Score", value: "87%", change: "+3%", up: true },
@@ -2187,7 +2366,7 @@ function computeDerivedMetrics(
 
   // ── forecastData: predicted completion based on velocity ───────────────────
   const avgVelocity = completedTasks.length / 6;
-  forecastData = months.slice(3).map((month, i) => ({
+  const forecastData: ForecastBucket[] = months.slice(3).map((month, i) => ({
     month,
     actual: null,
     forecast: Math.round((completedTasks.length + avgVelocity * (i + 1))),
@@ -2196,9 +2375,9 @@ function computeDerivedMetrics(
   }));
 
   // ── riskItems: at-risk / overdue tasks ──────────────────────────────────────
-  const overdueTasks = tasks.filter((t) => t.status !== "completed" && new Date(t.due) < now);
+  const overdueTasks = tasks.filter((t) => isOverdueISO(t.due, now, t.status));
   const riskColors = ["#ef4444", "#f59e0b", "#f59e0b"];
-  riskItems = overdueTasks.slice(0, 5).map((t, i) => ({
+  let riskItems: RiskBucket[] = overdueTasks.slice(0, 5).map((t, i) => ({
     risk: `Overdue task: ${t.title}`,
     likelihood: ["High", "Medium", "Medium"][i % 3],
     impact: ["High", "Medium", "Low"][i % 3],
@@ -2210,8 +2389,32 @@ function computeDerivedMetrics(
     ];
   }
 
-  // ── dashDetails: full detail sub-view data ──────────────────────────────────
-  dashDetails = buildDashDetails(tasks, projects, teams);
+  // ── details: full detail sub-view data ────────────────────────────────────────
+  const details = buildDashDetails(tasks, projects, teams, weeklyData, forecastData, riskItems);
+
+  return {
+    weeklyData, teamData, revenueData, kpiData, strategicGoals, deptHighlights,
+    projectTimeline, resourceData, capacityData, budgetData, cashFlowData,
+    expenseBreakdown, dailyData, monthlyTrend, quarterlyData,
+    performerData: loadedPerformers ?? buildPerformerData(tasks),
+    performanceMetrics, forecastData, riskItems, details,
+  };
+}
+
+// Per-assignee completion scorecard, derived from real tasks (div-by-zero safe).
+function buildPerformerData(tasks: api.Task[]): PerformerBucket[] {
+  const assigneeCounts: Record<string, { tasks: number; done: number }> = {};
+  tasks.forEach((t) => {
+    if (!assigneeCounts[t.assignee]) assigneeCounts[t.assignee] = { tasks: 0, done: 0 };
+    assigneeCounts[t.assignee].tasks++;
+    if (t.completed || t.status === "completed") assigneeCounts[t.assignee].done++;
+  });
+  return Object.entries(assigneeCounts).slice(0, 5).map(([name, v]) => ({
+    name,
+    tasks: v.tasks,
+    rate: Math.round(pct(v.done, v.tasks)),
+    score: v.tasks > 0 ? Math.round(pct(v.done, v.tasks) * 0.7 + 30) : 70,
+  }));
 }
 
 // ── Build complete dashDetails object from real data ─────────────────────────
@@ -2219,12 +2422,17 @@ function buildDashDetails(
   tasks: api.Task[],
   projects: api.Project[],
   teams: api.Team[],
+  weeklyData: WeeklyBucket[],
+  forecastData: ForecastBucket[],
+  riskItems: RiskBucket[],
 ): Partial<api.DashboardDetails> {
   const now = new Date();
   const completed = tasks.filter((t) => t.completed || t.status === "completed");
   const active = tasks.filter((t) => t.status !== "completed");
-  const overdue = active.filter((t) => new Date(t.due) < now);
+  const overdue = active.filter((t) => isOverdueISO(t.due, now, t.status));
   const completionRate = tasks.length > 0 ? Math.round((completed.length / tasks.length) * 100) : 0;
+  // Real workspace completion ratio, prorated onto per-team scorecards below.
+  const completionRatio = tasks.length > 0 ? completed.length / tasks.length : 0;
   const onTimeRate = completed.length > 0 ? Math.round(((completed.length - overdue.length) / completed.length) * 100) : 0;
   const totalMembers = teams.reduce((a, t) => a + t.members.length, 0);
 
@@ -2237,7 +2445,6 @@ function buildDashDetails(
   });
 
   const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun"];
-  const getGrowth = (i: number) => `+${8 + i * 2}%`;
 
   return {
     executiveSummary: {
@@ -2276,7 +2483,7 @@ function buildDashDetails(
         { label: "Active Goals", value: String(projects.length), sub: "Q2 2026", up: true },
         { label: "On Track", value: String(projects.filter((p) => p.progress > 60).length), sub: "of total", up: true },
         { label: "Avg Progress", value: `${Math.round(projects.reduce((a, p) => a + p.progress, 0) / Math.max(projects.length, 1))}%`, sub: "completion", up: true },
-        { label: "Due Soon", value: String(projects.filter((p) => new Date(p.due) < new Date(now.getTime() + 7 * 86400000)).length), sub: "next 7 days", up: false },
+        { label: "Due Soon", value: String(projects.filter((p) => { const d = parseISODate(p.due); return d !== null && d < new Date(now.getTime() + 7 * 86400000); }).length), sub: "next 7 days", up: false },
       ],
       goals: projects.slice(0, 5).map((p) => ({
         goal: p.name,
@@ -2315,7 +2522,7 @@ function buildDashDetails(
         { label: "Projects", value: String(projects.length), sub: "active", up: true },
         { label: "On Schedule", value: String(projects.filter((p) => p.progress > 50).length), sub: "ahead/behind", up: true },
         { label: "Avg Progress", value: `${Math.round(projects.reduce((a, p) => a + p.progress, 0) / Math.max(projects.length, 1))}%`, sub: "completion", up: true },
-        { label: "Due This Month", value: String(projects.filter((p) => new Date(p.due) <= new Date(now.getFullYear(), now.getMonth() + 1, 0)).length), sub: "deadline", up: true },
+        { label: "Due This Month", value: String(projects.filter((p) => { const d = parseISODate(p.due); return d !== null && d <= new Date(now.getFullYear(), now.getMonth() + 1, 0); }).length), sub: "deadline", up: true },
       ],
       projects: projects.map((p) => ({
         project: p.name,
@@ -2352,7 +2559,9 @@ function buildDashDetails(
       ],
       scorecard: teams.map((t, i) => {
         const total = t.members.reduce((a, m) => a + m.tasks, 0);
-        const done = Math.round(total * 0.6);
+        // Derive `done` from the real workspace completion ratio (completed
+        // tasks / total tasks) prorated onto each team.
+        const done = total > 0 ? Math.round(completionRatio * total) : 0;
         return { team: t.name.split(" ")[0], done, total, color: ["#818cf8", "#10b981", "#f59e0b", "#3b82f6"][i % 4] };
       }),
       sprintHistory: ["S1", "S2", "S3", "S4", "S5"].map((sprint, i) => ({
@@ -2797,6 +3006,48 @@ function buildDashDetails(
   } satisfies Partial<api.DashboardDetails>;
 }
 
+function DashboardSkeleton() {
+  return (
+    <div className="space-y-5 animate-pulse" aria-label="Loading dashboard">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 lg:gap-4">
+        {[0, 1, 2, 3].map((i) => (
+          <div key={i} className="bg-[#141414] border border-neutral-800/60 rounded-xl p-4 lg:p-5">
+            <div className="h-3 w-20 bg-neutral-800 rounded mb-3" />
+            <div className="h-7 w-16 bg-neutral-800 rounded mb-2" />
+            <div className="h-3 w-24 bg-neutral-800/70 rounded" />
+          </div>
+        ))}
+      </div>
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <div className="lg:col-span-2 bg-[#141414] border border-neutral-800/60 rounded-xl p-4 lg:p-5">
+          <div className="h-4 w-40 bg-neutral-800 rounded mb-4" />
+          <div className="h-40 bg-neutral-800/40 rounded" />
+        </div>
+        <div className="bg-[#141414] border border-neutral-800/60 rounded-xl p-4 lg:p-5">
+          <div className="h-4 w-32 bg-neutral-800 rounded mb-4" />
+          <div className="h-40 bg-neutral-800/40 rounded" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DashboardError({ message, onRetry }: { message: string; onRetry: () => void }) {
+  const { t } = useLang();
+  return (
+    <div className="flex flex-col items-center justify-center gap-3 py-16 text-center">
+      <div className="text-neutral-300 text-[14px] font-['Lexend:SemiBold',_sans-serif]">Couldn't load dashboard data</div>
+      <div className="text-neutral-500 text-[12px] max-w-sm">{message}</div>
+      <button
+        onClick={onRetry}
+        className="mt-1 bg-indigo-600 hover:bg-indigo-500 text-white text-[13px] px-4 py-2 rounded-lg transition-colors"
+      >
+        Retry
+      </button>
+    </div>
+  );
+}
+
 function OwnerDashboard() {
   const { navigate, subSection } = useNavigation();
   const [dashView, setDashView] = useState<DashView>("overview");
@@ -2805,8 +3056,11 @@ function OwnerDashboard() {
   const [taskStats, setTaskStats] = useState({ total: 0, completed: 0, inProgress: 0, members: 0 });
   const [todayEvents, setTodayEvents] = useState<{ title: string; tag: string; color?: string }[]>([]);
   const [teamChartData, setTeamChartData] = useState<{ name: string; tasks: number; done: number }[]>([]);
-  const [, forceUpdate] = useState(0); // trigger re-render after module vars populated
-  const [refreshKey, setRefreshKey] = useState(0); // bumped by realtime to reload all data
+  // Per-workspace derived chart/detail state (replaces the old module globals + forceUpdate).
+  const [dash, setDash] = useState<DashboardData>(emptyDashboardData);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [refreshKey, setRefreshKey] = useState(0); // bumped by realtime + retry to reload all data
   const { t } = useLang();
   const { activeWorkspace } = useWorkspace();
   useRealtimeWorkspace(activeWorkspace?.id ?? null, (table) => {
@@ -2867,101 +3121,72 @@ function OwnerDashboard() {
     const todayKey = `${today.getFullYear()}-${today.getMonth() + 1}-${today.getDate()}`;
     let cancelled = false;
 
-    // Track loaded data for derived computation — tasks feed both the
-    // overview cards and computeDerivedMetrics, so the promise result is
-    // stored for tryCompute instead of a fire-and-forget fetch.
-    let loadedTasks: api.Task[] | null = null;
-    let loadedProjects: api.Project[] | null = null;
-    let loadedTeams: api.Team[] | null = null;
+    setLoading(true);
+    setLoadError(null);
 
-    const tryCompute = () => {
-      if (loadedTasks && loadedProjects && loadedTeams && !cancelled) {
-        computeDerivedMetrics(loadedTasks, loadedProjects, loadedTeams);
-        // Fire-and-forget snapshot so the server copy of dashboard ops tracks
-        // the live workspace (free plans get 403 — page already renders).
-        api.saveDashboardOps({
-          projectTimeline,
-          resourceData,
-          capacityData,
-          dailyData,
-          monthlyTrend,
-          performanceMetrics,
-          riskItems,
-          forecastData,
-          deptHighlights,
-        }).catch(() => {});
-        forceUpdate((n) => n + 1);
-      }
-    };
+    // Fetch all sources in parallel so one slow/failed request can't leave the
+    // charts silently empty; failures surface via toast + retry instead of console only.
+    Promise.all([api.getTasks(), api.getTeams(), api.getProjects(), api.getCalendarEvents()])
+      .then(([tasks, teams, projects, events]) => {
+        if (cancelled) return;
+        const total = tasks.length;
+        const completed = tasks.filter((t) => t.completed || t.status === "completed").length;
+        const inProgress = tasks.filter((t) => t.status === "in-progress").length;
+        setTaskStats({ total, completed, inProgress, members: teams.reduce((acc, t) => acc + t.members.length, 0) });
+        const sorted = [...tasks].sort((a, b) => (a.completed ? 1 : 0) - (b.completed ? 1 : 0));
+        setRecentTasks(sorted.slice(0, 5).map((t) => ({ title: t.title, status: t.status, priority: t.priority, assignee: t.assignee, due: t.due })));
+        setTodayEvents(events[todayKey] ?? []);
 
-    // Core data
-    api.getTasks().then((tasks) => {
-      if (cancelled) return;
-      loadedTasks = tasks;
-      const total = tasks.length;
-      const completed = tasks.filter((t) => t.completed || t.status === "completed").length;
-      const inProgress = tasks.filter((t) => t.status === "in-progress").length;
-      setTaskStats((prev) => ({ ...prev, total, completed, inProgress }));
-      const sorted = [...tasks].sort((a, b) => (a.completed ? 1 : 0) - (b.completed ? 1 : 0));
-      setRecentTasks(sorted.slice(0, 5).map((t) => ({ title: t.title, status: t.status, priority: t.priority, assignee: t.assignee, due: t.due })));
+        // Overview weekly series: keep the overview chart live even before the
+        // full derived pass runs (counts only, no fake per-week spread).
+        const doneCount = tasks.filter((t) => t.completed || t.status === "completed").length;
+        const loadedWeekly: WeeklyBucket[] = Array.from({ length: 8 }, (_, i) => ({
+          week: `W${i + 1}`,
+          completed: i === 7 ? doneCount : 0,
+          created: i === 7 ? tasks.length : 0,
+        }));
 
-      // Build weekly chart from real tasks (round-robin into 8 buckets)
-      const weeks: Record<string, { completed: number; created: number }> = {};
-      for (let i = 7; i >= 0; i--) {
-        weeks[`W${8 - i}`] = { completed: 0, created: 0 };
-      }
-      tasks.forEach((t, idx) => {
-        const bucket = `W${((idx % 8) + 1)}`;
-        if (weeks[bucket]) {
-          weeks[bucket].created++;
-          if (t.completed || t.status === "completed") weeks[bucket].completed++;
+        const completionRatio = total > 0 ? completed / total : 0;
+        const chart = teams.map((t) => {
+          const totalTasks = t.members.reduce((acc, m) => acc + m.tasks, 0);
+          // Derived from the real workspace completion ratio — honest label,
+          // not a fabricated constant.
+          return { name: t.name.split(" ")[0].slice(0, 6), tasks: totalTasks, done: totalTasks > 0 ? Math.round(completionRatio * totalTasks) : 0 };
+        });
+        setTeamChartData(chart);
+
+        const loadedPerformers = buildPerformerData(tasks);
+
+        const derived = computeDerivedMetrics(tasks, projects, teams, loadedWeekly, loadedPerformers);
+        if (derived && !cancelled) {
+          setDash(derived);
+          // Fire-and-forget snapshot so the server copy of dashboard ops tracks
+          // the live workspace (free plans get 403 — page already renders).
+          api.saveDashboardOps({
+            projectTimeline: derived.projectTimeline,
+            resourceData: derived.resourceData,
+            capacityData: derived.capacityData,
+            dailyData: derived.dailyData,
+            monthlyTrend: derived.monthlyTrend,
+            performanceMetrics: derived.performanceMetrics,
+            riskItems: derived.riskItems,
+            forecastData: derived.forecastData,
+            deptHighlights: derived.deptHighlights,
+          }).catch(() => {});
         }
+        setLoading(false);
+      })
+      .catch((e) => {
+        if (cancelled) return;
+        const message = e instanceof Error ? e.message : String(e);
+        setLoadError(message);
+        setLoading(false);
+        toast.error("Couldn't load dashboard data", { description: message });
       });
-      weeklyData = Object.entries(weeks).map(([week, v]) => ({ week, ...v }));
-
-      // Build performer data from tasks
-      const assigneeCounts: Record<string, { tasks: number; done: number }> = {};
-      tasks.forEach((t) => {
-        if (!assigneeCounts[t.assignee]) assigneeCounts[t.assignee] = { tasks: 0, done: 0 };
-        assigneeCounts[t.assignee].tasks++;
-        if (t.completed || t.status === "completed") assigneeCounts[t.assignee].done++;
-      });
-      performerData = Object.entries(assigneeCounts).slice(0, 5).map(([name, v]) => ({
-        name,
-        tasks: v.tasks,
-        rate: v.tasks > 0 ? Math.round((v.done / v.tasks) * 100) : 0,
-        score: v.tasks > 0 ? Math.round(((v.done / v.tasks) * 0.7 + 0.3) * 100) : 70,
-      }));
-      tryCompute();
-    }).catch((e) => console.error("Dashboard failed to load tasks:", e));
-
-    api.getTeams().then((teams) => {
-      if (cancelled) return;
-      loadedTeams = teams;
-      const chart = teams.map((t) => {
-        const totalTasks = t.members.reduce((acc, m) => acc + m.tasks, 0);
-        return { name: t.name.split(" ")[0].slice(0, 6), tasks: totalTasks, done: Math.round(totalTasks * 0.6) };
-      });
-      setTeamChartData(chart);
-      teamData = chart;
-      setTaskStats((prev) => ({ ...prev, members: teams.reduce((acc, t) => acc + t.members.length, 0) }));
-      tryCompute();
-    }).catch((e) => console.error("Dashboard failed to load teams:", e));
-
-    api.getProjects().then((projects) => {
-      if (cancelled) return;
-      loadedProjects = projects;
-      tryCompute();
-    }).catch((e) => console.error("Dashboard failed to load projects:", e));
-
-    api.getCalendarEvents().then((events) => {
-      if (cancelled) return;
-      const todayEvts = events[todayKey] ?? [];
-      setTodayEvents(todayEvts);
-    }).catch((e) => console.error("Dashboard failed to load calendar:", e));
 
     return () => { cancelled = true; };
-  }, [refreshKey]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refreshKey, activeWorkspace?.id]);
 
   useEffect(() => {
     const mapped = subSectionMap[subSection];
@@ -2971,11 +3196,13 @@ function OwnerDashboard() {
   const handleAddTask = async (task: { title: string; priority: string; assignee: string; due: string; status: string; description?: string; project?: string; completed?: boolean }) => {
     try {
       await api.createTask({ title: task.title, description: task.description ?? "", status: task.status, priority: task.priority, assignee: task.assignee, project: task.project ?? "Internal", due: task.due, completed: false });
-    } catch (e) { console.error("Failed to create task:", e); }
+    } catch (e) { toast.error("Failed to create task", { description: e instanceof Error ? e.message : String(e) }); return; }
     setRecentTasks((prev) => [
       { title: task.title, status: task.status, priority: task.priority, assignee: task.assignee, due: task.due },
       ...prev.slice(0, 4),
     ]);
+    // Reload derived stats/charts so the new task is reflected everywhere.
+    setRefreshKey((k) => k + 1);
   };
 
   const navTabs: { view: DashView; label: string }[] = [
@@ -3025,6 +3252,12 @@ function OwnerDashboard() {
 
       {/* Content */}
       <div className="flex-1 overflow-y-auto px-4 md:px-6 lg:px-8 py-5 lg:py-7">
+        {loading ? (
+          <DashboardSkeleton />
+        ) : loadError ? (
+          <DashboardError message={loadError} onRetry={() => setRefreshKey((k) => k + 1)} />
+        ) : (
+        <DashboardDataContext.Provider value={dash}>
         {dashView === "overview" && <OverviewView recentTasks={recentTasks} onNavigate={navigate} showNewTask={() => setShowNewTask(true)} taskStats={taskStats} todayEvents={todayEvents} teamChartData={teamChartData} />}
         {dashView === "executive-summary" && <ExecutiveSummaryView />}
         {dashView === "exec-revenue" && <ExecRevenueView />}
@@ -3066,6 +3299,8 @@ function OwnerDashboard() {
         {dashView === "pred-resources" && <PredResourcesView />}
         {dashView === "pred-trends" && <PredTrendsView />}
         {dashView === "pred-risks" && <PredRisksView />}
+        </DashboardDataContext.Provider>
+        )}
       </div>
 
       <NewTaskModal open={showNewTask} onClose={() => setShowNewTask(false)} onAdd={handleAddTask} />
@@ -3078,6 +3313,13 @@ function OwnerDashboard() {
  * Owners see the full analytics dashboard; members see the task-centric MemberHome.
  */
 export function DashboardPage() {
-  const { isOwner } = useWorkspace();
+  const { isOwner, loading } = useWorkspace();
+  if (loading) {
+    return (
+      <div className="flex h-full items-center justify-center" aria-busy="true" aria-label="Loading workspace">
+        <DashboardSkeleton />
+      </div>
+    );
+  }
   return isOwner ? <OwnerDashboard /> : <MemberHome />;
 }

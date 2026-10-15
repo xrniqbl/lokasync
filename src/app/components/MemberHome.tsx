@@ -54,30 +54,42 @@ function SkeletonLoader() {
   );
 }
 
-function EmptyState({ message }: { message: string }) {
-  return (
-    <div className="flex items-center justify-center h-40 rounded-xl border border-neutral-800 bg-[#1a1a1a]/50">
-      <p className="text-neutral-600 text-xs">{message}</p>
-    </div>
-  );
-}
-
 export function MemberHome() {
   const { t } = useLang();
-  const { data, loading, error, refresh } = useMemberHome();
+  const { data, loading, refreshing, refresh } = useMemberHome();
 
   if (loading) return <SkeletonLoader />;
 
-  if (error || !data) {
+  // Full error only when there is nothing to show. A background-refresh
+  // failure keeps stale data on screen (the hook already toasted).
+  if (!data) {
     return (
-      <EmptyState
-        message={t ? t("sidebar.refreshToContinue") : "Unable to load workspace data."}
-      />
+      <div className="flex flex-col items-center justify-center h-40 gap-3 rounded-xl border border-neutral-800 bg-[#1a1a1a]/50">
+        <p className="text-neutral-600 text-xs">
+          {t ? t("sidebar.refreshToContinue") : "Unable to load workspace data."}
+        </p>
+        <button
+          onClick={refresh}
+          className="border border-neutral-800 hover:bg-neutral-800 text-neutral-300 text-[12px] px-4 py-1.5 rounded-lg transition-colors"
+        >
+          {t ? t("common.retry") : "Retry"}
+        </button>
+      </div>
     );
   }
 
   const ws = data.workspace;
-  const tasks = data.my_tasks;
+  // Defensive: the hook normalizes, but never crash on a partial payload.
+  const tasks = {
+    in_progress: data.my_tasks?.in_progress ?? [],
+    in_review: data.my_tasks?.in_review ?? [],
+    due_today: data.my_tasks?.due_today ?? [],
+    completed: data.my_tasks?.completed ?? [],
+  };
+  const todayEvents = data.today_events ?? [];
+  const projects = data.projects ?? [];
+  const mentions = data.mentions ?? [];
+  const teamActivity = data.team_activity ?? [];
 
   return (
     <div className="max-w-6xl space-y-7">
@@ -94,8 +106,11 @@ export function MemberHome() {
           <span className="text-neutral-200 text-xs font-['Lexend:SemiBold',_sans-serif]">
             {t("memberHome.quickActions")}
           </span>
+          {refreshing && (
+            <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-pulse" title={t("common.loading")} />
+          )}
         </div>
-        <QuickActionsGrid onRefresh={refresh} />
+        <QuickActionsGrid />
       </section>
 
       {/* Today panel — 2 column: left=TodayPanel, right=mentions+activity stacked */}
@@ -108,15 +123,15 @@ export function MemberHome() {
             </span>
           </div>
           <TodayPanel
-            events={data.today_events}
+            events={todayEvents}
             dueTasks={tasks.due_today}
           />
         </div>
 
         {/* Right column — mentions + activity stacked */}
         <div className="space-y-4">
-          <MentionsFeed mentions={data.mentions} />
-          <TeamActivityFeed items={data.team_activity} />
+          <MentionsFeed mentions={mentions} />
+          <TeamActivityFeed items={teamActivity} />
         </div>
       </div>
 
@@ -132,7 +147,7 @@ export function MemberHome() {
 
       {/* Projects — full width */}
       <section>
-        <ProjectsOverview projects={data.projects} />
+        <ProjectsOverview projects={projects} />
       </section>
     </div>
   );

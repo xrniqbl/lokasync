@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from "react";
-import { Link, useLocation, useNavigate } from "react-router";
+import { Link, useLocation, useNavigate, useSearchParams } from "react-router";
 import { AlertCircle } from "lucide-react";
 import {
   Alert,
@@ -18,8 +18,14 @@ export function LoginPage() {
   const { t } = useLang();
   const navigate = useNavigate();
   const location = useLocation();
-  const from = (location.state as { from?: { pathname: string } } | null)?.from
-    ?.pathname;
+  const [searchParams] = useSearchParams();
+  // Preserve deep links: location.state.from is a Location (pathname+search+hash);
+  // the api 401 redirect passes ?from=<encoded target> as a fallback.
+  const stateFrom = (location.state as { from?: { pathname: string; search?: string; hash?: string } } | null)?.from;
+  const from =
+    (stateFrom
+      ? `${stateFrom.pathname}${stateFrom.search ?? ""}${stateFrom.hash ?? ""}`
+      : null) ?? searchParams.get("from") ?? undefined;
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -32,20 +38,36 @@ export function LoginPage() {
     setError("");
     setUnconfirmed(false);
     setSubmitting(true);
-    const { error: signInError } = await signInWithEmail(email, password);
-    setSubmitting(false);
+    try {
+      const { error: signInError } = await signInWithEmail(email, password);
 
-    if (signInError) {
-      if (/email not confirmed/i.test(signInError.message)) {
-        setUnconfirmed(true);
-      } else if (/invalid login credentials/i.test(signInError.message)) {
-        setError(t("auth.incorrectCredentials"));
-      } else {
-        setError(signInError.message);
+      if (signInError) {
+        // Prefer structured code/status; fall back to message matching for
+        // providers that only send human-readable errors.
+        const code = (signInError as { code?: string; status?: number }).code ?? "";
+        const status = (signInError as { status?: number }).status;
+        const msg = signInError.message ?? "";
+        if (
+          code === "email_not_confirmed" ||
+          status === 401 && /email not confirmed/i.test(msg) ||
+          /email not confirmed/i.test(msg)
+        ) {
+          setUnconfirmed(true);
+        } else if (
+          code === "invalid_credentials" ||
+          status === 400 && /invalid login credentials/i.test(msg) ||
+          /invalid login credentials/i.test(msg)
+        ) {
+          setError(t("auth.incorrectCredentials"));
+        } else {
+          setError(msg);
+        }
+        return;
       }
-      return;
+      navigate(from ?? "/app/dashboard", { replace: true });
+    } finally {
+      setSubmitting(false);
     }
-    navigate(from ?? "/app/dashboard", { replace: true });
   };
 
   return (

@@ -23,13 +23,19 @@ export function NotificationsHost() {
       return;
     }
     let cancelled = false;
-    getNotifications()
-      .then((items) => {
-        if (!cancelled) setUnread(items.filter((n) => !n.read));
-      })
-      .catch((e) => console.error("Failed to load notifications:", e));
+    const load = () => {
+      getNotifications()
+        .then((items) => {
+          if (!cancelled) setUnread(items.filter((n) => !n.read));
+        })
+        .catch((e) => console.error("Failed to load notifications:", e));
+    };
+    load();
+    // Poll every 60s so founder broadcasts arrive without a reload.
+    const interval = setInterval(load, 60_000);
     return () => {
       cancelled = true;
+      clearInterval(interval);
     };
   }, [user?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -71,6 +77,11 @@ export function NotificationsHost() {
           </button>
         </div>
       ))}
+      {unread.length > MAX_VISIBLE && (
+        <div className="flex items-center justify-center border-b border-indigo-500/20 bg-indigo-950/40 px-4 py-1.5 text-[11.5px] text-indigo-300/80">
+          +{unread.length - MAX_VISIBLE} more
+        </div>
+      )}
     </div>
   );
 }

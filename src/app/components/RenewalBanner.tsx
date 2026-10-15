@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Link } from "react-router";
 import { Clock, X } from "lucide-react";
 import { useSubscription } from "../subscription/SubscriptionContext";
+import { useWorkspace } from "../workspace/WorkspaceContext";
 
 const REMIND_DAYS = 7;
 
@@ -12,8 +13,11 @@ const REMIND_DAYS = 7;
  */
 export function RenewalBanner() {
   const { plan, subscription } = useSubscription();
+  const { isOwner } = useWorkspace();
   const [, forceRender] = useState(0);
 
+  // Members never manage billing — only owners see the renewal reminder.
+  if (!isOwner) return null;
   if (subscription?.status !== "active" || !subscription.current_period_end) {
     return null;
   }

@@ -3,8 +3,11 @@ import { PlanGate } from "./PlanGate";
 import { OwnerOnly } from "./OwnerOnly";
 import { Spinner } from "@/components/cossui/spinner";
 
-// In-app code splitting: each section loads on demand so switching tabs
-// never re-downloads the whole app. Dashboard stays eager (default view).
+// Access model:
+// - Teams = PlanGate(pro): any role may use it once the (personal or
+//   workspace-inherited) plan qualifies — inherited access is OK.
+// - Analytics = OwnerOnly + PlanGate: owners only, and still plan-gated.
+// - Billing = OwnerOnly: owners only (no plan requirement).
 import { DashboardPage } from "./DashboardPage";
 
 const TasksPage = lazy(() => import("./TasksPage").then((m) => ({ default: m.TasksPage })));

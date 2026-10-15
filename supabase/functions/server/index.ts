@@ -14,9 +14,15 @@ app.use('*', logger(console.log));
 app.use(
   "/*",
   cors({
-    origin: "*",
+    origin: (o) => {
+      const appUrl = (Deno.env.get("APP_URL") ?? "").trim();
+      const extra = (Deno.env.get("ALLOWED_ORIGINS") ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+      const allowed = [appUrl, ...extra].filter(Boolean);
+      if (!o || allowed.length === 0) return o;
+      return allowed.includes(o) ? o : allowed[0];
+    },
     allowHeaders: ["Content-Type", "Authorization", "X-Workspace-Id"],
-    allowMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     exposeHeaders: ["Content-Length"],
     maxAge: 600,
   }),
@@ -93,6 +99,9 @@ app.use("*", async (c, next) => {
   if (!scoped) return next();
   const user = await getAuthedUser(c);
   if (!user) return c.json({ error: "Unauthorized" }, 401);
+  if (!is2FAExempt(path) && needs2FA(user) && !(await is2FAVerified(user.id))) {
+    return c.json({ error: "Second factor required", code: "2fa_required" }, 403);
+  }
   const resolved = await ws.resolveWorkspace(
     c.req.header("X-Workspace-Id") ?? null,
     user,
@@ -111,6 +120,43 @@ app.use("*", async (c, next) => {
 
 // Workspace-scoped KV helpers — only usable inside workspace-gated routes.
 const wsKey = (c: any, key: string) => ws.wsDataKey(c.get("workspace").id, key);
+
+// ── Follow-up gate (authed-but-unscoped routes) ─────────────────────────────
+// The /workspaces*, /member-home and /leave-workspace handlers read
+// c.get("user") / c.get("workspace") / c.get("membership"), but those paths
+// are not in WORKSPACE_SCOPED_PREFIXES so the gate above never runs for them.
+// Resolve the same context here (401 when signed out, 403 when the workspace
+// can't be resolved) so those handlers never see undefined.
+const AUTHED_UNSCOPED_PREFIXES = ["/workspaces", "/member-home", "/leave-workspace"];
+
+app.use("*", async (c, next) => {
+  if (c.req.method === "OPTIONS") return next();
+  const path = c.req.path.replace(/^\/server/, "");
+  const needs = AUTHED_UNSCOPED_PREFIXES.some(
+    (p) => path === p || path.startsWith(p + "/"),
+  );
+  if (!needs) return next();
+  if (c.get("user") && c.get("workspace")) return next();
+  const user = await getAuthedUser(c);
+  if (!user) return c.json({ error: "Unauthorized" }, 401);
+  if (!is2FAExempt(path) && needs2FA(user) && !(await is2FAVerified(user.id))) {
+    return c.json({ error: "Second factor required", code: "2fa_required" }, 403);
+  }
+  const resolved = await ws.resolveWorkspace(
+    c.req.header("X-Workspace-Id") ?? null,
+    user,
+  );
+  if (!resolved) {
+    return c.json(
+      { error: "You are not a member of this workspace", code: "workspace_forbidden" },
+      403,
+    );
+  }
+  c.set("user", user);
+  c.set("workspace", resolved.workspace);
+  c.set("membership", resolved.membership);
+  return next();
+});
 
 const isOwner = (c: any) => c.get("membership")?.role === "owner";
 
@@ -182,23 +228,32 @@ async function broadcastAfterWrite(workspaceId: string, table: string) {
   try {
     const client = adminClient();
     const channel = client.channel(`workspace:${workspaceId}`);
-    await new Promise<void>((resolve) => {
-      channel.subscribe((status: string) => {
-        if (status === "SUBSCRIBED") {
-          channel
-            .send({
-              type: "broadcast",
-              event: "refresh",
-              payload: { table },
-            })
-            .catch(() => {})
-            .finally(() => {
-              client.removeChannel(channel);
-              resolve();
-            });
-        }
-      });
-    });
+    // Never hang the Edge call on realtime: resolve after ~3s regardless.
+    await Promise.race([
+      new Promise<void>((resolve) => {
+        channel.subscribe((status: string) => {
+          if (status === "SUBSCRIBED") {
+            channel
+              .send({
+                type: "broadcast",
+                event: "refresh",
+                payload: { table },
+              })
+              .catch(() => {})
+              .finally(() => {
+                client.removeChannel(channel);
+                resolve();
+              });
+          }
+        });
+      }),
+      new Promise<void>((resolve) =>
+        setTimeout(() => {
+          try { client.removeChannel(channel); } catch { /* best-effort */ }
+          resolve();
+        }, 3000)
+      ),
+    ]);
   } catch (e) {
     console.error("broadcast error:", e);
   }
@@ -436,6 +491,45 @@ async function getAuthedUser(c: any) {
   return data.user;
 }
 
+// Generic 500 — never leak exception text to the client.
+const serverError = (c: any, log: string, e: any) => {
+  console.error(log, e);
+  return c.json({ error: "Internal server error", code: "internal_error" }, 500);
+};
+
+// Allowlisted app origin for callbacks / invite URLs (emails.tsx escapeHtml is
+// private, so HTML escaping is defined locally here too).
+function appOrigin(reqOrigin: string | null) {
+  const env = (Deno.env.get("APP_URL") ?? "").trim();
+  const extra = (Deno.env.get("ALLOWED_ORIGINS") ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+  const allowed = [env, ...extra].filter(Boolean);
+  const o = (reqOrigin ?? "").trim();
+  if (o && allowed.includes(o)) return o;
+  return allowed[0] ?? "";
+}
+
+const escapeHtml = (s: any) =>
+  String(s ?? "").replace(/[&<>"']/g, (m: any) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m]));
+
+// ── 2FA login enforcement ────────────────────────────────────────────────────
+// verify-login routes stamp `2fa:verified:{uid}`; workspace gates require a
+// fresh stamp (12h) when the user has TOTP or email-OTP enabled.
+function needs2FA(u: any) {
+  return !!(u?.user_metadata?.totp_enabled || u?.user_metadata?.email_otp_enabled);
+}
+
+async function is2FAVerified(uid: string) {
+  const r = await kv.get(`2fa:verified:${uid}`);
+  if (!r?.at) return false;
+  return Date.now() - new Date(r.at).getTime() < 12 * 60 * 60 * 1000;
+}
+
+const TWO_FA_EXEMPT_PREFIXES = ["/2fa/", "/email-otp/", "/profile", "/subscription", "/payments/status"];
+
+function is2FAExempt(path: string) {
+  return TWO_FA_EXEMPT_PREFIXES.some((p) => path === p || path.startsWith(p));
+}
+
 // ── Rate Limiting ─────────────────────────────────────────────────────────────
 // KV-backed sliding-window rate limiter. Persists across Edge Function cold
 // starts. Each entry stores { timestamps: number[] } checked against the window.
@@ -554,10 +648,43 @@ async function findByClientId(table: string, workspaceId: string, rawId: string)
     return rows[0] ?? null;
   }
   const n = parseInt(rawId, 10);
-  if (!Number.isFinite(n)) return null;
+  if (isNaN(n)) return null;
   const rows = await sql.sqlQueryByWorkspace(table, workspaceId, "*", { legacy_id: n });
   return rows[0] ?? null;
 }
+
+// Write-response mappers — keep POST/PUT responses in the same client shape
+// as the GET list endpoints (client maps {due, project, completed, ...}).
+async function mapTaskRow(t: any) {
+  let projectName = t.projects?.name ?? "";
+  if (!projectName && t.project_id) {
+    const { data } = await sql.getDbClient().from("projects").select("name").eq("id", t.project_id).maybeSingle();
+    projectName = data?.name ?? "";
+  }
+  return {
+    id: t.legacy_id ?? t.id,
+    title: t.title,
+    description: t.description,
+    status: t.status,
+    priority: t.priority,
+    assignee: t.assignee,
+    project: projectName,
+    due: t.due_date,
+    completed: t.status === "completed",
+  };
+}
+
+const mapProjectRow = (p: any) => ({
+  id: p.legacy_id ?? p.id,
+  name: p.name,
+  description: p.description,
+  status: p.status,
+  progress: p.progress,
+  tasks: { total: 0, done: 0 },
+  team: [],
+  due: p.due_date,
+  tags: p.tags ?? [],
+});
 
 // Map a vouchers DB row (discount_type/discount_value/valid_until) to the API shape.
 const voucherToApi = (v: any) => ({
@@ -590,6 +717,23 @@ async function getEffectivePlanId(userId: string): Promise<string> {
   return subscription?.status === "active" ? subscription.plan_id : "free";
 }
 
+// Effective plan for quota/limit checks: the best of the user's personal plan
+// and the active workspace owner's plan (mirrors the requirePlan borrow logic,
+// but resolves the workspace id from context or the X-Workspace-Id header).
+async function getEffectivePlanForRequest(c: any, userId: string): Promise<string> {
+  const personal = await getEffectivePlanId(userId);
+  const workspaceId = c?.get?.("workspace")?.id ?? c?.req?.header?.("X-Workspace-Id") ?? null;
+  if (!workspaceId) return personal;
+  try {
+    const workspacePlan = await ws.getWorkspacePlan(workspaceId);
+    return (PLAN_RANK[workspacePlan] ?? 0) >= (PLAN_RANK[personal] ?? 0)
+      ? workspacePlan
+      : personal;
+  } catch {
+    return personal;
+  }
+}
+
 // Resolves the authed user iff their plan rank reaches `min`; otherwise returns
 // the 401/403 response the route should send.
 async function requirePlan(c: any, min: "pro" | "business") {
@@ -600,7 +744,7 @@ async function requirePlan(c: any, min: "pro" | "business") {
   let planId = await getEffectivePlanId(user.id);
   // If personal plan is insufficient, borrow the workspace owner's plan
   if ((PLAN_RANK[planId] ?? 0) < PLAN_RANK[min]) {
-    const workspaceId = c.req.header("X-Workspace-Id");
+    const workspaceId = c.get("workspace")?.id ?? c.req.header("X-Workspace-Id");
     if (workspaceId) {
       const workspacePlan = await ws.getWorkspacePlan(workspaceId);
       if ((PLAN_RANK[workspacePlan] ?? 0) >= PLAN_RANK[min]) {
@@ -625,8 +769,10 @@ async function requirePlan(c: any, min: "pro" | "business") {
 }
 
 // ── Founder/admin access ──────────────────────────────────────────────────────
-// Admins are identified by email via the ADMIN_EMAILS secret (comma-separated).
-// Set with: npx supabase secrets set ADMIN_EMAILS=you@example.com --project-ref …
+// Admins are identified by user id via ADMIN_USER_IDS (comma-separated) first,
+// else by verified email via ADMIN_EMAILS (comma-separated — the user must have
+// a confirmed email).
+// Set with: npx supabase secrets set ADMIN_USER_IDS=… ADMIN_EMAILS=you@example.com
 
 const adminEmails = () =>
   (Deno.env.get("ADMIN_EMAILS") ?? "")
@@ -634,8 +780,18 @@ const adminEmails = () =>
     .map((e) => e.trim().toLowerCase())
     .filter(Boolean);
 
-const isAdminUser = (user: any) =>
-  !!user?.email && adminEmails().includes(String(user.email).toLowerCase());
+const adminUserIds = () =>
+  (Deno.env.get("ADMIN_USER_IDS") ?? "")
+    .split(",")
+    .map((e) => e.trim())
+    .filter(Boolean);
+
+const isAdminUser = (user: any) => {
+  if (!user) return false;
+  if (adminUserIds().includes(String(user.id))) return true;
+  const confirmed = user.email_confirmed_at ?? (user as any).confirmed_at ?? (user as any).email_verified ?? null;
+  return !!user?.email && !!confirmed && adminEmails().includes(String(user.email).toLowerCase());
+};
 
 // ── Storage helpers (Fase 12) ─────────────────────────────────────────────────
 
@@ -663,9 +819,7 @@ const PLAN_STORAGE_LIMITS: Record<string, number> = {
 async function getStorageUsage(c: any): Promise<{ used: number; limit: number }> {
   const user = c.get("user");
   const workspace = c.get("workspace");
-  const { data: sub } = await sql.getDbClient().from("subscriptions").select("plan_id").eq("user_id", user.id).maybeSingle();
-  const planId = sub?.plan_id ?? "free";
-  const limit = PLAN_STORAGE_LIMITS[planId] ?? PLAN_STORAGE_LIMITS.free;
+  const limit = PLAN_STORAGE_LIMITS[await getEffectivePlanForRequest(c, user?.id)] ?? PLAN_STORAGE_LIMITS.free;
   if (!workspace) return { used: 0, limit };
   const rows = await sql.sqlQueryByWorkspace("files", workspace.id, "size_bytes");
   const used = rows.reduce((sum: number, f: any) => sum + (f.size_bytes || 0), 0);
@@ -708,8 +862,7 @@ app.get("/status", async (c) => {
       },
     });
   } catch (e) {
-    console.error("GET /status error:", e);
-    return c.json({ error: String(e) }, 500);
+    return serverError(c, "GET /status error:", e);
   }
 });
 
@@ -735,12 +888,54 @@ app.get("/profile", async (c) => {
       await sql.getDbClient().from("profiles").insert(newProfile);
       return c.json({ profile: { ...newProfile } });
     }
+    // profiles.avatar_url persists the storage path (not a signed URL, which
+    // expires) — mint a fresh URL on serve so the client-visible avatar_url
+    // field keeps working.
+    if (profile?.avatar_url && !String(profile.avatar_url).startsWith("http")) {
+      const fresh = await signedAvatarUrl(profile.avatar_url);
+      if (fresh) {
+        return c.json({ profile: { ...profile, avatar_path: profile.avatar_url, avatar_url: fresh } });
+      }
+    }
     return c.json({ profile });
   } catch (e) {
-    console.error("GET /profile error:", e);
-    return c.json({ error: String(e) }, 500);
+    return serverError(c, "GET /profile error:", e);
   }
 });
+
+// Mint a fresh signed URL for a stored avatar path (paths never expire,
+// signed URLs do — so profiles persist the path and this mints on serve).
+async function signedAvatarUrl(path: string | null | undefined): Promise<string | null> {
+  if (!path || typeof path !== "string") return null;
+  // Legacy rows stored a full signed URL in avatar_url — extract the path.
+  let storagePath = path;
+  const marker = "/avatars/";
+  const idx = path.indexOf(marker);
+  if (idx !== -1) {
+    try {
+      const after = path.slice(idx + marker.length).split("?")[0];
+      // Signed URLs look like /object/sign/avatars/<path>?token=… — keep only
+      // the real object path (strip a duplicated bucket prefix if present).
+      storagePath = after.replace(/^avatars\//, "");
+    } catch { /* fall through with raw path */ }
+  }
+  storagePath = storagePath.replace(/^\/+/, "");
+  // Uploads store bucket-prefixed paths ("avatars/<uid>/…"); the SDK call
+  // below already targets the `avatars` bucket, so strip it for the API.
+  const objectPath = storagePath.replace(/^avatars\//, "");
+  if (!objectPath || objectPath.includes("?")) return null;
+  try {
+    const client = storageClient();
+    if (!client) return null;
+    const { data, error } = await client.storage
+      .from("avatars")
+      .createSignedUrl(objectPath, 60 * 60 * 24 * 7);
+    if (error || !data?.signedUrl) return null;
+    return data.signedUrl;
+  } catch {
+    return null;
+  }
+}
 
 // ── Plans ─────────────────────────────────────────────────────────────────────
 // Plans (incl. prices) are defined ONLY here. Checkout (phase 5/6) must read
@@ -814,12 +1009,11 @@ app.get("/2fa/setup", async (c) => {
     const backupCodes = generateBackupCodes();
     const issuer = "LokaSync";
     const otpauthUrl = `otpauth://totp/${issuer}:${encodeURIComponent(user.email ?? user.id)}?secret=${secret}&issuer=${issuer}`;
-    // Store pending secret (not enabled until verified)
-    await kv.set(`2fa:pending:${user.id}`, { secret, backupCodes });
+    // Store pending secret (not enabled until verified; expires in ~10 min)
+    await kv.set(`2fa:pending:${user.id}`, { secret, backupCodes, created_at: new Date().toISOString() });
     return c.json({ secret, otpauthUrl, backupCodes });
   } catch (e) {
-    console.error("GET /2fa/setup error:", e);
-    return c.json({ error: String(e) }, 500);
+    return serverError(c, "GET /2fa/setup error:", e);
   }
 });
 
@@ -837,6 +1031,11 @@ app.post("/2fa/verify", async (c) => {
     if (!code || String(code).length !== 6) return c.json({ error: "Enter a 6-digit code" }, 400);
     const pending = await kv.get(`2fa:pending:${user.id}`);
     if (!pending?.secret) return c.json({ error: "Setup not started" }, 400);
+    // Pending TOTP secrets expire after ~10 minutes.
+    if (pending.created_at && Date.now() - new Date(pending.created_at).getTime() > 10 * 60 * 1000) {
+      await kv.del(`2fa:pending:${user.id}`);
+      return c.json({ error: "Setup expired — please start again", code: "setup_expired" }, 400);
+    }
     if (!(await verifyTotp(pending.secret, String(code)))) {
       return c.json({ error: "Invalid code" }, 400);
     }
@@ -846,8 +1045,7 @@ app.post("/2fa/verify", async (c) => {
     await adminClient().auth.admin.updateUserById(user.id, { user_metadata: { ...user.user_metadata, totp_enabled: true } });
     return c.json({ ok: true });
   } catch (e) {
-    console.error("POST /2fa/verify error:", e);
-    return c.json({ error: String(e) }, 500);
+    return serverError(c, "POST /2fa/verify error:", e);
   }
 });
 
@@ -867,15 +1065,19 @@ app.delete("/2fa", async (c) => {
     }
 
     let verified = false;
+    // Track which method proved ownership so only that method is disabled.
+    let verifiedMethod: "totp" | "backup" | "email_otp" | null = null;
 
     const record2fa = await kv.get(`2fa:${user.id}`);
     if (record2fa?.secret && code && code.length === 6) {
       verified = await verifyTotp(record2fa.secret, code);
+      if (verified) verifiedMethod = "totp";
     }
     if (!verified && backupCode && record2fa?.backupCodes) {
       const idx = record2fa.backupCodes.indexOf(backupCode);
       if (idx !== -1) {
         verified = true;
+        verifiedMethod = "backup";
         record2fa.backupCodes.splice(idx, 1);
         await kv.set(`2fa:${user.id}`, record2fa);
       }
@@ -885,6 +1087,7 @@ app.delete("/2fa", async (c) => {
       if (emailOtpRecord && emailOtpRecord.code === emailOTPCode) {
         if (new Date(emailOtpRecord.expiresAt) > new Date()) {
           verified = true;
+          verifiedMethod = "email_otp";
           await kv.del(`email-otp:${user.id}`);
         }
       }
@@ -894,13 +1097,30 @@ app.delete("/2fa", async (c) => {
       return c.json({ error: "Invalid code", code: "invalid_code" }, 403);
     }
 
-    await kv.del(`2fa:${user.id}`);
+    // Only clear the method that proved ownership: TOTP/backup codes clear
+    // the TOTP side, an email OTP code clears the email side.
+    const hadTotp = !!record2fa?.secret;
+    const emailWasEnabled = !!user.user_metadata?.email_otp_enabled;
+    const clearingTotp = verifiedMethod === "totp" || verifiedMethod === "backup";
+    const clearingEmail = verifiedMethod === "email_otp";
+    if (clearingTotp) {
+      await kv.del(`2fa:${user.id}`);
+    }
     await kv.del(`2fa:pending:${user.id}`);
-    await adminClient().auth.admin.updateUserById(user.id, { user_metadata: { ...user.user_metadata, totp_enabled: false, email_otp_enabled: false } });
-    return c.json({ ok: true });
+    await adminClient().auth.admin.updateUserById(user.id, {
+      user_metadata: {
+        ...user.user_metadata,
+        ...(clearingTotp ? { totp_enabled: false } : {}),
+        ...(clearingEmail ? { email_otp_enabled: false } : {}),
+      },
+    });
+    // If both methods are now off, no 2FA remains; otherwise report what is
+    // still enabled so the client can update its state.
+    const totpStillOn = hadTotp && !clearingTotp;
+    const emailStillOn = emailWasEnabled && !clearingEmail;
+    return c.json({ ok: true, totp_enabled: totpStillOn, email_otp_enabled: emailStillOn });
   } catch (e) {
-    console.error("DELETE /2fa error:", e);
-    return c.json({ error: String(e) }, 500);
+    return serverError(c, "DELETE /2fa error:", e);
   }
 });
 
@@ -952,10 +1172,10 @@ app.post("/2fa/verify-login", async (c) => {
     }
 
     await kv.del(attemptKey);
+    await kv.set(`2fa:verified:${user.id}`, { at: new Date().toISOString() });
     return c.json({ ok: true });
   } catch (e) {
-    console.error("POST /2fa/verify-login error:", e);
-    return c.json({ error: String(e) }, 500);
+    return serverError(c, "POST /2fa/verify-login error:", e);
   }
 });
 
@@ -1001,8 +1221,7 @@ app.post("/email-otp/send", async (c) => {
 
     return c.json({ ok: true, expiresIn: 300 });
   } catch (e) {
-    console.error("POST /email-otp/send error:", e);
-    return c.json({ error: String(e) }, 500);
+    return serverError(c, "POST /email-otp/send error:", e);
   }
 });
 
@@ -1040,8 +1259,7 @@ app.post("/email-otp/verify", async (c) => {
     });
     return c.json({ ok: true });
   } catch (e) {
-    console.error("POST /email-otp/verify error:", e);
-    return c.json({ error: String(e) }, 500);
+    return serverError(c, "POST /email-otp/verify error:", e);
   }
 });
 
@@ -1079,10 +1297,10 @@ app.post("/email-otp/verify-login", async (c) => {
     }
 
     await kv.del(`email-otp:${user.id}`);
+    await kv.set(`2fa:verified:${user.id}`, { at: new Date().toISOString() });
     return c.json({ ok: true });
   } catch (e) {
-    console.error("POST /email-otp/verify-login error:", e);
-    return c.json({ error: String(e) }, 500);
+    return serverError(c, "POST /email-otp/verify-login error:", e);
   }
 });
 
@@ -1125,8 +1343,7 @@ app.get("/plans", async (c) => {
       highlighted: p.highlighted,
     })));
   } catch (e) {
-    console.error("GET /plans error:", e);
-    return c.json({ error: String(e) }, 500);
+    return serverError(c, "GET /plans error:", e);
   }
 });
 
@@ -1175,10 +1392,10 @@ app.post("/vouchers/validate", async (c) => {
 
     const { data: plans } = await sql.getDbClient().from("plans").select("*").eq("active", true).order("sort_order", { ascending: true });
     const plan = plans?.find((p: any) => p.plan_id === planId);
-    if (!plan || plan.price === 0) {
+    if (!plan || (plan.monthly_price ?? 0) === 0) {
       return c.json({ valid: false, reason: "Invalid plan" });
     }
-    const base = interval === "yearly" ? (plan.price * 12) : plan.price;
+    const base = interval === "yearly" ? (plan.yearly_price ?? 0) : (plan.monthly_price ?? 0);
 
     const { data: voucher } = await sql.getDbClient().from("vouchers").select("*").eq("code", code).maybeSingle();
 
@@ -1210,8 +1427,7 @@ app.post("/vouchers/validate", async (c) => {
       total: base - discount,
     });
   } catch (e) {
-    console.error("POST /vouchers/validate error:", e);
-    return c.json({ error: String(e) }, 500);
+    return serverError(c, "POST /vouchers/validate error:", e);
   }
 });
 
@@ -1273,12 +1489,12 @@ async function applyTransactionStatus(tx: any, midtransData: any) {
   };
   tx.updated_at = now;
 
-  // Update transaction in SQL
+  // Update transaction in SQL (conditional: never clobber a paid row)
   await sql.getDbClient().from("transactions").update({
     status: tx.status,
     midtrans: tx.midtrans,
     updated_at: now,
-  }).eq("order_id", tx.order_id);
+  }).eq("order_id", tx.order_id).neq("status", "paid");
 
   if (status === "paid" && !alreadyPaid) {
     const started = new Date();
@@ -1310,13 +1526,7 @@ async function applyTransactionStatus(tx: any, midtransData: any) {
     await ws.syncWorkspacePlans(tx.user_id, tx.plan_id);
 
     if (tx.voucher_code) {
-      const { data: voucher } = await sql.getDbClient().from("vouchers").select("*").eq("code", tx.voucher_code).maybeSingle();
-      if (voucher) {
-        await sql.getDbClient().from("vouchers").update({
-          used_count: (voucher.used_count ?? 0) + 1,
-          updated_at: now,
-        }).eq("code", tx.voucher_code);
-      }
+      await sql.getDbClient().rpc("consume_voucher", { p_code: tx.voucher_code });
     }
 
     // ── Send payment receipt email (Fase 13.2) ─────────────────────────────
@@ -1436,7 +1646,7 @@ app.post("/payments/checkout", async (c) => {
       });
     }
 
-    const origin = c.req.header("Origin") ?? "";
+    const origin = appOrigin(c.req.header("Origin") ?? null);
     const snapRes = await fetch(`${config.snapBase}/transactions`, {
       method: "POST",
       headers: {
@@ -1456,13 +1666,11 @@ app.post("/payments/checkout", async (c) => {
       }),
     });
     if (!snapRes.ok) {
-      const detail = await snapRes.text();
-      console.error("Midtrans Snap error:", snapRes.status, detail);
+      console.error("Midtrans Snap error:", snapRes.status);
       return c.json(
         {
           error: "Could not start the payment. Please try again.",
           midtrans_status: snapRes.status,
-          midtrans_detail: detail.slice(0, 500),
         },
         502,
       );
@@ -1493,8 +1701,7 @@ app.post("/payments/checkout", async (c) => {
       is_production: config.isProduction,
     });
   } catch (e) {
-    console.error("POST /payments/checkout error:", e);
-    return c.json({ error: String(e) }, 500);
+    return serverError(c, "POST /payments/checkout error:", e);
   }
 });
 
@@ -1508,6 +1715,9 @@ app.post("/payments/webhook", async (c) => {
     const body = await c.req.json();
     const { order_id, status_code, gross_amount, signature_key } = body;
     if (!order_id || !signature_key) return c.json({ error: "Bad payload" }, 400);
+    if (!await checkRateLimit(`webhook:${order_id}`, 30, 60 * 1000)) {
+      return rateLimited(c);
+    }
 
     const raw = `${order_id}${status_code}${gross_amount}${config.serverKey}`;
     const digest = await crypto.subtle.digest(
@@ -1524,12 +1734,25 @@ app.post("/payments/webhook", async (c) => {
 
     const { data: tx } = await sql.getDbClient().from("transactions").select("*").eq("order_id", order_id).maybeSingle();
     if (!tx) return c.json({ error: "Unknown order" }, 404);
+    // Idempotent replay: same Midtrans timestamp on a settled tx is a resend.
+    if (tx.status !== "pending" && tx.midtrans?.transaction_time != null && tx.midtrans.transaction_time === body.transaction_time) {
+      return c.json({ ok: true });
+    }
+
+    // The signature proves the payload came from Midtrans, but gross_amount
+    // is still attacker-visible on the wire — refuse anything that doesn't
+    // match what checkout stored.
+    if (gross_amount != null && Number(gross_amount) !== Number(tx.gross_amount)) {
+      console.error(
+        `Webhook amount mismatch for order ${order_id}: got ${gross_amount}, expected ${tx.gross_amount}`,
+      );
+      return c.json({ error: "Amount mismatch" }, 400);
+    }
 
     await applyTransactionStatus(tx, body);
     return c.json({ ok: true });
   } catch (e) {
-    console.error("POST /payments/webhook error:", e);
-    return c.json({ error: String(e) }, 500);
+    return serverError(c, "POST /payments/webhook error:", e);
   }
 });
 
@@ -1574,8 +1797,7 @@ app.get("/payments/status/:orderId", async (c) => {
       subscription,
     });
   } catch (e) {
-    console.error("GET /payments/status error:", e);
-    return c.json({ error: String(e) }, 500);
+    return serverError(c, "GET /payments/status error:", e);
   }
 });
 
@@ -1627,8 +1849,7 @@ app.get("/subscription", async (c) => {
       is_admin: isAdminUser(user),
     });
   } catch (e) {
-    console.error("GET /subscription error:", e);
-    return c.json({ error: String(e) }, 500);
+    return serverError(c, "GET /subscription error:", e);
   }
 });
 
@@ -1662,8 +1883,7 @@ app.put("/profile", async (c) => {
     }
     return c.json({ profile });
   } catch (e) {
-    console.error("PUT /profile error:", e);
-    return c.json({ error: String(e) }, 500);
+    return serverError(c, "PUT /profile error:", e);
   }
 });
 
@@ -1691,20 +1911,37 @@ app.post("/profile/avatar", async (c) => {
     if (file.size > AVATAR_MAX_BYTES) {
       return c.json({ error: "Image must be under 2 MB" }, 413);
     }
-    if (!file.type.startsWith("image/")) {
-      return c.json({ error: "Only image files are allowed" }, 400);
+    // Allowlist by extension + MIME, then verify magic bytes — `file.type`
+    // is attacker-controlled and `image/svg+xml` executes inline.
+    const AVATAR_EXTS = new Set(["png", "jpg", "jpeg", "webp", "gif"]);
+    const AVATAR_MIMES = new Set(["image/png", "image/jpeg", "image/webp", "image/gif"]);
+    const avatarMime = (file.type || "").toLowerCase().split(";")[0].trim();
+    const ext = (file.name.split(".").pop() ?? "").toLowerCase().replace(/[^a-z0-9]/g, "");
+    if (!AVATAR_EXTS.has(ext) || !AVATAR_MIMES.has(avatarMime)) {
+      return c.json({ error: "Only PNG, JPG, WEBP or GIF images are allowed" }, 400);
     }
 
     // Remove the previous avatar so storage doesn't accumulate orphans.
+    // profiles.avatar_url persists the object key relative to the `avatars`
+    // bucket (e.g. "<uid>/<file>") — all SDK calls below use the same form.
     const { data: prev } = await sql.getDbClient()
       .from("profiles").select("avatar_url").eq("user_id", user.id).maybeSingle();
-    const prevPath = typeof prev?.avatar_url === "string" && prev.avatar_url.startsWith("avatars/")
-      ? prev.avatar_url
+    const prevPath = typeof prev?.avatar_url === "string" && prev.avatar_url.length > 0
+      ? prev.avatar_url.replace(/^avatars\//, "").replace(/^\/+/, "")
       : null;
 
     const ext = (file.name.split(".").pop() ?? "png").toLowerCase().replace(/[^a-z0-9]/g, "") || "png";
-    const storagePath = `avatars/${user.id}/${Date.now()}.${ext}`;
+    const storagePath = `${user.id}/${Date.now()}.${ext}`;
     const bytes = new Uint8Array(await file.arrayBuffer());
+    // Magic-byte check: PNG 89 50 4E 47, JPEG FF D8 FF, GIF 47 49 46 38,
+    // WEBP RIFF....WEBP. Rejects SVG/HTML polyglots renamed to .png.
+    const isPng = bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47;
+    const isJpeg = bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
+    const isGif = bytes[0] === 0x47 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x38;
+    const isWebp = bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46;
+    if (!isPng && !isJpeg && !isGif && !isWebp) {
+      return c.json({ error: "File content does not match its image type" }, 400);
+    }
     const { error: uploadErr } = await client.storage
       .from("avatars")
       .upload(storagePath, bytes, { contentType: file.type, upsert: false });
@@ -1747,13 +1984,12 @@ app.post("/profile/avatar", async (c) => {
     );
 
     if (prevPath && prevPath !== storagePath) {
-      await client.storage.from("avatars").remove([prevPath.replace(/^avatars\//, "")]);
+      await client.storage.from("avatars").remove([prevPath]);
     }
 
     return c.json({ url: urlData.signedUrl, path: storagePath, avatar_url: urlData.signedUrl }, 201);
   } catch (e) {
-    console.error("POST /profile/avatar error:", e);
-    return c.json({ error: String(e) }, 500);
+    return serverError(c, "POST /profile/avatar error:", e);
   }
 });
 
@@ -1764,11 +2000,20 @@ app.get("/admin/overview", async (c) => {
     const gate = await requireAdmin(c);
     if (!gate.user) return gate.response;
 
-    const { data: usersPage } = await adminClient().auth.admin.listUsers({
-      page: 1,
-      perPage: 1000,
-    });
-    const totalUsers = usersPage?.users?.length ?? 0;
+    // Paginate through all users — a single 1000-row page silently
+    // undercounts once the user base grows past it.
+    let totalUsers = 0;
+    let page = 1;
+    for (;;) {
+      const { data: usersPage } = await adminClient().auth.admin.listUsers({
+        page,
+        perPage: 1000,
+      });
+      const batch = usersPage?.users ?? [];
+      totalUsers += batch.length;
+      if (batch.length < 1000) break;
+      page++;
+    }
 
     const { data: allSubs } = await sql.getDbClient().from("subscriptions").select("*");
     const now = new Date();
@@ -1781,7 +2026,12 @@ app.get("/admin/overview", async (c) => {
         new Date(s.current_period_end) > now;
       if (stillActive) {
         activeByPlan[s.plan_id] = (activeByPlan[s.plan_id] ?? 0) + 1;
-      } else {
+      } else if (
+        s?.status === "expired" ||
+        (s?.status === "active" && s.current_period_end && new Date(s.current_period_end) <= now)
+      ) {
+        // Only genuinely lapsed subscriptions count as expired — cancelled /
+        // trialing / past-due-but-current rows are not lumped in.
         expiredCount++;
       }
     }
@@ -1814,8 +2064,7 @@ app.get("/admin/overview", async (c) => {
       maintenance: { enabled: !!mt?.enabled, message: mt?.message ?? "" },
     });
   } catch (e) {
-    console.error("GET /admin/overview error:", e);
-    return c.json({ error: String(e) }, 500);
+    return serverError(c, "GET /admin/overview error:", e);
   }
 });
 
@@ -1924,8 +2173,7 @@ app.post("/admin/migrate-workspaces", async (c) => {
     );
     return c.json(report);
   } catch (e) {
-    console.error("POST /admin/migrate-workspaces error:", e);
-    return c.json({ error: String(e) }, 500);
+    return serverError(c, "POST /admin/migrate-workspaces error:", e);
   }
 });
 
@@ -1939,8 +2187,7 @@ app.get("/admin/vouchers", async (c) => {
     const { data: vouchers } = await sql.getDbClient().from("vouchers").select("*").order("code");
     return c.json((vouchers ?? []).map(voucherToApi));
   } catch (e) {
-    console.error("GET /admin/vouchers error:", e);
-    return c.json({ error: String(e) }, 500);
+    return serverError(c, "GET /admin/vouchers error:", e);
   }
 });
 
@@ -1994,10 +2241,9 @@ app.post("/admin/vouchers", async (c) => {
     const now = new Date().toISOString();
     const voucher = { ...parsed.voucher, used_count: 0, created_at: now, updated_at: now };
     await sql.getDbClient().from("vouchers").insert(voucher);
-    return c.json(voucher, 201);
+    return c.json(voucherToApi(voucher), 201);
   } catch (e) {
-    console.error("POST /admin/vouchers error:", e);
-    return c.json({ error: String(e) }, 500);
+    return serverError(c, "POST /admin/vouchers error:", e);
   }
 });
 
@@ -2018,10 +2264,9 @@ app.put("/admin/vouchers/:code", async (c) => {
       updated_at: now,
     };
     await sql.getDbClient().from("vouchers").update(voucher).eq("code", code);
-    return c.json(voucher);
+    return c.json(voucherToApi(voucher));
   } catch (e) {
-    console.error("PUT /admin/vouchers error:", e);
-    return c.json({ error: String(e) }, 500);
+    return serverError(c, "PUT /admin/vouchers error:", e);
   }
 });
 
@@ -2035,8 +2280,7 @@ app.delete("/admin/vouchers/:code", async (c) => {
     await sql.getDbClient().from("vouchers").delete().eq("code", code);
     return c.json({ ok: true });
   } catch (e) {
-    console.error("DELETE /admin/vouchers error:", e);
-    return c.json({ error: String(e) }, 500);
+    return serverError(c, "DELETE /admin/vouchers error:", e);
   }
 });
 
@@ -2070,8 +2314,7 @@ app.get("/admin/subscribers", async (c) => {
     rows.sort((a, b) => String(a.current_period_end) < String(b.current_period_end) ? 1 : -1);
     return c.json(rows);
   } catch (e) {
-    console.error("GET /admin/subscribers error:", e);
-    return c.json({ error: String(e) }, 500);
+    return serverError(c, "GET /admin/subscribers error:", e);
   }
 });
 
@@ -2094,8 +2337,7 @@ app.put("/admin/maintenance", async (c) => {
     );
     return c.json({ maintenance });
   } catch (e) {
-    console.error("PUT /admin/maintenance error:", e);
-    return c.json({ error: String(e) }, 500);
+    return serverError(c, "PUT /admin/maintenance error:", e);
   }
 });
 
@@ -2111,8 +2353,7 @@ app.get("/admin/notifications", async (c) => {
       .limit(50);
     return c.json(items ?? []);
   } catch (e) {
-    console.error("GET /admin/notifications error:", e);
-    return c.json({ error: String(e) }, 500);
+    return serverError(c, "GET /admin/notifications error:", e);
   }
 });
 
@@ -2134,10 +2375,9 @@ app.post("/admin/notifications", async (c) => {
       created_by: gate.user.email,
     }).select().single();
     if (!notification) return c.json({ error: "Failed to create notification" }, 500);
-    return c.json(notification, 201);
+    return c.json({ ...notification, message: notification.body }, 201);
   } catch (e) {
-    console.error("POST /admin/notifications error:", e);
-    return c.json({ error: String(e) }, 500);
+    return serverError(c, "POST /admin/notifications error:", e);
   }
 });
 
@@ -2151,8 +2391,7 @@ app.delete("/admin/notifications/:id", async (c) => {
     await sql.getDbClient().from("notifications").delete().eq("id", id);
     return c.json({ ok: true });
   } catch (e) {
-    console.error("DELETE /admin/notifications error:", e);
-    return c.json({ error: String(e) }, 500);
+    return serverError(c, "DELETE /admin/notifications error:", e);
   }
 });
 
@@ -2186,6 +2425,11 @@ app.post("/admin/send-reminders", async (c) => {
         const name = profile?.full_name || email?.split("@")[0] || "User";
         const daysLeft = Math.ceil((end - now) / (24 * 60 * 60 * 1000));
         if (email) {
+          // Dedup: one reminder per address per window — re-clicking send
+          // must not re-email the same window.
+          const windowKey = new Date(end).toISOString().slice(0, 10);
+          const dedupKey = `reminders:sent:${daysAhead}:${windowKey}:${email.toLowerCase()}`;
+          if (await kv.get(dedupKey)) { skipped++; continue; }
           const html = emails.reminderHtml({
             userName: name,
             planName: sub.plan_id,
@@ -2197,7 +2441,11 @@ app.post("/admin/send-reminders", async (c) => {
             "Your LokaSync subscription expires soon",
             html,
           );
-          if (ok) sent++; else skipped++;
+          if (ok) {
+            sent++;
+            // Remember this address+window for 30 days so a re-click skips it.
+            await kv.set(dedupKey, { sent_at: new Date().toISOString() });
+          } else skipped++;
         } else {
           skipped++;
         }
@@ -2205,8 +2453,7 @@ app.post("/admin/send-reminders", async (c) => {
     }
     return c.json({ sent, skipped, daysAhead });
   } catch (e) {
-    console.error("POST /admin/send-reminders error:", e);
-    return c.json({ error: String(e) }, 500);
+    return serverError(c, "POST /admin/send-reminders error:", e);
   }
 });
 
@@ -2233,8 +2480,7 @@ app.get("/notifications", async (c) => {
       }));
     return c.json(items);
   } catch (e) {
-    console.error("GET /notifications error:", e);
-    return c.json({ error: String(e) }, 500);
+    return serverError(c, "GET /notifications error:", e);
   }
 });
 
@@ -2250,8 +2496,7 @@ app.put("/notifications/read", async (c) => {
     }
     return c.json({ ok: true });
   } catch (e) {
-    console.error("PUT /notifications/read error:", e);
-    return c.json({ error: String(e) }, 500);
+    return serverError(c, "PUT /notifications/read error:", e);
   }
 });
 
@@ -2272,8 +2517,7 @@ app.get("/workspaces", async (c) => {
     }));
     return c.json({ workspaces: items, active: c.get("workspace").id });
   } catch (e) {
-    console.error("GET /workspaces error:", e);
-    return c.json({ error: String(e) }, 500);
+    return serverError(c, "GET /workspaces error:", e);
   }
 });
 
@@ -2287,8 +2531,7 @@ app.post("/workspaces", async (c) => {
     await broadcastAfterWrite(created.workspace.id, "workspaces");
     return c.json({ ...created.workspace, role: created.membership.role }, 201);
   } catch (e) {
-    console.error("POST /workspaces error:", e);
-    return c.json({ error: String(e) }, 500);
+    return serverError(c, "POST /workspaces error:", e);
   }
 });
 
@@ -2309,8 +2552,7 @@ app.put("/workspaces/:id", async (c) => {
     await broadcastAfterWrite(id, "workspaces");
     return c.json({ ...updated, role: membership.role });
   } catch (e) {
-    console.error("PUT /workspaces/:id error:", e);
-    return c.json({ error: String(e) }, 500);
+    return serverError(c, "PUT /workspaces/:id error:", e);
   }
 });
 
@@ -2331,8 +2573,7 @@ app.delete("/workspaces/:id", async (c) => {
     await broadcastAfterWrite(id, "workspaces");
     return c.json({ ok: true });
   } catch (e) {
-    console.error("DELETE /workspaces/:id error:", e);
-    return c.json({ error: String(e) }, 500);
+    return serverError(c, "DELETE /workspaces/:id error:", e);
   }
 });
 
@@ -2344,8 +2585,7 @@ app.get("/workspaces/:id/members", async (c) => {
     if (!membership) return c.json({ error: "Workspace not found" }, 404);
     return c.json(await ws.getMembers(id));
   } catch (e) {
-    console.error("GET /workspaces/:id/members error:", e);
-    return c.json({ error: String(e) }, 500);
+    return serverError(c, "GET /workspaces/:id/members error:", e);
   }
 });
 
@@ -2369,8 +2609,7 @@ app.put("/workspaces/:id/members/:userId", async (c) => {
     if (!updated) return c.json({ error: "Member not found" }, 404);
     return c.json(updated);
   } catch (e) {
-    console.error("PUT /workspaces/:id/members/:userId error:", e);
-    return c.json({ error: String(e) }, 500);
+    return serverError(c, "PUT /workspaces/:id/members/:userId error:", e);
   }
 });
 
@@ -2392,8 +2631,7 @@ app.delete("/workspaces/:id/members/:userId", async (c) => {
     await ws.removeMember(id, targetId);
     return c.json({ ok: true });
   } catch (e) {
-    console.error("DELETE /workspaces/:id/members/:userId error:", e);
-    return c.json({ error: String(e) }, 500);
+    return serverError(c, "DELETE /workspaces/:id/members/:userId error:", e);
   }
 });
 
@@ -2420,8 +2658,7 @@ app.get("/workspaces/:id/invites", async (c) => {
       })),
     );
   } catch (e) {
-    console.error("GET /workspaces/:id/invites error:", e);
-    return c.json({ error: String(e) }, 500);
+    return serverError(c, "GET /workspaces/:id/invites error:", e);
   }
 });
 
@@ -2450,14 +2687,13 @@ app.post("/workspaces/:id/invites", async (c) => {
     if (!workspace) return c.json({ error: "Workspace not found" }, 404);
 
     const invitation = await ws.createInvitation(workspace, user, email, role);
-    const origin = c.req.header("Origin") ?? "";
-    const inviteUrl = `${origin}/invite/${invitation.token}`;
+    const origin = appOrigin(c.req.header("Origin") ?? null);
+    const inviteUrl = origin ? `${origin}/invite/${invitation.token}` : `/invite/${invitation.token}`;
     const emailSent = await ws.sendInvitationEmail(invitation, inviteUrl);
 
     return c.json({ ...invitation, invite_url: inviteUrl, email_sent: emailSent }, 201);
   } catch (e) {
-    console.error("POST /workspaces/:id/invites error:", e);
-    return c.json({ error: String(e) }, 500);
+    return serverError(c, "POST /workspaces/:id/invites error:", e);
   }
 });
 
@@ -2478,8 +2714,7 @@ app.delete("/workspaces/:id/invites/:token", async (c) => {
     await ws.saveInvitation({ ...invitation, status: "revoked" });
     return c.json({ ok: true });
   } catch (e) {
-    console.error("DELETE /workspaces/:id/invites/:token error:", e);
-    return c.json({ error: String(e) }, 500);
+    return serverError(c, "DELETE /workspaces/:id/invites/:token error:", e);
   }
 });
 
@@ -2487,7 +2722,11 @@ app.delete("/workspaces/:id/invites/:token", async (c) => {
 // invitee can see what they were invited to before signing in/registering.
 app.get("/invites/:token", async (c) => {
   try {
-    const invitation = await ws.getInvitation(c.req.param("token"));
+    const token = c.req.param("token");
+    if (!await checkRateLimit(`invite-preview:${token}`, 20, 60 * 1000)) {
+      return rateLimited(c);
+    }
+    const invitation = await ws.getInvitation(token);
     if (!invitation) return c.json({ error: "Invitation not found" }, 404);
     const fresh = await ws.freshInvitation(invitation);
     return c.json({
@@ -2499,8 +2738,7 @@ app.get("/invites/:token", async (c) => {
       expires_at: fresh.expires_at,
     });
   } catch (e) {
-    console.error("GET /invites/:token error:", e);
-    return c.json({ error: String(e) }, 500);
+    return serverError(c, "GET /invites/:token error:", e);
   }
 });
 
@@ -2508,6 +2746,9 @@ app.post("/invites/accept", async (c) => {
   try {
     const user = await getAuthedUser(c);
     if (!user) return c.json({ error: "Unauthorized" }, 401);
+    if (!await checkRateLimit(`invite-accept:${user.id}`, 10, 60 * 1000)) {
+      return rateLimited(c);
+    }
     const body = await c.req.json();
     const token = String(body.token ?? "");
     const invitation = token ? await ws.getInvitation(token) : null;
@@ -2537,7 +2778,16 @@ app.post("/invites/accept", async (c) => {
     if (!alreadyMember) {
       await ws.addMember(workspace.id, user, fresh.role);
     }
-    await ws.saveInvitation({ ...fresh, status: "accepted" });
+    // Atomic accept: only a still-pending row flips to accepted — concurrent
+    // accepts race here and exactly one wins.
+    const now = new Date().toISOString();
+    const { data: claimed } = await sql.getDbClient().from("workspace_invitations").update({
+      status: "accepted",
+      updated_at: now,
+    }).eq("token", token).eq("status", "pending").select();
+    if (!claimed?.length && !alreadyMember) {
+      return c.json({ error: "This invitation has already been used", code: "invite_used" }, 400);
+    }
 
     return c.json({
       ok: true,
@@ -2545,30 +2795,33 @@ app.post("/invites/accept", async (c) => {
       workspace: { id: workspace.id, name: workspace.name, role: fresh.role },
     });
   } catch (e) {
-    console.error("POST /invites/accept error:", e);
-    return c.json({ error: String(e) }, 500);
+    return serverError(c, "POST /invites/accept error:", e);
   }
 });
 
-// ── Workspace plan (public fallback for invited members) ─────────────────────
+// ── Workspace plan (authenticated + membership-gated) ────────────────────────
 
 app.get("/workspace-plan", async (c) => {
   try {
+    const user = await getAuthedUser(c);
+    if (!user) return c.json({ error: "Unauthorized" }, 401);
     const workspaceId = c.req.header("X-Workspace-Id");
-    if (!workspaceId) {
-      return c.json({ plan: "free", owner_id: null });
+    if (!workspaceId) return c.json({ error: "X-Workspace-Id is required" }, 400);
+    const membership = await ws.getMembership(workspaceId, user.id);
+    if (!membership) {
+      return c.json(
+        { error: "You are not a member of this workspace", code: "workspace_forbidden" },
+        403,
+      );
     }
     const workspace = await ws.getWorkspace(workspaceId);
-    if (!workspace) {
-      return c.json({ plan: "free", owner_id: null });
-    }
+    if (!workspace) return c.json({ error: "Workspace not found" }, 404);
     return c.json({
       plan: workspace.plan_id ?? "free",
       owner_id: workspace.owner_id,
     });
   } catch (e) {
-    console.error("GET /workspace-plan error:", e);
-    return c.json({ error: String(e) }, 500);
+    return serverError(c, "GET /workspace-plan error:", e);
   }
 });
 
@@ -2624,16 +2877,21 @@ app.get("/member-home", async (c) => {
         completed: memberTasks.filter((t: any) => t.status === "completed"),
       };
 
-      // Projects (active only, mapped to KV shape)
+      // Projects (active only, mapped to KV shape) with real task counters.
       const sqlProjects = await sql.sqlQueryByWorkspace("projects", workspaceId, "*", { status: "active" });
-      const activeProjects = sqlProjects.map((p: any) => ({
-        id: p.legacy_id ?? p.id,
-        name: p.name,
-        total_tasks: 0,
-        completed_tasks: 0,
-        progress_percent: p.progress,
-        next_milestone: p.due_date,
-      }));
+      const allWsTasks = await sql.sqlQueryByWorkspace("tasks", workspaceId, "id, project_id, status");
+      const activeProjects = sqlProjects.map((p: any) => {
+        const mine = allWsTasks.filter((t: any) => t.project_id === p.id);
+        const done = mine.filter((t: any) => t.status === "completed").length;
+        return {
+          id: p.legacy_id ?? p.id,
+          name: p.name,
+          total_tasks: mine.length,
+          completed_tasks: done,
+          progress_percent: mine.length ? Math.round((done / mine.length) * 100) : (p.progress ?? 0),
+          next_milestone: p.due_date,
+        };
+      });
 
       // Calendar events today
       const today = new Date();
@@ -2650,14 +2908,17 @@ app.get("/member-home", async (c) => {
         color: e.color,
       }));
 
-      // Mentions
+      // Mentions — only ones actually targeted at this member.
       const mentions = await sql.sqlQueryByWorkspace("mentions", workspaceId, "*");
       const memberMentions = mentions.filter((m: any) =>
-        m.mentionee === userEmail || m.mentionee === userName || !m.mentionee
+        m.mentionee === userEmail || m.mentionee === userName
       );
 
-      // Activity
+      // Activity — newest first.
       const teamActivity = await sql.sqlQueryByWorkspace("team_activity", workspaceId, "*");
+      teamActivity.sort((a: any, b: any) =>
+        new Date(b.created_at ?? 0).getTime() - new Date(a.created_at ?? 0).getTime()
+      );
 
       // Owner info
       const { data: ownerProfile } = await sql.getDbClient().from("profiles").select("full_name, first_name, last_name, email").eq("user_id", workspace.owner_id).maybeSingle();
@@ -2680,8 +2941,7 @@ app.get("/member-home", async (c) => {
         team_activity: teamActivity.slice(0, 10),
       });
   } catch (e) {
-    console.error("GET /member-home error:", e);
-    return c.json({ error: String(e) }, 500);
+    return serverError(c, "GET /member-home error:", e);
   }
 });
 
@@ -2703,8 +2963,7 @@ app.delete("/workspace-data", async (c) => {
     }
     return c.json({ ok: true });
   } catch (e) {
-    console.error("DELETE /workspace-data error:", e);
-    return c.json({ error: String(e) }, 500);
+    return serverError(c, "DELETE /workspace-data error:", e);
   }
 });
 
@@ -2732,8 +2991,7 @@ app.post("/leave-workspace", async (c) => {
 
     return c.json({ ok: true });
   } catch (e) {
-    console.error("POST /leave-workspace error:", e);
-    return c.json({ error: String(e) }, 500);
+    return serverError(c, "POST /leave-workspace error:", e);
   }
 });
 
@@ -2743,21 +3001,10 @@ app.get("/tasks", async (c) => {
   try {
     const workspace = c.get("workspace");
     const sqlTasks = await sql.sqlQueryByWorkspace("tasks", workspace.id, "*, projects(name)");
-    const mapped = sqlTasks.map((t: any) => ({
-      id: t.legacy_id ?? t.id,
-      title: t.title,
-      description: t.description,
-      status: t.status,
-      priority: t.priority,
-      assignee: t.assignee,
-      project: t.projects?.name ?? "",
-      due: t.due_date,
-      completed: t.status === "completed",
-    }));
+    const mapped = await Promise.all(sqlTasks.map(mapTaskRow));
     return c.json(mapped);
   } catch (e) {
-    console.error("GET /tasks error:", e);
-    return c.json({ error: String(e) }, 500);
+    return serverError(c, "GET /tasks error:", e);
   }
 });
 
@@ -2781,10 +3028,9 @@ app.post("/tasks", async (c) => {
     });
     await logActivity(c, "created", body.title);
     await broadcastAfterWrite(workspace.id, "tasks");
-    return c.json(newTask, 201);
+    return c.json(await mapTaskRow(newTask), 201);
   } catch (e) {
-    console.error("POST /tasks error:", e);
-    return c.json({ error: String(e) }, 500);
+    return serverError(c, "POST /tasks error:", e);
   }
 });
 
@@ -2813,10 +3059,9 @@ app.put("/tasks/:id", async (c) => {
       await addMention(c, body.assignee, `${actor} assigned you to "${body.title ?? sqlTasks[0].title}"`);
     }
     await broadcastAfterWrite(workspace.id, "tasks");
-    return c.json(sqlTask);
+    return c.json(await mapTaskRow(sqlTask));
   } catch (e) {
-    console.error("PUT /tasks/:id error:", e);
-    return c.json({ error: String(e) }, 500);
+    return serverError(c, "PUT /tasks/:id error:", e);
   }
 });
 
@@ -2833,8 +3078,7 @@ app.delete("/tasks/:id", async (c) => {
     await broadcastAfterWrite(workspace.id, "tasks");
     return c.json({ ok: true });
   } catch (e) {
-    console.error("DELETE /tasks/:id error:", e);
-    return c.json({ error: String(e) }, 500);
+    return serverError(c, "DELETE /tasks/:id error:", e);
   }
 });
 
@@ -2844,21 +3088,9 @@ app.get("/projects", async (c) => {
   try {
     const workspace = c.get("workspace");
     const sqlProjects = await sql.sqlQueryByWorkspace("projects", workspace.id, "*");
-    const mapped = sqlProjects.map((p: any) => ({
-      id: p.legacy_id ?? p.id,
-      name: p.name,
-      description: p.description,
-      status: p.status,
-      progress: p.progress,
-      tasks: { total: 0, done: 0 },
-      team: [],
-      due: p.due_date,
-      tags: p.tags ?? [],
-    }));
-    return c.json(mapped);
+    return c.json(sqlProjects.map(mapProjectRow));
   } catch (e) {
-    console.error("GET /projects error:", e);
-    return c.json({ error: String(e) }, 500);
+    return serverError(c, "GET /projects error:", e);
   }
 });
 
@@ -2867,7 +3099,7 @@ app.post("/projects", async (c) => {
     const user = c.get("user");
     const workspace = c.get("workspace");
     const body = await c.req.json();
-    const planId = await getEffectivePlanId(user.id);
+    const planId = await getEffectivePlanForRequest(c, user.id);
 
     // Count existing projects for plan limit check
     const existingProjects = await sql.sqlQueryByWorkspace("projects", workspace.id, "id");
@@ -2894,10 +3126,9 @@ app.post("/projects", async (c) => {
 
     await logActivity(c, "created", body.name);
     await broadcastAfterWrite(workspace.id, "projects");
-    return c.json(newProject, 201);
+    return c.json(mapProjectRow(newProject), 201);
   } catch (e) {
-    console.error("POST /projects error:", e);
-    return c.json({ error: String(e) }, 500);
+    return serverError(c, "POST /projects error:", e);
   }
 });
 
@@ -2919,10 +3150,9 @@ app.put("/projects/:id", async (c) => {
     });
 
     await broadcastAfterWrite(workspace.id, "projects");
-    return c.json(updated);
+    return c.json(mapProjectRow(updated));
   } catch (e) {
-    console.error("PUT /projects/:id error:", e);
-    return c.json({ error: String(e) }, 500);
+    return serverError(c, "PUT /projects/:id error:", e);
   }
 });
 
@@ -2938,8 +3168,7 @@ app.delete("/projects/:id", async (c) => {
     await broadcastAfterWrite(workspace.id, "projects");
     return c.json({ ok: true });
   } catch (e) {
-    console.error("DELETE /projects/:id error:", e);
-    return c.json({ error: String(e) }, 500);
+    return serverError(c, "DELETE /projects/:id error:", e);
   }
 });
 
@@ -2966,10 +3195,9 @@ app.get("/teams", async (c) => {
         tasks: m.tasks,
       })),
     }));
-    return c.json(result.length ? result : SEED_TEAMS);
+    return c.json(result);
   } catch (e) {
-    console.error("GET /teams error:", e);
-    return c.json({ error: String(e) }, 500);
+    return serverError(c, "GET /teams error:", e);
   }
 });
 
@@ -3004,8 +3232,7 @@ app.post("/teams/invite", async (c) => {
       })) ?? [],
     }, 201);
   } catch (e) {
-    console.error("POST /teams/invite error:", e);
-    return c.json({ error: String(e) }, 500);
+    return serverError(c, "POST /teams/invite error:", e);
   }
 });
 
@@ -3029,8 +3256,7 @@ app.put("/teams/member", async (c) => {
     await broadcastAfterWrite(workspace.id, "teams");
     return c.json({ ...member, ...safePatch });
   } catch (e) {
-    console.error("PUT /teams/member error:", e);
-    return c.json({ error: String(e) }, 500);
+    return serverError(c, "PUT /teams/member error:", e);
   }
 });
 
@@ -3049,8 +3275,7 @@ app.delete("/teams/member", async (c) => {
     await broadcastAfterWrite(workspace.id, "teams");
     return c.json({ ok: true });
   } catch (e) {
-    console.error("DELETE /teams/member error:", e);
-    return c.json({ error: String(e) }, 500);
+    return serverError(c, "DELETE /teams/member error:", e);
   }
 });
 
@@ -3070,34 +3295,56 @@ app.get("/calendar", async (c) => {
     });
     return c.json(events);
   } catch (e) {
-    console.error("GET /calendar error:", e);
-    return c.json({ error: String(e) }, 500);
+    return serverError(c, "GET /calendar error:", e);
   }
 });
 
 app.post("/calendar/events", async (c) => {
   try {
     const workspace = c.get("workspace");
-    const { dateKey, event } = await c.req.json();
+    // Accept both {dateKey, event:{...}} and the flat client shape {dateKey, title, time, color}.
+    const body = await c.req.json();
+    const dateKey = body.dateKey;
+    const event = body.event ?? body;
 
+    // dateKey must be YYYY-M-D with a real calendar date — reject malformed
+    // input with 400 instead of crashing on undefined parts.
+    const parts = typeof dateKey === "string" ? dateKey.split("-").map(Number) : [];
+    const [year, month, day] = parts;
+    const validDateKey =
+      parts.length === 3 &&
+      parts.every((n) => Number.isInteger(n)) &&
+      month >= 1 && month <= 12 && day >= 1 && day <= 31 &&
+      year >= 1970 && year <= 2100 &&
+      !isNaN(new Date(year, month - 1, day).getTime()) &&
+      new Date(year, month - 1, day).getDate() === day;
+    if (!validDateKey) {
+      return c.json({ error: "dateKey must be a valid date in YYYY-M-D format" }, 400);
+    }
+    // Validate event fields — title required (1-200 chars); time defaults to
+    // 00:00 unless HH:MM; color defaults unless a #rrggbb hex.
+    const title = typeof event?.title === "string" ? event.title.trim() : "";
+    if (!title || title.length > 200) {
+      return c.json({ error: "event.title must be 1-200 characters" }, 400);
+    }
+    const time = /^\d{2}:\d{2}$/.test(String(event?.time ?? "")) ? String(event.time) : "00:00";
+    const color = /^#[0-9a-fA-F]{6}$/.test(String(event?.color ?? "")) ? String(event.color) : "#6366f1";
     // Parse dateKey (YYYY-M-D) + time ("09:30") into ISO start_time
-    const [year, month, day] = dateKey.split("-").map(Number);
     const startTime = new Date(year, month - 1, day);
-    const [h, m] = (event.time || "00:00").split(":").map(Number);
+    const [h, m] = time.split(":").map(Number);
     startTime.setHours(h || 0, m || 0, 0, 0);
 
     const sqlEvent = await sql.sqlInsert("calendar_events", {
       workspace_id: workspace.id,
-      title: event.title,
+      title,
       start_time: startTime.toISOString(),
-      color: event.color || "#6366f1",
+      color,
     });
 
     await broadcastAfterWrite(workspace.id, "calendar_events");
-    return c.json({ id: sqlEvent.id, title: sqlEvent.title, time: event.time || "00:00", color: sqlEvent.color }, 201);
+    return c.json({ id: sqlEvent.id, title: sqlEvent.title, time, color: sqlEvent.color }, 201);
   } catch (e) {
-    console.error("POST /calendar/events error:", e);
-    return c.json({ error: String(e) }, 500);
+    return serverError(c, "POST /calendar/events error:", e);
   }
 });
 
@@ -3106,12 +3353,15 @@ app.delete("/calendar/events", async (c) => {
     const workspace = c.get("workspace");
     const { id } = await c.req.json();
     if (!id) return c.json({ error: "id is required" }, 400);
-    await sql.sqlDelete("calendar_events", id);
+    const existing = await findByClientId("calendar_events", workspace.id, String(id));
+    if (!existing || existing.workspace_id !== workspace.id) {
+      return c.json({ error: "Event not found" }, 404);
+    }
+    await sql.sqlDelete("calendar_events", existing.id);
     await broadcastAfterWrite(workspace.id, "calendar_events");
     return c.json({ ok: true });
   } catch (e) {
-    console.error("DELETE /calendar/events error:", e);
-    return c.json({ error: String(e) }, 500);
+    return serverError(c, "DELETE /calendar/events error:", e);
   }
 });
 
@@ -3139,8 +3389,7 @@ app.get("/files", async (c) => {
     }));
     return c.json({ files, folders: sqlFolders });
   } catch (e) {
-    console.error("GET /files error:", e);
-    return c.json({ error: String(e) }, 500);
+    return serverError(c, "GET /files error:", e);
   }
 });
 
@@ -3148,21 +3397,42 @@ app.post("/files", async (c) => {
   try {
     const workspace = c.get("workspace");
     const file = await c.req.json();
+    // Validate metadata: name 1-255 chars (basename only), size 0..50MB.
+    const rawName = typeof file.name === "string" ? file.name : "";
+    const baseName = rawName.split(/[/\\]/).pop() ?? "";
+    const safeName = baseName.replace(/[^a-zA-Z0-9._-]/g, "_");
+    if (!baseName || baseName.length > 255) {
+      return c.json({ error: "File name must be 1-255 characters" }, 400);
+    }
+    const size = file.size;
+    if (typeof size !== "number" || !Number.isFinite(size) || size < 0 || size > 50 * 1024 * 1024) {
+      return c.json({ error: "File size must be a number between 0 and 50 MB" }, 400);
+    }
+    const quota = await checkStorageQuota(c, size);
+    if (!quota.allowed) {
+      return c.json(
+        { error: "Storage quota exceeded", used: quota.used, limit: quota.limit },
+        413,
+      );
+    }
+    // Ignore client-supplied storagePath/url — only /files/upload creates real
+    // objects. Server generates the path; url is minted on download.
+    const storage_path = `${workspace.id}/${crypto.randomUUID()}-${safeName}`;
+    const user = c.get("user");
     const sqlFile = await sql.sqlInsert("files", {
       workspace_id: workspace.id,
-      name: file.name,
-      size_bytes: typeof file.size === "number" ? file.size : 0,
+      name: baseName,
+      size_bytes: size,
       mime_type: file.type ? `application/${file.type}` : null,
-      storage_path: file.storagePath || "",
-      url: file.url || "",
-      uploader: file.uploader || "unknown",
+      storage_path,
+      url: "",
+      uploader: user?.email ?? "unknown",
     });
-    await logActivity(c, "uploaded", file.name);
+    await logActivity(c, "uploaded", baseName);
     await broadcastAfterWrite(workspace.id, "files");
-    return c.json({ ...file, id: sqlFile.id }, 201);
+    return c.json({ ...file, id: sqlFile.id, name: baseName }, 201);
   } catch (e) {
-    console.error("POST /files error:", e);
-    return c.json({ error: String(e) }, 500);
+    return serverError(c, "POST /files error:", e);
   }
 });
 
@@ -3171,12 +3441,15 @@ app.put("/files", async (c) => {
     const workspace = c.get("workspace");
     const { id, name } = await c.req.json();
     if (!id) return c.json({ error: "id is required" }, 400);
-    await sql.sqlUpdate("files", id, { name });
+    const existing = await findByClientId("files", workspace.id, String(id));
+    if (!existing || existing.workspace_id !== workspace.id) {
+      return c.json({ error: "File not found" }, 404);
+    }
+    await sql.sqlUpdate("files", existing.id, { name });
     await broadcastAfterWrite(workspace.id, "files");
     return c.json({ ok: true });
   } catch (e) {
-    console.error("PUT /files error:", e);
-    return c.json({ error: String(e) }, 500);
+    return serverError(c, "PUT /files error:", e);
   }
 });
 
@@ -3191,8 +3464,14 @@ app.delete("/files/:name", async (c) => {
     const file = sqlFiles[0];
 
     if (client && file.storage_path) {
-      const { error } = await client.storage.from("workspace-files").remove([file.storage_path]);
-      if (error) console.error("Storage delete error:", error);
+      // Only delete objects under this workspace's prefix — a forged
+      // storage_path must never delete another workspace's objects.
+      if (String(file.storage_path).startsWith(`${workspace.id}/`)) {
+        const { error } = await client.storage.from("workspace-files").remove([file.storage_path]);
+        if (error) console.error("Storage delete error:", error);
+      } else {
+        console.error("DELETE /files/:name: storage_path prefix mismatch, skipped storage delete");
+      }
     }
 
     if (file.size_bytes) {
@@ -3203,8 +3482,7 @@ app.delete("/files/:name", async (c) => {
     await broadcastAfterWrite(workspace.id, "files");
     return c.json({ ok: true });
   } catch (e) {
-    console.error("DELETE /files/:name error:", e);
-    return c.json({ error: String(e) }, 500);
+    return serverError(c, "DELETE /files/:name error:", e);
   }
 });
 
@@ -3228,21 +3506,25 @@ app.patch("/files/share", async (c) => {
       if (client) {
         const { data, error } = await client.storage
           .from("workspace-files")
-          .createSignedUrl(file.storage_path, 60 * 60 * 24 * 7); // 7 days
+          .createSignedUrl(file.storage_path, 60 * 60 * 24 * 7, {
+            download: file.name ?? true,
+          }); // 7 days
         if (!error) url = data.signedUrl;
       }
     }
     await broadcastAfterWrite(workspace.id, "files");
     return c.json({ name: file.name, shared: nextShared, url });
   } catch (e) {
-    console.error("PATCH /files/share error:", e);
-    return c.json({ error: String(e) }, 500);
+    return serverError(c, "PATCH /files/share error:", e);
   }
 });
 
 // POST /files/restore — un-archive every archived file in the workspace.
 app.post("/files/restore", async (c) => {
   try {
+    if (!isOwner(c)) {
+      return c.json({ error: "Only the workspace owner can restore files", code: "owner_required" }, 403);
+    }
     const workspace = c.get("workspace");
     const archived = await sql.sqlQueryByWorkspace("files", workspace.id, "id", { archived: true });
     for (const row of archived) {
@@ -3251,8 +3533,7 @@ app.post("/files/restore", async (c) => {
     await broadcastAfterWrite(workspace.id, "files");
     return c.json({ ok: true, restored: archived.length });
   } catch (e) {
-    console.error("POST /files/restore error:", e);
-    return c.json({ error: String(e) }, 500);
+    return serverError(c, "POST /files/restore error:", e);
   }
 });
 
@@ -3268,9 +3549,35 @@ app.post("/files/upload", async (c) => {
       return c.json({ error: "Missing file field" }, 400);
     }
     if (file.size === 0) return c.json({ error: "Empty file" }, 400);
+    // Hard cap so a single upload can't blow the quota check or Edge memory.
+    const FILE_MAX_BYTES = 50 * 1024 * 1024;
+    if (file.size > FILE_MAX_BYTES) {
+      return c.json({ error: "File must be under 50 MB" }, 413);
+    }
+    // Stored-XSS guard: only allow known-safe types. The check keys on the
+    // client-supplied MIME AND the file's magic bytes (first 4 bytes), because
+    // `file.type` is attacker-controlled and polyglots spoof it.
+    const BLOCKED_MIME = new Set([
+      "text/html",
+      "text/javascript",
+      "application/javascript",
+      "application/x-javascript",
+      "application/xhtml+xml",
+      "image/svg+xml",
+      "text/svg",
+    ]);
+    const mimeType = (file.type || "application/octet-stream").toLowerCase().split(";")[0].trim();
+    if (BLOCKED_MIME.has(mimeType)) {
+      return c.json({ error: "This file type is not allowed" }, 400);
+    }
 
     const rawMeta = form.get("metadata");
-    const parsedMeta = rawMeta && typeof rawMeta === "string" ? JSON.parse(rawMeta) : {};
+    let parsedMeta: any = {};
+    try {
+      parsedMeta = rawMeta && typeof rawMeta === "string" ? JSON.parse(rawMeta) : {};
+    } catch {
+      return c.json({ error: "Invalid metadata JSON" }, 400);
+    }
 
     // 1. Quota check
     const quota = await checkStorageQuota(c, file.size);
@@ -3287,6 +3594,15 @@ app.post("/files/upload", async (c) => {
     const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
     const storagePath = `${workspace.id}/${Date.now()}-${safeName}`;
     const bytes = new Uint8Array(await file.arrayBuffer());
+    // Magic-byte sniff: refuse HTML/SVG polyglots masquerading as other types
+    // (e.g. `application/octet-stream` with `<html`/`<svg` content).
+    const head = new TextDecoder().decode(bytes.slice(0, 256)).trimStart().toLowerCase();
+    if (
+      head.startsWith("<!doctype html") || head.startsWith("<html") ||
+      head.startsWith("<svg") || head.startsWith("<?xml")
+    ) {
+      return c.json({ error: "This file type is not allowed" }, 400);
+    }
 
     const { error: uploadErr } = await client
       .storage
@@ -3341,8 +3657,7 @@ app.post("/files/upload", async (c) => {
 
     return c.json(fileRecord, 201);
   } catch (e) {
-    console.error("POST /files/upload error:", e);
-    return c.json({ error: String(e) }, 500);
+    return serverError(c, "POST /files/upload error:", e);
   }
 });
 
@@ -3361,13 +3676,19 @@ app.get("/files/download/:name", async (c) => {
     const { data, error } = await client
       .storage
       .from("workspace-files")
-      .createSignedUrl(file.storage_path, 60 * 60); // 1 hour
+      .createSignedUrl(file.storage_path, 60 * 60, {
+        // Force attachment disposition so the browser downloads instead of
+        // rendering (stored-XSS mitigation for pre-blacklist files).
+        download: file.name ?? true,
+      }); // 1 hour
 
     if (error) return c.json({ error: error.message }, 500);
-    return c.json({ url: data.signedUrl, expiresIn: 3600 });
+    // Serve as an attachment so the browser downloads instead of rendering
+    // (stored-XSS mitigation for files uploaded before the MIME blacklist).
+    const disposition = `attachment; filename="${String(file.name ?? "download").replace(/["\r\n]/g, "_")}"`;
+    return c.json({ url: data.signedUrl, expiresIn: 3600, content_disposition: disposition });
   } catch (e) {
-    console.error("GET /files/download error:", e);
-    return c.json({ error: String(e) }, 500);
+    return serverError(c, "GET /files/download error:", e);
   }
 });
 
@@ -3377,8 +3698,7 @@ app.get("/files/quota", async (c) => {
     const { used, limit } = await getStorageUsage(c);
     return c.json({ used, limit, unlimited: limit === 0 });
   } catch (e) {
-    console.error("GET /files/quota error:", e);
-    return c.json({ error: String(e) }, 500);
+    return serverError(c, "GET /files/quota error:", e);
   }
 });
 
@@ -3390,8 +3710,7 @@ app.post("/files/folders", async (c) => {
     await broadcastAfterWrite(workspace.id, "file_folders");
     return c.json(newFolder, 201);
   } catch (e) {
-    console.error("POST /files/folders error:", e);
-    return c.json({ error: String(e) }, 500);
+    return serverError(c, "POST /files/folders error:", e);
   }
 });
 
@@ -3420,8 +3739,7 @@ app.get("/settings/:section", async (c) => {
     const data = rows.length ? rows[0].data : seed;
     return c.json(data);
   } catch (e) {
-    console.error("GET /settings/:section error:", e);
-    return c.json({ error: String(e) }, 500);
+    return serverError(c, "GET /settings/:section error:", e);
   }
 });
 
@@ -3429,7 +3747,7 @@ app.put("/settings/:section", async (c) => {
   try {
     const section = c.req.param("section");
     if (!settingsSeedMap[section]) return c.json({ error: "Unknown settings section: " + section }, 400);
-    const OWNER_ONLY_SECTIONS = ["workspace", "members", "billing", "api-keys", "webhooks"];
+    const OWNER_ONLY_SECTIONS = ["workspace", "members", "billing", "api-keys", "webhooks", "audit-log"];
     if (OWNER_ONLY_SECTIONS.includes(section) && !isOwner(c)) {
       return c.json({ error: "Only the workspace owner can change these settings", code: "owner_required" }, 403);
     }
@@ -3444,8 +3762,7 @@ app.put("/settings/:section", async (c) => {
     await broadcastAfterWrite(workspace.id, "workspace_settings");
     return c.json(body);
   } catch (e) {
-    console.error("PUT /settings/:section error:", e);
-    return c.json({ error: String(e) }, 500);
+    return serverError(c, "PUT /settings/:section error:", e);
   }
 });
 
@@ -3515,24 +3832,27 @@ app.get("/financial", async (c) => {
     const data = row?.data ?? SEED_FINANCIAL;
     return c.json(data);
   } catch (e) {
-    console.error("GET /financial error:", e);
-    return c.json({ error: String(e) }, 500);
+    return serverError(c, "GET /financial error:", e);
   }
 });
 
 app.put("/financial", async (c) => {
   try {
+    const gate = await requirePlan(c, "pro");
+    if (gate.response) return gate.response;
     const workspace = c.get("workspace");
     const body = await c.req.json();
     const row = await sql.sqlQueryFirst("workspace_financial", workspace.id, "data");
     const existing = row?.data ?? SEED_FINANCIAL;
-    const updated = { ...existing, ...body };
+    // Allowlist: only known financial sections are mergeable.
+    const FINANCIAL_KEYS = ["revenue", "budget", "cashflow", "quarterly", "expenses", "kpis", "strategicGoals", "headcount", "q2Revenue", "grossMargin"];
+    const safeBody = Object.fromEntries(Object.entries(body ?? {}).filter(([k]) => FINANCIAL_KEYS.includes(k)));
+    const updated = { ...existing, ...safeBody };
     await sql.sqlUpsert("workspace_financial", { workspace_id: workspace.id, data: updated, updated_at: new Date().toISOString() }, "workspace_id");
     await broadcastAfterWrite(workspace.id, "workspace_financial");
     return c.json(updated);
   } catch (e) {
-    console.error("PUT /financial error:", e);
-    return c.json({ error: String(e) }, 500);
+    return serverError(c, "PUT /financial error:", e);
   }
 });
 
@@ -3562,8 +3882,7 @@ app.get("/integrations", async (c) => {
     }));
     return c.json(data.length ? data : SEED_INTEGRATIONS);
   } catch (e) {
-    console.error("GET /integrations error:", e);
-    return c.json({ error: String(e) }, 500);
+    return serverError(c, "GET /integrations error:", e);
   }
 });
 
@@ -3575,13 +3894,28 @@ app.put("/integrations/:name", async (c) => {
     const rows = await sql.sqlQueryByWorkspace("workspace_integrations", workspace.id, "*", { name });
     if (!rows.length) return c.json({ error: "Integration not found" }, 404);
     const integration = rows[0];
-    const updated = { ...integration, ...body, updated_at: new Date().toISOString() };
-    await sql.sqlUpdate("workspace_integrations", integration.id, updated);
+    // Allowlist: only user-editable columns — id/workspace_id/name stay fixed.
+    const allowed: Record<string, (v: any) => any> = {
+      connected: (v) => !!v,
+      last_sync: (v) => (typeof v === "string" ? v.slice(0, 200) : null),
+      lastSync: (v) => (typeof v === "string" ? v.slice(0, 200) : null),
+      scopes: (v) => (typeof v === "string" ? v.slice(0, 500) : ""),
+      description: (v) => (typeof v === "string" ? v.slice(0, 1000) : ""),
+    };
+    const patch: Record<string, any> = {};
+    for (const [k, coerce] of Object.entries(allowed)) {
+      if (body?.[k] !== undefined) {
+        const col = k === "lastSync" ? "last_sync" : k;
+        patch[col] = coerce(body[k]);
+      }
+    }
+    const updated = { ...integration, ...patch, updated_at: new Date().toISOString() };
+    const { id: _dropId, workspace_id: _dropWs, name: _dropName, ...dbPatch } = updated;
+    await sql.sqlUpdate("workspace_integrations", integration.id, dbPatch);
     await broadcastAfterWrite(workspace.id, "workspace_integrations");
     return c.json(updated);
   } catch (e) {
-    console.error("PUT /integrations/:name error:", e);
-    return c.json({ error: String(e) }, 500);
+    return serverError(c, "PUT /integrations/:name error:", e);
   }
 });
 
@@ -3604,18 +3938,19 @@ const SEED_SESSIONS = {
 
 app.get("/sessions", async (c) => {
   try {
+    // NOTE: this list is a device-history placeholder, not live Auth sessions.
     const workspace = c.get("workspace");
     const row = await sql.sqlQueryFirst("workspace_sessions", workspace.id, "data");
     const data = row?.data ?? SEED_SESSIONS;
     return c.json(data);
   } catch (e) {
-    console.error("GET /sessions error:", e);
-    return c.json({ error: String(e) }, 500);
+    return serverError(c, "GET /sessions error:", e);
   }
 });
 
 app.delete("/sessions/:device", async (c) => {
   try {
+    const user = c.get("user");
     const workspace = c.get("workspace");
     const device = decodeURIComponent(c.req.param("device"));
     const row = await sql.sqlQueryFirst("workspace_sessions", workspace.id, "data");
@@ -3623,10 +3958,13 @@ app.delete("/sessions/:device", async (c) => {
     data.active = data.active.filter((s: any) => s.device !== device);
     await sql.sqlUpsert("workspace_sessions", { workspace_id: workspace.id, data, updated_at: new Date().toISOString() }, "workspace_id");
     await broadcastAfterWrite(workspace.id, "workspace_sessions");
+    // Best-effort: also revoke Auth refresh tokens so the device can't refresh.
+    try {
+      if (user?.id) await adminClient().auth.admin.signOut(user.id);
+    } catch { /* best-effort */ }
     return c.json({ ok: true });
   } catch (e) {
-    console.error("DELETE /sessions/:device error:", e);
-    return c.json({ error: String(e) }, 500);
+    return serverError(c, "DELETE /sessions/:device error:", e);
   }
 });
 
@@ -3784,8 +4122,7 @@ app.get("/analytics/metrics", async (c) => {
     }
     return c.json(data);
   } catch (e) {
-    console.error("GET /analytics/metrics error:", e);
-    return c.json({ error: String(e) }, 500);
+    return serverError(c, "GET /analytics/metrics error:", e);
   }
 });
 
@@ -3802,8 +4139,7 @@ app.put("/analytics/metrics", async (c) => {
     await broadcastAfterWrite(workspace.id, "workspace_analytics");
     return c.json(updated);
   } catch (e) {
-    console.error("PUT /analytics/metrics error:", e);
-    return c.json({ error: String(e) }, 500);
+    return serverError(c, "PUT /analytics/metrics error:", e);
   }
 });
 
@@ -3884,24 +4220,26 @@ app.get("/dashboard/ops", async (c) => {
     const data = row?.data ?? SEED_DASHBOARD_OPS;
     return c.json(data);
   } catch (e) {
-    console.error("GET /dashboard/ops error:", e);
-    return c.json({ error: String(e) }, 500);
+    return serverError(c, "GET /dashboard/ops error:", e);
   }
 });
 
 app.put("/dashboard/ops", async (c) => {
   try {
+    const gate = await requirePlan(c, "pro");
+    if (gate.response) return gate.response;
     const workspace = c.get("workspace");
     const body = await c.req.json();
     const row = await sql.sqlQueryFirst("workspace_dashboard", workspace.id, "data", { category: "ops" });
     const existing = row?.data ?? SEED_DASHBOARD_OPS;
-    const updated = { ...existing, ...body };
+    const OPS_KEYS = ["projectTimeline", "resourceData", "capacityData", "dailyData", "monthlyTrend", "performanceMetrics", "riskItems", "forecastData", "deptHighlights"];
+    const safeBody = Object.fromEntries(Object.entries(body ?? {}).filter(([k]) => OPS_KEYS.includes(k)));
+    const updated = { ...existing, ...safeBody };
     await sql.sqlUpsert("workspace_dashboard", { workspace_id: workspace.id, category: "ops", data: updated, updated_at: new Date().toISOString() }, "workspace_id,category");
     await broadcastAfterWrite(workspace.id, "workspace_dashboard");
     return c.json(updated);
   } catch (e) {
-    console.error("PUT /dashboard/ops error:", e);
-    return c.json({ error: String(e) }, 500);
+    return serverError(c, "PUT /dashboard/ops error:", e);
   }
 });
 
@@ -4531,24 +4869,26 @@ app.get("/dashboard/details", async (c) => {
     const data = { ...SEED_DASHBOARD_DETAILS, ...stored };
     return c.json(data);
   } catch (e) {
-    console.error("GET /dashboard/details error:", e);
-    return c.json({ error: String(e) }, 500);
+    return serverError(c, "GET /dashboard/details error:", e);
   }
 });
 
 app.put("/dashboard/details", async (c) => {
   try {
+    const gate = await requirePlan(c, "pro");
+    if (gate.response) return gate.response;
     const workspace = c.get("workspace");
     const body = await c.req.json();
     const row = await sql.sqlQueryFirst("workspace_dashboard", workspace.id, "data", { category: "details" });
     const existing = row?.data ?? SEED_DASHBOARD_DETAILS;
-    const updated = { ...existing, ...body };
+    const DETAILS_KEYS = ["executiveSummary", "execRevenue", "execKpis", "execGoals", "execDepartments", "operations", "opsTimeline", "opsResources", "opsPerformance", "opsCapacity", "financial", "finBudget", "finCashflow", "finExpense", "finPL", "weeklyReport", "weeklyProductivity", "weeklyCompletion", "weeklyBudget", "weeklySatisfaction"];
+    const safeBody = Object.fromEntries(Object.entries(body ?? {}).filter(([k]) => DETAILS_KEYS.includes(k)));
+    const updated = { ...existing, ...safeBody };
     await sql.sqlUpsert("workspace_dashboard", { workspace_id: workspace.id, category: "details", data: updated, updated_at: new Date().toISOString() }, "workspace_id,category");
     await broadcastAfterWrite(workspace.id, "workspace_dashboard");
     return c.json(updated);
   } catch (e) {
-    console.error("PUT /dashboard/details error:", e);
-    return c.json({ error: String(e) }, 500);
+    return serverError(c, "PUT /dashboard/details error:", e);
   }
 });
 
@@ -4577,8 +4917,7 @@ app.get("/milestones/:project", async (c) => {
     const all = row?.data ?? SEED_MILESTONES;
     return c.json(all[project] ?? []);
   } catch (e) {
-    console.error("GET /milestones/:project error:", e);
-    return c.json({ error: String(e) }, 500);
+    return serverError(c, "GET /milestones/:project error:", e);
   }
 });
 
@@ -4596,8 +4935,7 @@ app.put("/milestones/:project/:index", async (c) => {
     await broadcastAfterWrite(workspace.id, "workspace_milestones");
     return c.json(all[project][idx]);
   } catch (e) {
-    console.error("PUT /milestones/:project/:index error:", e);
-    return c.json({ error: String(e) }, 500);
+    return serverError(c, "PUT /milestones/:project/:index error:", e);
   }
 });
 

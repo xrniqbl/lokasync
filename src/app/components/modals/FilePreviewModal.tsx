@@ -59,7 +59,7 @@ export function FilePreviewModal({ file, onClose, onRename }: FilePreviewModalPr
     setBusy("download");
     try {
       const { url } = await api.getDownloadUrl(file.name);
-      window.open(url, "_blank");
+      window.open(url, "_blank", "noopener,noreferrer");
     } catch {
       toast.error("Failed to generate download link");
     } finally {

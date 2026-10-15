@@ -43,6 +43,17 @@ function initialsOf(name: string) {
   );
 }
 
+/** Normalize an Indonesian phone number to E.164.
+ * Accepts "0812…", "62812…", "+62812…" — never double-prefixes.
+ * Copied from OnboardingPage/RegisterPage (not exported there). */
+function normalizePhone(raw: string): string {
+  const digits = raw.replace(/\D/g, "");
+  if (!digits) return "";
+  if (raw.trim().startsWith("+")) return `+${digits}`;
+  if (digits.startsWith("62")) return `+${digits}`;
+  return `+62${digits.replace(/^0+/, "")}`;
+}
+
 export function ProfilePage() {
   const { t } = useLang();
   const { user, session, profile, setProfile } = useAuth();
@@ -76,6 +87,7 @@ export function ProfilePage() {
 
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
+  const [currentPassword, setCurrentPassword] = useState("");
   const [updatingPassword, setUpdatingPassword] = useState(false);
 
   useEffect(() => {
@@ -99,9 +111,15 @@ export function ProfilePage() {
 
     let saved: api.Profile;
     try {
+      const normalizedPhone = normalizePhone(phone);
+      if (!normalizedPhone) {
+        setSaving(false);
+        toast.error(t("profile.phoneRequired"));
+        return;
+      }
       saved = await api.saveProfile(session.access_token, {
         full_name: fullName.trim(),
-        phone: `+62${phone.trim()}`,
+        phone: normalizedPhone,
         job_title: jobTitle.trim(),
         company: company.trim(),
       });
@@ -142,6 +160,10 @@ export function ProfilePage() {
 
   const handleUpdatePassword = async (e: FormEvent) => {
     e.preventDefault();
+    if (!currentPassword) {
+      toast.error(t("profile.currentPasswordRequired"));
+      return;
+    }
     if (newPassword.length < 8) {
       toast.error(t("profile.passwordMin8"));
       return;
@@ -150,13 +172,29 @@ export function ProfilePage() {
       toast.error(t("profile.passwordsDoNotMatch"));
       return;
     }
+    if (!user?.email) {
+      toast.error(t("profile.sessionExpired"));
+      return;
+    }
     setUpdatingPassword(true);
+    // Verify the current password first — Supabase has no change-with-current
+    // endpoint, so re-authenticate before calling updatePassword.
+    const { error: signInError } = await supabase.auth.signInWithPassword({
+      email: user.email,
+      password: currentPassword,
+    });
+    if (signInError) {
+      setUpdatingPassword(false);
+      toast.error(t("profile.currentPasswordIncorrect"));
+      return;
+    }
     const { error } = await updatePassword(newPassword);
     setUpdatingPassword(false);
     if (error) {
       toast.error(error.message);
       return;
     }
+    setCurrentPassword("");
     setNewPassword("");
     setConfirmPassword("");
     toast.success(t("profile.passwordUpdated"));
@@ -291,6 +329,15 @@ export function ProfilePage() {
             </CardHeader>
             <form onSubmit={handleUpdatePassword}>
               <CardPanel className="flex flex-col gap-4">
+                <Field>
+                  <FieldLabel>{t("profile.currentPassword")}</FieldLabel>
+                  <PasswordInput
+                    value={currentPassword}
+                    onChange={setCurrentPassword}
+                    autoComplete="current-password"
+                    required
+                  />
+                </Field>
                 <Field>
                   <FieldLabel>{t("profile.newPassword")}</FieldLabel>
                   <PasswordInput

@@ -95,11 +95,20 @@ export function FilesPage() {
   const [renamingFile, setRenamingFile] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
   const renameRef = useRef<HTMLInputElement>(null);
+  // Race guard: only the latest files fetch may write state.
+  const seqRef = useRef(0);
+  // Ref mirror so the file deep-link can resolve without calling setState
+  // inside a setFiles updater (React side-effect violation).
+  const filesRef = useRef<FileItem[]>([]);
+  filesRef.current = files;
+  const pendingFileSlugRef = useRef<string | null>(null);
 
   const { activeWorkspace } = useWorkspace();
   useRealtimeWorkspace(activeWorkspace?.id ?? null, (table) => {
     if (table === "files" || table === "file_folders") {
+      const seq = ++seqRef.current;
       api.getFiles().then(({ files: f, folders: fo }) => {
+        if (seq !== seqRef.current) return;
         setFiles(f);
         setFolders(fo);
       }).catch((e) => console.error("Realtime files refresh error:", e));
@@ -107,10 +116,13 @@ export function FilesPage() {
   });
 
   useEffect(() => {
+    const seq = ++seqRef.current;
     api.getFiles().then(({ files: f, folders: fo }) => {
+      if (seq !== seqRef.current) return;
       setFiles(f);
       setFolders(fo);
     }).catch((e) => {
+      if (seq !== seqRef.current) return;
       console.error("Failed to load files:", e);
       toast.error("Failed to load files");
     });
@@ -126,13 +138,32 @@ export function FilesPage() {
     else if (subSection.startsWith("file-")) {
       const slug = subSection.slice("file-".length);
       setTab("Recent"); setCurrentFolder(null);
-      setFiles((prev) => { const f = prev.find((x) => slugify(x.name) === slug); if (f) setPreviewFile(f); return prev; });
+      // Resolve outside a setState updater — setPreviewFile inside an
+      // updater is a React side-effect violation.
+      const found = filesRef.current.find((x) => slugify(x.name) === slug) ?? null;
+      if (found) setPreviewFile(found);
+      else pendingFileSlugRef.current = slug;
     }
   }, [subSection]);
 
+  // A deep link may arrive before the file list loads; retry once files arrive.
+  useEffect(() => {
+    if (!pendingFileSlugRef.current || files.length === 0) return;
+    const found = files.find((x) => slugify(x.name) === pendingFileSlugRef.current) ?? null;
+    if (found) {
+      setPreviewFile(found);
+      pendingFileSlugRef.current = null;
+    }
+  }, [files]);
+
   const nonArchivedFiles = files.filter((f) => !f.archived);
   const archivedFiles = files.filter((f) => f.archived);
-  const displayFiles = currentFolder ? nonArchivedFiles.filter((f) => f.name.includes(currentFolder.slice(0, 4))) : nonArchivedFiles;
+  // FileItem carries no folderId (the API exposes no file→folder linkage),
+  // so a folder view matches on the full folder name — never a truncated
+  // prefix, which false-positives on unrelated names.
+  const displayFiles = currentFolder
+    ? nonArchivedFiles.filter((f) => f.name.toLowerCase().includes(currentFolder.toLowerCase()))
+    : nonArchivedFiles;
   const filtered = tab === "Shared"
     ? nonArchivedFiles.filter((f) => f.shared)
     : tab === "Archived"
@@ -142,10 +173,17 @@ export function FilesPage() {
     : displayFiles;
 
   const deleteFile = async (name: string) => {
-    setFiles((prev) => prev.filter((f) => f.name !== name));
-    toast.success(t("filesPage.fileDeleted").replace("{name}", name.slice(0, 30)));
-    try { await api.deleteFile(name); }
-    catch (e) { console.error("Failed to delete file:", e); }
+    const prev = files;
+    setFiles((p) => p.filter((f) => f.name !== name));
+    try {
+      await api.deleteFile(name);
+      toast.success(t("filesPage.fileDeleted").replace("{name}", name.slice(0, 30)));
+    } catch (e) {
+      console.error("Failed to delete file:", e);
+      // Server rejected the delete — roll back so the file doesn't vanish.
+      setFiles(prev);
+      toast.error(t("filesPage.failedToDeleteFile"));
+    }
   };
 
   const startRename = (name: string) => {
@@ -157,26 +195,55 @@ export function FilesPage() {
   const commitRename = async (oldName: string) => {
     const newName = renameValue.trim();
     if (newName && newName !== oldName) {
-      setFiles((prev) => prev.map((f) => f.name === oldName ? { ...f, name: newName } : f));
-      toast.success(t("filesPage.fileRenamed"));
-      try { await api.renameFile(oldName, newName); }
-      catch (e) { console.error("Failed to rename file:", e); }
+      const target = files.find((f) => f.name === oldName);
+      if (!target) {
+        toast.error(t("filesPage.failedToRenameFile"));
+      } else {
+        const prev = files;
+        setFiles((p) => p.map((f) => f.name === oldName ? { ...f, name: newName } : f));
+        try {
+          // Rename is id-keyed server-side ({id, name}); fall back to the
+          // legacy name path for seed rows with no id.
+          await api.renameFile((target as { id?: string }).id ?? oldName, newName);
+          toast.success(t("filesPage.fileRenamed"));
+        } catch (e) {
+          console.error("Failed to rename file:", e);
+          setFiles(prev);
+          toast.error(t("filesPage.failedToRenameFile"));
+        }
+      }
     }
     setRenamingFile(null);
     setRenameValue("");
   };
 
   const handleFileRenameFromPreview = async (oldName: string, newName: string) => {
-    setFiles((prev) => prev.map((f) => f.name === oldName ? { ...f, name: newName } : f));
-    try { await api.renameFile(oldName, newName); }
-    catch (e) { console.error("Failed to rename file:", e); }
+    const target = files.find((f) => f.name === oldName);
+    if (!target) return;
+    const prev = files;
+    setFiles((p) => p.map((f) => f.name === oldName ? { ...f, name: newName } : f));
+    try {
+      await api.renameFile((target as { id?: string }).id ?? oldName, newName);
+    } catch (e) {
+      console.error("Failed to rename file:", e);
+      setFiles(prev);
+      toast.error(t("filesPage.failedToRenameFile"));
+    }
   };
 
   const handleDownload = async (fileName: string) => {
+    // Files without a storagePath are legacy/seed rows with no real object —
+    // there is nothing to sign, so say so instead of faking a download.
+    const file = files.find((f) => f.name === fileName);
+    if (!file?.storagePath) {
+      toast.error(t("filesPage.failedToGenerateDownload"));
+      return;
+    }
     try {
       const { url } = await api.getDownloadUrl(fileName);
-      window.open(url, "_blank");
+      window.open(url, "_blank", "noopener,noreferrer");
     } catch (e) {
+      console.error("Failed to generate download link:", e);
       toast.error(t("filesPage.failedToGenerateDownload"));
     }
   };
@@ -367,8 +434,17 @@ export function FilesPage() {
 
       <UploadModal open={showUpload} onClose={() => setShowUpload(false)} onUpload={(uploaded) => setFiles((prev) => [uploaded, ...prev])} />
       <NewFolderModal open={showNewFolder} onClose={() => setShowNewFolder(false)} onAdd={async (f) => {
-        setFolders((prev) => [f, ...prev]);
-        try { await api.createFolder(f); } catch (e) { console.error("Failed to save folder:", e); }
+        const prev = folders;
+        setFolders((p) => [f, ...p]);
+        try {
+          await api.createFolder(f);
+          toast.success(`Folder "${f.name}" created`);
+        } catch (e) {
+          console.error("Failed to save folder:", e);
+          setFolders(prev);
+          toast.error("Failed to create folder");
+          throw e;
+        }
       }} />
       <FilePreviewModal file={previewFile} onClose={() => setPreviewFile(null)} onRename={handleFileRenameFromPreview} />
     </div>

@@ -1,36 +1,41 @@
 import { useNavigate } from "react-router";
 import { useLang } from "../../i18n";
+import { useNavigation } from "../NavigationContext";
 import { Plus, Clock, Video, Upload } from "lucide-react";
 
-export function QuickActionsGrid({ onRefresh }: { onRefresh?: () => void }) {
+export function QuickActionsGrid() {
   const { t } = useLang();
   const navigate = useNavigate();
-  void onRefresh;
+  const { navigate: goTo } = useNavigation();
 
   const actions = [
     {
       icon: Plus,
       label: t("memberHome.newTask"),
       href: "/app/tasks",
-      onClick: () => navigate("/app/tasks"),
+      onClick: () => goTo("tasks", "new-task"),
     },
     {
       icon: Clock,
-      label: t("memberHome.logTime"),
+      // No time-tracking feature exists — label matches the real destination
+      // (task list) instead of promising a missing "log time" flow.
+      label: t("memberHome.viewAllTasks"),
       href: "/app/tasks",
       onClick: () => navigate("/app/tasks"),
     },
     {
       icon: Video,
-      label: t("memberHome.joinStandup"),
+      // No standup/meeting feature exists — label matches the real
+      // destination (today's calendar) instead of a "join" action.
+      label: t("memberHome.viewCalendar"),
       href: "/app/calendar",
-      onClick: () => navigate("/app/calendar"),
+      onClick: () => goTo("calendar", "today"),
     },
     {
       icon: Upload,
       label: t("memberHome.uploadFile"),
       href: "/app/files",
-      onClick: () => navigate("/app/files"),
+      onClick: () => goTo("files", "upload"),
     },
   ];
 

@@ -1,9 +1,10 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { toast } from "sonner";
 import { useNavigation } from "./NavigationContext";
 import { useLang } from "../i18n";
 import * as api from "../utils/api";
 import type { AnalyticsMetrics } from "../utils/api";
+import { PlanGate } from "./PlanGate";
 import { useWorkspace } from "../workspace/WorkspaceContext";
 import { useRealtimeWorkspace } from "../realtime";
 import {
@@ -30,6 +31,19 @@ const CustomTooltip = ({ active, payload, label }: {
   return null;
 };
 
+function SampleBadge() {
+  return (
+    <span
+      title="Sample data — illustrative, not derived from your workspace tasks"
+      className="ml-2 inline-block align-middle rounded border border-amber-700/60 bg-amber-950/40 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-amber-400"
+    >
+      Sample
+    </span>
+  );
+}
+
+const clampPct = (n: number) => Math.max(0, Math.min(100, Math.round(n)));
+
 type AnalyticsView =
   | "performance"
   | "task-completion"
@@ -48,16 +62,58 @@ export function AnalyticsPage() {
   const [activeView, setActiveView] = useState<AnalyticsView>("performance");
   const [liveDistribution, setLiveDistribution] = useState<{ name: string; value: number; color: string }[]>([]);
   const [livePerformers, setLivePerformers] = useState<{ name: string; initials: string; tasks: number; rate: number }[]>([]);
-  const [liveMetrics, setLiveMetrics] = useState<{ total: number; completed: number; inProgress: number; todo: number } | null>(null);
+  const [liveMetrics, setLiveMetrics] = useState<{ total: number; completed: number; inProgress: number; todo: number; overdue: number } | null>(null);
   const [analyticsMetrics, setAnalyticsMetrics] = useState<AnalyticsMetrics | null>(null);
+  const [prevSnapshot, setPrevSnapshot] = useState<AnalyticsMetrics | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
+  // True when the latest refresh was triggered by a realtime event (the data
+  // may just be our own save echoing back) — the debounced auto-save is
+  // skipped for those runs to break the save→realtime→save loop.
+  const realtimeRef = useRef(false);
+  const saveTimerRef = useRef(0);
+  // Race guard: only the latest analytics fetch may write state.
+  const seqRef = useRef(0);
+  // Last-saved snapshot payload — auto-save fires only when computed metrics
+  // actually differ from what the server already has (only-when-dirty).
+  const lastSavedRef = useRef<string | null>(null);
 
   const { activeWorkspace } = useWorkspace();
   useRealtimeWorkspace(activeWorkspace?.id ?? null, (table) => {
     if (table === "workspace_analytics" || table === "tasks" || table === "teams") {
+      realtimeRef.current = true;
       setRefreshKey((k) => k + 1);
     }
   });
+
+  // Persist the current snapshot to the server (pro-gated endpoint).
+  const saveSnapshot = async (metrics: AnalyticsMetrics, silent: boolean) => {
+    try {
+      await api.saveAnalyticsMetrics({
+        completionSeries: metrics.completionSeries,
+        productivitySeries: metrics.productivitySeries,
+        efficiencyScores: metrics.efficiencyScores,
+        teamEfficiency: metrics.teamEfficiency,
+        benchmarks: metrics.benchmarks,
+        taskMetrics: metrics.taskMetrics,
+        timeTracking: metrics.timeTracking,
+      });
+      if (!silent) toast.success("Snapshot saved");
+    } catch (e) {
+      // 403 = plan-gated endpoint on lower plans; PlanGate already explains it.
+      if (e instanceof api.ApiError && e.status === 403) return;
+      console.error("Analytics snapshot save failed:", e);
+      toast.error("Failed to save snapshot");
+    }
+  };
+
+  // Explicit user action: save only when the user clicks "Save snapshot"
+  // (plus a debounced auto-save for non-realtime refreshes, see below).
+  const handleSaveSnapshot = () => {
+    if (analyticsMetrics) void saveSnapshot(analyticsMetrics, false);
+    else toast.error("Nothing to save yet");
+  };
+
+  useEffect(() => () => window.clearTimeout(saveTimerRef.current), []);
 
   const viewLabels: Record<AnalyticsView, string> = {
     performance: t("analytics.performance"),
@@ -76,20 +132,37 @@ export function AnalyticsPage() {
   const q = Math.floor(now.getMonth() / 3) + 1;
 
   useEffect(() => {
+    const fromRealtime = realtimeRef.current;
+    realtimeRef.current = false;
+    const seq = ++seqRef.current;
     // Fetch tasks + teams for live KPI cards and computed analytics, plus the
     // last server-persisted snapshot (best-effort: free plans get 403, offline
     // gets network error). Live task/team data is the source of truth; the
     // server snapshot is only a fallback when the workspace has no tasks yet.
+    // Failures surface via toast (except plan-gated 403s, which PlanGate owns).
     Promise.all([
       api.getTasks(),
       api.getTeams(),
-      api.getAnalyticsMetrics().catch(() => null),
+      api.getAnalyticsMetrics().catch((e) => {
+        if (!(e instanceof api.ApiError && e.status === 403)) {
+          console.error("Analytics snapshot fetch failed:", e);
+          toast.error("Failed to load saved snapshot");
+        }
+        return null;
+      }),
     ]).then(([tasks, teams, serverSnap]) => {
+      if (seq !== seqRef.current) return;
+      if (serverSnap) setPrevSnapshot(serverSnap);
       const total = tasks.length;
       const completed = tasks.filter((t) => t.status === "completed" || t.completed).length;
       const inProgress = tasks.filter((t) => t.status === "in-progress").length;
       const todo = tasks.filter((t) => t.status === "todo").length;
-      setLiveMetrics({ total, completed, inProgress, todo });
+      const nowTs = Date.now();
+      const overdue = tasks.filter((t) => {
+        if (!t.due || t.status === "completed" || t.completed) return false;
+        return new Date(t.due).getTime() < nowTs;
+      }).length;
+      setLiveMetrics({ total, completed, inProgress, todo, overdue });
 
       const projectCounts: Record<string, number> = {};
       tasks.forEach((t) => { projectCounts[t.project] = (projectCounts[t.project] ?? 0) + 1; });
@@ -110,7 +183,7 @@ export function AnalyticsPage() {
 
       // ── Compute analyticsMetrics from real task/team data ──────────────────
       const uniqueProjects = Object.keys(projectCounts).length;
-      const completionRate = total > 0 ? Math.round((completed / total) * 100) : 0;
+      const completionRate = total > 0 ? clampPct((completed / total) * 100) : 0;
       const reviewCount = tasks.filter((t) => t.status === "review").length;
 
       const assigneeNames = Object.keys(assigneeStats);
@@ -126,15 +199,20 @@ export function AnalyticsPage() {
         return Array.from({ length: buckets }, (_, i) => base + (i < rem ? 1 : 0));
       };
 
-      // completionSeries
-      const makeCompletion = (buckets: number, prefix: string) =>
-        distribute(completed, buckets).map((c, i) => ({
+      // completionSeries — distribute real completed counts across buckets;
+      // the target line is the peak bucket actual (a real stretch goal).
+      const makeCompletion = (buckets: number, prefix: string) => {
+        const arr = distribute(completed, buckets);
+        const peak = Math.max(...arr, 0);
+        return arr.map((c, i) => ({
           week: `${prefix}${i + 1}`,
           completed: c,
-          target: c + 5,
+          target: peak,
         }));
+      };
 
-      // productivitySeries — distribute assignees into dev/design/qa buckets
+      // productivitySeries — derived from real per-assignee task totals,
+      // grouped into dev/design/qa cohorts by assignee order.
       const makeProductivity = (buckets: number, prefix: string) => {
         let devTotal = 0, designTotal = 0, qaTotal = 0;
         assigneeNames.forEach((name, i) => {
@@ -157,32 +235,34 @@ export function AnalyticsPage() {
       // efficiencyScores
       const efficiencyScores = Object.values(assigneeStats).map((s) => ({
         team: s.name,
-        score: s.total > 0 ? Math.round((s.completed / s.total) * 100) : 0,
+        score: s.total > 0 ? clampPct((s.completed / s.total) * 100) : 0,
         color: assigneeColorMap[s.name],
       })).sort((a, b) => b.score - a.score);
 
       // teamEfficiency
       const overall = efficiencyScores.length > 0
-        ? Math.round(efficiencyScores.reduce((sum, e) => sum + e.score, 0) / efficiencyScores.length)
+        ? clampPct(efficiencyScores.reduce((sum, e) => sum + e.score, 0) / efficiencyScores.length)
         : 0;
       const sprintVelocity = uniqueProjects > 0 ? Math.round(completed / uniqueProjects) : 0;
-      const blockedTime = total > 0 ? Math.round((reviewCount / total) * 100) : 0;
+      const blockedTime = total > 0 ? clampPct((reviewCount / total) * 100) : 0;
       const reworkRate = total > 0
-        ? Math.round((tasks.filter((t) => t.status === "todo").length / total) * 100)
+        ? clampPct((tasks.filter((t) => t.status === "todo").length / total) * 100)
         : 0;
 
       const byTeam = Object.values(assigneeStats).map((s) => ({
         team: s.name,
-        score: s.total > 0 ? Math.round((s.completed / s.total) * 100) : 0,
+        score: s.total > 0 ? clampPct((s.completed / s.total) * 100) : 0,
         velocity: s.total,
-        blocked: Math.round((s.total / Math.max(total, 1)) * 100),
+        blocked: clampPct((s.total / Math.max(total, 1)) * 100),
         color: assigneeColorMap[s.name],
       }));
 
-      const sprintHistory = Array.from({ length: 4 }, (_, i) => {
-        const goal = Math.max(1, completed);
-        const done = Math.max(0, Math.min(goal, completed - 3 + i));
-        const velocity = Math.max(0, sprintVelocity - 2 + i);
+      // sprintHistory — derived from real completed/velocity totals (sample
+      // shape: even bucket split across the last 4 sprints).
+      const sprintBuckets = distribute(completed, 4);
+      const sprintHistory = sprintBuckets.map((done, i) => {
+        const goal = Math.max(done, distribute(Math.max(total, completed), 4)[i]);
+        const velocity = distribute(Math.max(sprintVelocity * 4, completed), 4)[i];
         return {
           sprint: `Sprint ${i + 1}`,
           velocity,
@@ -192,24 +272,27 @@ export function AnalyticsPage() {
         };
       });
 
-      // benchmarks
-      const overdueCompleted = tasks.filter((t) => {
-        if (!t.due || (t.status === "completed" || t.completed)) return false;
-        return new Date(t.due) < new Date();
+      // benchmarks — count completed tasks consistently; on-time means
+      // completed AND not overdue (both draw from the completed population).
+      const completedOverdue = tasks.filter((t) => {
+        if (!(t.status === "completed" || t.completed) || !t.due) return false;
+        return new Date(t.due).getTime() < nowTs;
       }).length;
       const onTimeDelivery = completed > 0
-        ? Math.round(((completed - overdueCompleted) / completed) * 100)
+        ? clampPct(((completed - completedOverdue) / completed) * 100)
         : 0;
       const qualityScore = Math.min(95, Math.max(80, 80 + Math.round(completionRate * 0.15)));
       const teamRank = completionRate >= 90 ? "Top 10%" : completionRate >= 70 ? "Top 25%" : completionRate >= 50 ? "Top 50%" : "Below 50%";
 
+      // The industry column is illustrative sample data, not measured —
+      // derive it deterministically from the team's own score and label it.
       const comparison = (efficiencyScores.length > 0
         ? efficiencyScores.map((e) => ({
             label: e.team,
             team: e.score,
-            industry: Math.max(0, Math.min(100, e.score - 10 + ((e.score * 7) % 21))),
+            industry: clampPct(e.score - 8),
           }))
-        : [{ label: "Overall", team: overall, industry: Math.round(overall * 0.9) }]
+        : [{ label: "Overall", team: overall, industry: clampPct(overall - 8) }]
       ).slice(0, 4);
 
       const history = [
@@ -222,7 +305,9 @@ export function AnalyticsPage() {
       // taskMetrics
       const avgCycleTime = `${Math.round(tasks.length * 0.3)}d`;
 
-      // timeTracking
+      // timeTracking — hours roll up from real task counts per member
+      // (assignee totals when the roster has no task counts); the headline
+      // rates below are derived from those real totals.
       const memberList = teams.flatMap((t) => t.members);
       const timeByTeam = memberList.length > 0
         ? memberList.map((m, i) => ({
@@ -235,6 +320,38 @@ export function AnalyticsPage() {
             hours: s.total * 2 + 10,
             color: assigneeColorMap[s.name],
           }));
+      const totalTracked = timeByTeam.reduce((sum, x) => sum + x.hours, 0);
+      const memberCount = Math.max(timeByTeam.length, 1);
+      const avgHoursPerDay = Math.round((totalTracked / memberCount / 5) * 10) / 10;
+      // Dev/design/qa allocation shares come from real productivity totals;
+      // meetings + documentation are fixed illustrative slices.
+      const prodTotals = (() => {
+        let dev = 0, design = 0, qa = 0;
+        assigneeNames.forEach((name, i) => {
+          const s = assigneeStats[name];
+          if (i % 3 === 0) dev += s.total;
+          else if (i % 3 === 1) design += s.total;
+          else qa += s.total;
+        });
+        return { dev, design, qa };
+      })();
+      const prodSum = prodTotals.dev + prodTotals.design + prodTotals.qa;
+      const allocBase = prodSum > 0
+        ? [
+            { label: "Development", raw: (prodTotals.dev / prodSum) * 80, color: "#6366f1" },
+            { label: "Design", raw: (prodTotals.design / prodSum) * 80, color: "#8b5cf6" },
+            { label: "QA & Testing", raw: (prodTotals.qa / prodSum) * 80, color: "#10b981" },
+          ]
+        : [
+            { label: "Development", raw: 28, color: "#6366f1" },
+            { label: "Design", raw: 20, color: "#8b5cf6" },
+            { label: "QA & Testing", raw: 16, color: "#10b981" },
+          ];
+      const allocation = [
+        ...allocBase.map((a) => ({ label: a.label, pct: Math.round(a.raw), color: a.color })),
+        { label: "Meetings", pct: 12, color: "#f59e0b" },
+        { label: "Documentation", pct: 8, color: "#3b82f6" },
+      ];
 
       const computedMetrics: AnalyticsMetrics = {
         completionSeries: {
@@ -271,18 +388,12 @@ export function AnalyticsPage() {
           overdueChange: `-${Math.min(todo, 10)}`,
         },
         timeTracking: {
-          avgHoursPerDay: 6 + (completed % 3),
-          billableHours: completed * 4,
-          overtimeRate: Math.round((inProgress / Math.max(total, 1)) * 100),
-          focusTime: 3 + (completed % 4),
+          avgHoursPerDay,
+          billableHours: Math.round(totalTracked * 0.8),
+          overtimeRate: clampPct((reviewCount / Math.max(total, 1)) * 100),
+          focusTime: Math.round(avgHoursPerDay * 0.6 * 10) / 10,
           byTeam: timeByTeam,
-          allocation: [
-            { label: "Development", pct: 35, color: "#6366f1" },
-            { label: "Design", pct: 25, color: "#8b5cf6" },
-            { label: "QA & Testing", pct: 20, color: "#10b981" },
-            { label: "Meetings", pct: 12, color: "#f59e0b" },
-            { label: "Documentation", pct: 8, color: "#3b82f6" },
-          ],
+          allocation,
         },
       };
 
@@ -293,19 +404,26 @@ export function AnalyticsPage() {
         tasks.length === 0 && serverSnap ? { ...computedMetrics, ...serverSnap } : computedMetrics;
       setAnalyticsMetrics(merged);
 
-      // Persist the live-computed snapshot to the server (pro-gated endpoint)
-      // so other devices share the same analytics state. Failures are
-      // non-fatal: the page already renders from local data.
-      api.saveAnalyticsMetrics({
-        completionSeries: merged.completionSeries,
-        productivitySeries: merged.productivitySeries,
-        efficiencyScores: merged.efficiencyScores,
-        teamEfficiency: merged.teamEfficiency,
-        benchmarks: merged.benchmarks,
-        taskMetrics: merged.taskMetrics,
-        timeTracking: merged.timeTracking,
-      }).catch((e) => console.error("Analytics snapshot save skipped:", e));
-    }).catch((e) => console.error("Analytics failed to load data:", e));
+      // Debounced auto-save for explicitly-loaded data only. Runs triggered
+      // by a realtime refresh are skipped: the refresh may be our own save
+      // echoing back, and re-saving it would loop forever. Fires only when
+      // the computed payload differs from the last save (only-when-dirty).
+      // Users persist via the "Save snapshot" button (handleSaveSnapshot).
+      if (!fromRealtime) {
+        window.clearTimeout(saveTimerRef.current);
+        saveTimerRef.current = window.setTimeout(() => {
+          if (seq !== seqRef.current) return;
+          const payload = JSON.stringify(merged);
+          if (payload === lastSavedRef.current) return;
+          lastSavedRef.current = payload;
+          void saveSnapshot(merged, true);
+        }, 5000);
+      }
+    }).catch((e) => {
+      if (seq !== seqRef.current) return;
+      console.error("Analytics failed to load data:", e);
+      toast.error("Failed to load analytics");
+    });
   }, [refreshKey]);
 
   useEffect(() => {
@@ -349,7 +467,10 @@ export function AnalyticsPage() {
       const a = document.createElement("a");
       a.href = url;
       a.download = `analytics-${activeView}-${periodKey}.csv`;
+      // Attached to the DOM: detached-anchor clicks are ignored by Firefox.
+      document.body.appendChild(a);
       a.click();
+      a.remove();
       URL.revokeObjectURL(url);
       toast.success("Report exported as CSV");
     } catch (e) {
@@ -359,6 +480,7 @@ export function AnalyticsPage() {
   };
 
   return (
+    <PlanGate min="pro" feature="Analytics">
     <div className="flex flex-col h-full font-['Lexend:Regular',_sans-serif] overflow-y-auto">
       <div className="p-4 md:p-6 lg:p-8 space-y-5 lg:space-y-6">
         {/* Header */}
@@ -377,6 +499,7 @@ export function AnalyticsPage() {
               <option value="Last 3 months">{t("analytics.last3Months")}</option>
               <option value="This quarter">{t("analytics.thisQuarter")}</option>
             </select>
+            <button onClick={handleSaveSnapshot} title="Persist the current metrics to the server" className="bg-indigo-600 hover:bg-indigo-500 text-white text-[12px] lg:text-[13px] px-3 py-2 rounded-lg transition-colors">Save snapshot</button>
             <button onClick={handleExport} className="border border-neutral-800 hover:bg-neutral-800 text-neutral-400 hover:text-neutral-200 text-[12px] lg:text-[13px] px-3 py-2 rounded-lg transition-colors">{t("analytics.export")}</button>
           </div>
         </div>
@@ -438,6 +561,9 @@ export function AnalyticsPage() {
                 </div>
               </div>
               <ResponsiveContainer width="100%" height={180}>
+                {(analyticsMetrics?.completionSeries?.[periodKey] ?? []).length === 0 ? (
+                  <div className="flex h-full items-center justify-center text-[12px] text-neutral-600">No data</div>
+                ) : (
                 <BarChart data={analyticsMetrics?.completionSeries?.[periodKey] ?? []} barSize={12}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#1f1f1f" vertical={false} />
                   <XAxis dataKey="week" tick={{ fill: "#525252", fontSize: 10 }} axisLine={false} tickLine={false} />
@@ -446,6 +572,7 @@ export function AnalyticsPage() {
                   <Bar dataKey="completed" name={t("analytics.actual")} fill="#818cf8" radius={[3, 3, 0, 0]} />
                   <Bar dataKey="target" name={t("analytics.target")} fill="#262626" radius={[3, 3, 0, 0]} />
                 </BarChart>
+                )}
               </ResponsiveContainer>
             </div>
             <div className="bg-[#141414] border border-neutral-800/60 rounded-xl p-4 lg:p-5">
@@ -453,6 +580,10 @@ export function AnalyticsPage() {
                 <div className="text-neutral-50 text-[13px] lg:text-[14px] font-['Lexend:SemiBold',_sans-serif]">{t("analytics.taskDistribution")}</div>
                 <div className="text-neutral-500 text-[11px] lg:text-[12px] mt-0.5">{t("analytics.byTeam")}</div>
               </div>
+              {liveDistribution.length === 0 ? (
+                <div className="flex items-center justify-center py-6 text-[12px] text-neutral-600">No data</div>
+              ) : (
+              <>
               <div className="flex justify-center mb-3">
                 <ResponsiveContainer width={130} height={130}>
                   <PieChart>
@@ -473,6 +604,8 @@ export function AnalyticsPage() {
                   </div>
                 ))}
               </div>
+              </>
+              )}
             </div>
           </div>
         )}
@@ -496,19 +629,26 @@ export function AnalyticsPage() {
                 </div>
               </div>
               <ResponsiveContainer width="100%" height={160}>
+                {(analyticsMetrics?.productivitySeries?.[periodKey] ?? []).length === 0 ? (
+                  <div className="flex h-full items-center justify-center text-[12px] text-neutral-600">No data</div>
+                ) : (
                 <LineChart data={analyticsMetrics?.productivitySeries?.[periodKey] ?? []}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#1f1f1f" vertical={false} />
                   <XAxis dataKey="month" tick={{ fill: "#525252", fontSize: 10 }} axisLine={false} tickLine={false} />
-                  <YAxis domain={[0, 100]} tick={{ fill: "#525252", fontSize: 10 }} axisLine={false} tickLine={false} width={24} />
+                  <YAxis domain={[0, 'dataMax + 10']} tick={{ fill: "#525252", fontSize: 10 }} axisLine={false} tickLine={false} width={24} />
                   <Tooltip content={<CustomTooltip />} />
                   <Line type="monotone" dataKey="dev" name={t("analytics.dev")} stroke="#818cf8" strokeWidth={2} dot={false} activeDot={{ r: 3 }} />
                   <Line type="monotone" dataKey="design" name={t("analytics.design")} stroke="#a78bfa" strokeWidth={2} dot={false} activeDot={{ r: 3 }} />
                   <Line type="monotone" dataKey="qa" name={t("analytics.qa")} stroke="#34d399" strokeWidth={2} dot={false} activeDot={{ r: 3 }} />
                 </LineChart>
+                )}
               </ResponsiveContainer>
             </div>
             <div className="bg-[#141414] border border-neutral-800/60 rounded-xl p-4 lg:p-5">
               <div className="text-neutral-50 text-[13px] lg:text-[14px] font-['Lexend:SemiBold',_sans-serif] mb-4">{t("analytics.efficiencyScores")}</div>
+              {(analyticsMetrics?.efficiencyScores ?? []).length === 0 ? (
+                <div className="py-4 text-center text-[12px] text-neutral-600">No data</div>
+              ) : (
               <div className="space-y-3">
                 {(analyticsMetrics?.efficiencyScores ?? []).map((t) => (
                   <div key={t.team}>
@@ -522,6 +662,7 @@ export function AnalyticsPage() {
                   </div>
                 ))}
               </div>
+              )}
             </div>
           </div>
         )}
@@ -531,6 +672,9 @@ export function AnalyticsPage() {
           <div className={activeView === "top-performers" ? "" : "grid grid-cols-1 lg:grid-cols-3 gap-4"}>
             <div className={`bg-[#141414] border border-neutral-800/60 rounded-xl p-4 lg:p-5 ${activeView === "top-performers" ? "" : ""}`}>
               <div className="text-neutral-50 text-[13px] lg:text-[14px] font-['Lexend:SemiBold',_sans-serif] mb-4">{t("analytics.topPerformers")}</div>
+              {livePerformers.length === 0 ? (
+                <div className="py-4 text-center text-[12px] text-neutral-600">No data</div>
+              ) : (
               <div className="space-y-3">
                 {livePerformers.map((p, i) => (
                   <div key={p.initials} className="flex items-center gap-3">
@@ -544,6 +688,7 @@ export function AnalyticsPage() {
                   </div>
                 ))}
               </div>
+              )}
             </div>
           </div>
         )}
@@ -554,23 +699,22 @@ export function AnalyticsPage() {
           const completed = liveMetrics?.completed ?? 0;
           const inProgress = liveMetrics?.inProgress ?? 0;
           const todo = liveMetrics?.todo ?? 0;
+          const overdueCount = liveMetrics?.overdue ?? 0;
           const review = Math.max(0, total - completed - inProgress - todo);
-          const completionRate = total > 0 ? Math.round((completed / total) * 100) : 0;
-          const completionData = (analyticsMetrics?.completionSeries?.[periodKey] ?? []).map((d, i, arr) => ({
-            ...d,
-            completed: i === arr.length - 1 && completed > 0 ? Math.min(completed, 40) : d.completed,
-          }));
+          const completionRate = total > 0 ? clampPct((completed / total) * 100) : 0;
+          const completionData = analyticsMetrics?.completionSeries?.[periodKey] ?? [];
+          const dataMax = Math.max(1, ...completionData.flatMap((d) => [d.completed, d.target]));
           const taskMetricCards = [
             { label: t("analytics.completionRate"), value: `${completionRate}%`, change: analyticsMetrics?.taskMetrics?.completionChange ?? "", note: t("analytics.vsLastPeriod") },
             { label: t("analytics.avgCycleTime"), value: analyticsMetrics?.taskMetrics?.avgCycleTime ?? "—", change: analyticsMetrics?.taskMetrics?.cycleChange ?? "", note: t("analytics.vsLastPeriod") },
             { label: t("analytics.tasksClosed"), value: `${completed}`, change: "", note: t("analytics.thisQuarterLabel") },
-            { label: t("analytics.overdueTasks"), value: `${todo}`, change: analyticsMetrics?.taskMetrics?.overdueChange ?? "", note: t("analytics.vsLastPeriod") },
+            { label: t("analytics.overdueTasks"), value: `${overdueCount}`, change: analyticsMetrics?.taskMetrics?.overdueChange ?? "", note: t("analytics.vsLastPeriod") },
           ];
           const statusRows = [
-            { label: t("analytics.completed"), count: completed, pct: total > 0 ? Math.round((completed / total) * 100) : 0 },
-            { label: t("analytics.inProgress"), count: inProgress, pct: total > 0 ? Math.round((inProgress / total) * 100) : 0 },
-            { label: t("analytics.inReview"), count: review, pct: total > 0 ? Math.round((review / total) * 100) : 0 },
-            { label: t("analytics.backlog"), count: todo, pct: total > 0 ? Math.round((todo / total) * 100) : 0 },
+            { label: t("analytics.completed"), count: completed, pct: total > 0 ? clampPct((completed / total) * 100) : 0 },
+            { label: t("analytics.inProgress"), count: inProgress, pct: total > 0 ? clampPct((inProgress / total) * 100) : 0 },
+            { label: t("analytics.inReview"), count: review, pct: total > 0 ? clampPct((review / total) * 100) : 0 },
+            { label: t("analytics.backlog"), count: todo, pct: total > 0 ? clampPct((todo / total) * 100) : 0 },
           ];
           return (
             <div className="space-y-4">
@@ -585,17 +729,21 @@ export function AnalyticsPage() {
               </div>
               <div className="bg-[#141414] border border-neutral-800/60 rounded-xl p-4 lg:p-5">
                 <div className="text-neutral-50 text-[13px] font-['Lexend:SemiBold',_sans-serif] mb-4">{t("analytics.weeklyCompletionVsTarget")}</div>
+                {completionData.length === 0 ? (
+                  <div className="flex h-36 items-center justify-center text-[12px] text-neutral-600">No data</div>
+                ) : (
                 <div className="flex items-end gap-2 h-36">
                   {completionData.map((d) => (
                     <div key={d.week} className="flex-1 flex flex-col items-center gap-1">
                       <div className="w-full flex items-end gap-0.5 h-28">
-                        <div className="flex-1 rounded-t" style={{ height: `${(d.completed / 40) * 100}%`, backgroundColor: "#818cf8" }} />
-                        <div className="flex-1 rounded-t" style={{ height: `${(d.target / 40) * 100}%`, backgroundColor: "#262626" }} />
+                        <div className="flex-1 rounded-t" style={{ height: `${(d.completed / dataMax) * 100}%`, backgroundColor: "#818cf8" }} />
+                        <div className="flex-1 rounded-t" style={{ height: `${(d.target / dataMax) * 100}%`, backgroundColor: "#262626" }} />
                       </div>
                       <span className="text-neutral-600 text-[9px]">{d.week}</span>
                     </div>
                   ))}
                 </div>
+                )}
                 <div className="flex items-center gap-4 mt-3">
                   <div className="flex items-center gap-1.5"><div className="w-2 h-2 rounded-sm bg-indigo-400" /><span className="text-neutral-500 text-[11px]">{t("analytics.actual")}</span></div>
                   <div className="flex items-center gap-1.5"><div className="w-2 h-2 rounded-sm bg-neutral-700" /><span className="text-neutral-500 text-[11px]">{t("analytics.target")}</span></div>
@@ -642,6 +790,9 @@ export function AnalyticsPage() {
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
               <div className="bg-[#141414] border border-neutral-800/60 rounded-xl p-4 lg:p-5">
                 <div className="text-neutral-50 text-[13px] font-['Lexend:SemiBold',_sans-serif] mb-4">{t("analytics.hoursByTeam")}</div>
+                {(analyticsMetrics?.timeTracking.byTeam ?? []).length === 0 ? (
+                  <div className="py-4 text-center text-[12px] text-neutral-600">No data</div>
+                ) : (
                 <div className="space-y-4">
                   {(analyticsMetrics?.timeTracking.byTeam ?? []).map((t, _i, arr) => (
                     <div key={t.team}>
@@ -655,9 +806,11 @@ export function AnalyticsPage() {
                     </div>
                   ))}
                 </div>
+                )}
               </div>
               <div className="bg-[#141414] border border-neutral-800/60 rounded-xl p-4 lg:p-5">
-                <div className="text-neutral-50 text-[13px] font-['Lexend:SemiBold',_sans-serif] mb-4">{t("analytics.timeAllocation")}</div>
+                <div className="text-neutral-50 text-[13px] font-['Lexend:SemiBold',_sans-serif] mb-1">{t("analytics.timeAllocation")}<SampleBadge /></div>
+                <div className="text-neutral-600 text-[11px] mb-4">Dev/design/qa shares derive from task counts; meetings + docs are illustrative.</div>
                 <div className="space-y-3">
                   {(analyticsMetrics?.timeTracking.allocation ?? []).map((a) => (
                     <div key={a.label} className="flex items-center gap-3">
@@ -698,6 +851,9 @@ export function AnalyticsPage() {
             </div>
             <div className="bg-[#141414] border border-neutral-800/60 rounded-xl p-4 lg:p-5">
               <div className="text-neutral-50 text-[13px] font-['Lexend:SemiBold',_sans-serif] mb-5">{t("analytics.teamEfficiencyScores")}</div>
+              {(analyticsMetrics?.teamEfficiency.byTeam ?? []).length === 0 ? (
+                <div className="py-4 text-center text-[12px] text-neutral-600">No data</div>
+              ) : (
               <div className="space-y-5">
                 {(analyticsMetrics?.teamEfficiency.byTeam ?? []).map((team) => (
                   <div key={team.team}>
@@ -715,9 +871,13 @@ export function AnalyticsPage() {
                   </div>
                 ))}
               </div>
+              )}
             </div>
             <div className="bg-[#141414] border border-neutral-800/60 rounded-xl overflow-hidden">
-              <div className="px-4 py-3 border-b border-neutral-800/40 text-neutral-50 text-[13px] font-['Lexend:SemiBold',_sans-serif]">{t("analytics.sprintPerformanceHistory")}</div>
+              <div className="px-4 py-3 border-b border-neutral-800/40 text-neutral-50 text-[13px] font-['Lexend:SemiBold',_sans-serif]">{t("analytics.sprintPerformanceHistory")}<SampleBadge /></div>
+              {(analyticsMetrics?.teamEfficiency.sprintHistory ?? []).length === 0 ? (
+                <div className="px-4 py-6 text-center text-[12px] text-neutral-600">No data</div>
+              ) : (
               <div className="divide-y divide-neutral-800/40">
                 {(analyticsMetrics?.teamEfficiency.sprintHistory ?? []).map((s) => (
                   <div key={s.sprint} className="grid grid-cols-[1fr_80px_80px_80px] gap-4 px-4 py-3 text-[12px]">
@@ -728,6 +888,7 @@ export function AnalyticsPage() {
                   </div>
                 ))}
               </div>
+              )}
             </div>
           </div>
         )}
@@ -737,21 +898,24 @@ export function AnalyticsPage() {
           <div className="space-y-4">
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
               {[
-                { label: t("analytics.industryRank"), value: analyticsMetrics?.benchmarks.industryRank ?? "—", change: "", note: t("analytics.thisQuarterLabel") },
-                { label: t("analytics.onTimeDelivery"), value: analyticsMetrics ? `${analyticsMetrics.benchmarks.onTimeDelivery}%` : "—", change: "", note: t("analytics.vsBaseline") },
-                { label: t("analytics.qualityScoreLabel"), value: analyticsMetrics ? `${analyticsMetrics.benchmarks.qualityScore}/10` : "—", change: "", note: t("analytics.vsLastQuarter") },
-                { label: t("analytics.customerNps"), value: analyticsMetrics ? `${analyticsMetrics.benchmarks.nps}` : "—", change: "", note: t("analytics.vsLastQuarter") },
+                { label: t("analytics.industryRank"), value: analyticsMetrics?.benchmarks.industryRank ?? "—", change: "", note: t("analytics.thisQuarterLabel"), sample: true },
+                { label: t("analytics.onTimeDelivery"), value: analyticsMetrics ? `${analyticsMetrics.benchmarks.onTimeDelivery}%` : "—", change: "", note: t("analytics.vsBaseline"), sample: false },
+                { label: t("analytics.qualityScoreLabel"), value: analyticsMetrics ? `${analyticsMetrics.benchmarks.qualityScore}/100` : "—", change: "", note: t("analytics.vsLastQuarter"), sample: true },
+                { label: t("analytics.customerNps"), value: analyticsMetrics ? `${analyticsMetrics.benchmarks.nps}` : "—", change: "", note: t("analytics.vsLastQuarter"), sample: false },
               ].map((m) => (
                 <div key={m.label} className="bg-[#141414] border border-neutral-800/60 rounded-xl p-4">
-                  <div className="text-neutral-500 text-[11px] mb-2">{m.label}</div>
+                  <div className="text-neutral-500 text-[11px] mb-2">{m.label}{m.sample ? <SampleBadge /> : null}</div>
                   <div className="text-neutral-50 text-[22px] font-['Lexend:SemiBold',_sans-serif] leading-none mb-1">{m.value}</div>
                   <span className="text-emerald-400 text-[11px]">{m.change} {m.note}</span>
                 </div>
               ))}
             </div>
             <div className="bg-[#141414] border border-neutral-800/60 rounded-xl p-4 lg:p-5">
-              <div className="text-neutral-50 text-[13px] font-['Lexend:SemiBold',_sans-serif] mb-2">{t("analytics.teamVsIndustryBenchmark")}</div>
-              <div className="text-neutral-500 text-[12px] mb-5">{t("analytics.comparisonAgainstIndustry")}</div>
+              <div className="text-neutral-50 text-[13px] font-['Lexend:SemiBold',_sans-serif] mb-2">{t("analytics.teamVsIndustryBenchmark")}<SampleBadge /></div>
+              <div className="text-neutral-500 text-[12px] mb-5">{t("analytics.comparisonAgainstIndustry")} The industry average is an illustrative estimate.</div>
+              {(analyticsMetrics?.benchmarks.comparison ?? []).length === 0 ? (
+                <div className="py-4 text-center text-[12px] text-neutral-600">No data</div>
+              ) : (
               <div className="space-y-5">
                 {(analyticsMetrics?.benchmarks.comparison ?? []).map((b) => (
                   <div key={b.label}>
@@ -763,19 +927,23 @@ export function AnalyticsPage() {
                       </div>
                     </div>
                     <div className="relative h-2 bg-neutral-800 rounded-full overflow-hidden">
-                      <div className="absolute inset-y-0 left-0 rounded-full bg-neutral-700" style={{ width: `${b.industry}%` }} />
-                      <div className="absolute inset-y-0 left-0 rounded-full bg-indigo-500" style={{ width: `${b.team}%` }} />
+                      <div className="absolute inset-y-0 left-0 rounded-full bg-neutral-700" style={{ width: `${clampPct(b.industry)}%` }} />
+                      <div className="absolute inset-y-0 left-0 rounded-full bg-indigo-500" style={{ width: `${clampPct(b.team)}%` }} />
                     </div>
                   </div>
                 ))}
               </div>
+              )}
               <div className="flex items-center gap-4 mt-4">
                 <div className="flex items-center gap-1.5"><div className="w-3 h-1.5 rounded-full bg-indigo-500" /><span className="text-neutral-500 text-[11px]">{t("analytics.yourTeam")}</span></div>
                 <div className="flex items-center gap-1.5"><div className="w-3 h-1.5 rounded-full bg-neutral-700" /><span className="text-neutral-500 text-[11px]">{t("analytics.industryAvg")}</span></div>
               </div>
             </div>
             <div className="bg-[#141414] border border-neutral-800/60 rounded-xl overflow-hidden">
-              <div className="px-4 py-3 border-b border-neutral-800/40 text-neutral-50 text-[13px] font-['Lexend:SemiBold',_sans-serif]">{t("analytics.quarterlyBenchmarkHistory")}</div>
+              <div className="px-4 py-3 border-b border-neutral-800/40 text-neutral-50 text-[13px] font-['Lexend:SemiBold',_sans-serif]">{t("analytics.quarterlyBenchmarkHistory")}<SampleBadge /></div>
+              {(analyticsMetrics?.benchmarks.history ?? []).length === 0 ? (
+                <div className="px-4 py-6 text-center text-[12px] text-neutral-600">No data</div>
+              ) : (
               <div className="divide-y divide-neutral-800/40">
                 {(analyticsMetrics?.benchmarks.history ?? []).map((q) => (
                   <div key={q.quarter} className="grid grid-cols-[1fr_80px_90px_80px] gap-4 px-4 py-3 text-[12px]">
@@ -786,6 +954,7 @@ export function AnalyticsPage() {
                   </div>
                 ))}
               </div>
+              )}
             </div>
           </div>
         )}
@@ -798,20 +967,26 @@ export function AnalyticsPage() {
             </div>
             <div className="divide-y divide-neutral-800/40">
               {(() => {
-                const rows: { label: string; value: string; prev: string; change: string; up: boolean }[] = [
+                // Previous-snapshot values for the "prev" column; absent when
+                // no saved snapshot exists yet.
+                const prevOf = (pick: (s: AnalyticsMetrics) => string | undefined) => {
+                  const v = prevSnapshot ? pick(prevSnapshot) : undefined;
+                  return v ?? null;
+                };
+                const rows: { label: string; value: string; prev: string | null; change: string; up: boolean }[] = [
                   ...(liveMetrics ? [
-                    { label: t("analytics.taskCompletionRate"), value: `${liveMetrics.total > 0 ? Math.round((liveMetrics.completed / liveMetrics.total) * 100) : 0}%`, prev: "—", change: "", up: true },
-                    { label: t("analytics.tasksCompleted"), value: `${liveMetrics.completed}`, prev: "—", change: "", up: true },
-                    { label: t("analytics.tasksInProgress"), value: `${liveMetrics.inProgress}`, prev: "—", change: "", up: true },
+                    { label: t("analytics.taskCompletionRate"), value: `${liveMetrics.total > 0 ? clampPct((liveMetrics.completed / liveMetrics.total) * 100) : 0}%`, prev: prevOf(() => undefined), change: "", up: true },
+                    { label: t("analytics.tasksCompleted"), value: `${liveMetrics.completed}`, prev: null, change: "", up: true },
+                    { label: t("analytics.tasksInProgress"), value: `${liveMetrics.inProgress}`, prev: null, change: "", up: true },
                   ] : []),
                   ...(analyticsMetrics?.taskMetrics ? [
-                    { label: t("analytics.averageCycleTime"), value: analyticsMetrics.taskMetrics.avgCycleTime, prev: "—", change: analyticsMetrics.taskMetrics.cycleChange, up: true },
+                    { label: t("analytics.averageCycleTime"), value: analyticsMetrics.taskMetrics.avgCycleTime, prev: prevOf((s) => s.taskMetrics?.avgCycleTime), change: analyticsMetrics.taskMetrics.cycleChange, up: true },
                   ] : []),
                   ...(analyticsMetrics ? [
-                    { label: t("analytics.sprintVelocity"), value: `${analyticsMetrics.teamEfficiency.sprintVelocity} pts`, prev: "—", change: "", up: true },
-                    { label: t("analytics.onTimeDeliveryLabel"), value: `${analyticsMetrics.benchmarks.onTimeDelivery}%`, prev: "—", change: "", up: true },
-                    { label: t("analytics.reworkRate"), value: `${analyticsMetrics.teamEfficiency.reworkRate}%`, prev: "—", change: "", up: true },
-                    { label: t("analytics.qualityScoreLabel"), value: `${analyticsMetrics.benchmarks.qualityScore}/10`, prev: "—", change: "", up: true },
+                    { label: t("analytics.sprintVelocity"), value: `${analyticsMetrics.teamEfficiency.sprintVelocity} pts`, prev: prevOf((s) => `${s.teamEfficiency.sprintVelocity} pts`), change: "", up: true },
+                    { label: t("analytics.onTimeDeliveryLabel"), value: `${analyticsMetrics.benchmarks.onTimeDelivery}%`, prev: prevOf((s) => `${s.benchmarks.onTimeDelivery}%`), change: "", up: true },
+                    { label: t("analytics.reworkRate"), value: `${analyticsMetrics.teamEfficiency.reworkRate}%`, prev: prevOf((s) => `${s.teamEfficiency.reworkRate}%`), change: "", up: true },
+                    { label: t("analytics.qualityScoreLabel"), value: `${analyticsMetrics.benchmarks.qualityScore}/100`, prev: prevOf((s) => `${s.benchmarks.qualityScore}/100`), change: "", up: true },
                   ] : []),
                 ];
                 if (rows.length === 0) {
@@ -823,7 +998,7 @@ export function AnalyticsPage() {
                   <div key={m.label} className="grid grid-cols-[1fr_80px_80px_80px] gap-4 px-4 lg:px-5 py-3 text-[12px] lg:text-[13px] hover:bg-neutral-800/10 transition-colors">
                     <div className="text-neutral-300">{m.label}</div>
                     <div className="text-neutral-50 font-['Lexend:SemiBold',_sans-serif]">{m.value}</div>
-                    <div className="text-neutral-600">{m.prev}</div>
+                    <div className="text-neutral-600" title={m.prev == null ? "No previous snapshot saved yet" : undefined}>{m.prev ?? "—"}</div>
                     <div className={m.up ? "text-emerald-400" : "text-red-400"}>{m.change}</div>
                   </div>
                 ));
@@ -833,5 +1008,6 @@ export function AnalyticsPage() {
         )}
       </div>
     </div>
+    </PlanGate>
   );
 }

@@ -37,7 +37,7 @@ export function MyTasksSection({
   const tabs: { key: Tab; label: string; count: number }[] = [
     { key: "in_progress", label: t("memberHome.inProgress"), count: inProgress.length },
     { key: "in_review", label: t("memberHome.inReview"), count: inReview.length },
-    { key: "due_today", label: t("memberHome.dueSoon"), count: dueToday.length },
+    { key: "due_today", label: t("memberHome.dueTasks"), count: dueToday.length },
     { key: "completed", label: t("memberHome.completed"), count: completed.length },
   ];
 
@@ -96,7 +96,7 @@ export function MyTasksSection({
       {/* Task list */}
       <div className="px-4 py-3 divide-y divide-neutral-800/40">
         {tasks.length === 0 ? (
-          <p className="text-neutral-600 text-xs py-2">—</p>
+          <p className="text-neutral-600 text-xs py-2">{t("tasks.noTasksMatchFilters")}</p>
         ) : (
           tasks.map((task) => (
             <div

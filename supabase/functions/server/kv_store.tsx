@@ -76,10 +76,13 @@ export const mdel = async (keys: string[]): Promise<void> => {
   }
 };
 
+// Escape LIKE special chars (%, _, \) so prefixes match literally.
+const escapeLike = (s: string) => s.replace(/[\\%_]/g, (ch) => `\\${ch}`);
+
 // Search for key-value pairs by prefix.
 export const getByPrefix = async (prefix: string): Promise<any[]> => {
   const supabase = client()
-  const { data, error } = await supabase.from("kv_store_827698a1").select("key, value").like("key", prefix + "%");
+  const { data, error } = await supabase.from("kv_store_827698a1").select("key, value").like("key", escapeLike(prefix) + "%");
   if (error) {
     throw new Error(error.message);
   }
@@ -92,7 +95,7 @@ export const list = async (prefix: string): Promise<string[]> => {
   const { data, error } = await supabase
     .from("kv_store_827698a1")
     .select("key")
-    .like("key", `${prefix}%`);
+    .like("key", `${escapeLike(prefix)}%`);
   if (error) throw new Error(error.message);
   return (data ?? []).map((row: any) => row.key);
 };

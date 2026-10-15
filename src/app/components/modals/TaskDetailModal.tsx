@@ -1,5 +1,4 @@
-import { useState } from "react";
-import { toast } from "sonner";
+import { useState, useEffect } from "react";
 import { BaseModal, ModalSelect } from "./BaseModal";
 
 interface Task {
@@ -40,22 +39,29 @@ export function TaskDetailModal({ task, onClose, onUpdate, onDelete }: TaskDetai
   const [editingTitle, setEditingTitle] = useState(false);
   const [title, setTitle] = useState(task?.title ?? "");
 
+  // Sync local edit state when a different task is opened.
+  useEffect(() => {
+    setStatus(task?.status ?? "todo");
+    setPriority(task?.priority ?? "medium");
+    setTitle(task?.title ?? "");
+  }, [task?.id]);
+
   if (!task) return null;
 
   const handleSave = () => {
+    // Parent toasts on failure and rolls back; only confirm here. The modal
+    // stays open if the parent throws (it awaits updateTask first).
     onUpdate({ ...task, title: title.trim() || task.title, status, priority, completed: status === "completed" });
-    toast.success("Task updated");
     onClose();
   };
 
   const handleDelete = () => {
     onDelete(task.id);
-    toast.success("Task deleted");
     onClose();
   };
 
-  const p = priorityConfig[priority];
-  const s = statusConfig[status];
+  const p = priorityConfig[priority] ?? { label: String(priority), color: "#a3a3a3", bg: "bg-neutral-800/40" };
+  const s = statusConfig[status] ?? { label: String(status), color: "#a3a3a3", dot: "#525252" };
 
   return (
     <BaseModal open={!!task} onClose={onClose} title="" width="max-w-lg">

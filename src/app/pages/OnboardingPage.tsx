@@ -21,6 +21,17 @@ import { supabase } from "../utils/supabase";
 import { AuthShell } from "./auth/AuthShell";
 import { useLang } from "../i18n";
 
+/** Normalize an Indonesian phone number to E.164.
+ * Accepts "0812…", "62812…", "+62812…" — never double-prefixes. Returns ""
+ * when blank. Mirrors RegisterPage normalization. */
+function normalizePhone(raw: string): string {
+  const cleaned = raw.trim().replace(/[\s\-.()]/g, "");
+  if (!cleaned) return "";
+  if (cleaned.startsWith("+")) return cleaned;
+  if (cleaned.startsWith("62")) return `+${cleaned}`;
+  return `+62${cleaned.replace(/^0+/, "")}`;
+}
+
 export function OnboardingPage() {
   const { session, profile, profileLoading, setProfile } = useAuth();
   const navigate = useNavigate();
@@ -42,11 +53,19 @@ export function OnboardingPage() {
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     if (!session) return;
+    const normalizedPhone = normalizePhone(phone);
+    if (normalizedPhone) {
+      const digits = normalizedPhone.replace(/\D/g, "");
+      if (digits.length < 9 || digits.length > 15) {
+        toast.error(t("auth.phoneRequired"));
+        return;
+      }
+    }
     setSubmitting(true);
     try {
       const saved = await saveProfile(session.access_token, {
         full_name: fullName.trim(),
-        phone: `+62${phone.trim()}`,
+        phone: normalizedPhone,
         job_title: jobTitle.trim() || undefined,
         company: company.trim() || undefined,
       });

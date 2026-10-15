@@ -17,7 +17,7 @@ export function ProjectDetailModal({
   project: Project | null;
 }) {
   if (!project) return null;
-  const status = statusConfig[project.status];
+  const status = statusConfig[project.status] ?? { label: String(project.status), color: "#6366f1" };
 
   return (
     <BaseModal open={open} onClose={onClose} title={project.name} width="max-w-lg">

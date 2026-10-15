@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router";
-import { CheckCircle2, Clock, XCircle } from "lucide-react";
+import { CheckCircle2, Clock, HelpCircle, XCircle } from "lucide-react";
 import { Button } from "@/components/cossui/button";
 import {
   Card,
@@ -14,7 +14,7 @@ import { Separator } from "@/components/cossui/separator";
 import { Spinner } from "@/components/cossui/spinner";
 import { useAuth } from "../auth/AuthContext";
 import { useSubscription } from "../subscription/SubscriptionContext";
-import { getPaymentStatus, type PaymentStatusResult } from "../utils/api";
+import { getPaymentStatus, type ApiError, type PaymentStatusResult } from "../utils/api";
 
 const idr = new Intl.NumberFormat("id-ID", {
   style: "currency",
@@ -22,7 +22,9 @@ const idr = new Intl.NumberFormat("id-ID", {
   maximumFractionDigits: 0,
 });
 
-const POLL_MS = 4000;
+const BASE_POLL_MS = 4000;
+const MAX_POLL_MS = 15000;
+const MAX_POLLS = 30;
 
 export function PaymentStatusPage() {
   const [searchParams] = useSearchParams();
@@ -33,36 +35,96 @@ export function PaymentStatusPage() {
 
   const [result, setResult] = useState<PaymentStatusResult | null>(null);
   const [notFound, setNotFound] = useState(false);
+  const [needsLogin, setNeedsLogin] = useState(false);
+  const [pollCapped, setPollCapped] = useState(false);
+  const [manualRefreshKey, setManualRefreshKey] = useState(0);
   const timer = useRef<number>();
+  const attemptsRef = useRef(0);
 
   useEffect(() => {
     if (!orderId || !session) return;
     let cancelled = false;
+    attemptsRef.current = 0;
+    setPollCapped(false);
+    setNotFound(false);
+    setNeedsLogin(false);
+
+    const delayForAttempt = (attempt: number) =>
+      Math.min(MAX_POLL_MS, BASE_POLL_MS * 2 ** Math.max(0, attempt - 1));
+
+    const schedule = () => {
+      if (cancelled || document.hidden) return;
+      if (attemptsRef.current >= MAX_POLLS) {
+        setPollCapped(true);
+        return;
+      }
+      timer.current = window.setTimeout(poll, delayForAttempt(attemptsRef.current));
+    };
 
     const poll = async () => {
+      if (cancelled) return;
+      attemptsRef.current += 1;
       try {
         const status = await getPaymentStatus(session.access_token, orderId);
         if (cancelled) return;
         setResult(status);
         if (status.status === "pending") {
-          timer.current = window.setTimeout(poll, POLL_MS);
+          if (attemptsRef.current >= MAX_POLLS) setPollCapped(true);
+          else schedule();
         } else if (status.status === "paid") {
           // Plan changed — make gated pages pick it up without a reload
           void refreshSubscription();
         }
       } catch (err) {
         if (cancelled) return;
-        if (String(err).includes("404")) setNotFound(true);
-        else timer.current = window.setTimeout(poll, POLL_MS);
+        const status = (err as ApiError)?.status;
+        if (status === 404 || status === 403) setNotFound(true);
+        else if (status === 401) setNeedsLogin(true);
+        else if (attemptsRef.current >= MAX_POLLS) setPollCapped(true);
+        else schedule();
       }
     };
     poll();
 
+    const onVisibilityChange = () => {
+      if (!document.hidden) {
+        // Resume polling when the tab becomes visible again.
+        window.clearTimeout(timer.current);
+        schedule();
+      } else {
+        window.clearTimeout(timer.current);
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
+
     return () => {
       cancelled = true;
       window.clearTimeout(timer.current);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
     };
-  }, [orderId, session]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orderId, session, manualRefreshKey]);
+
+  if (needsLogin) {
+    return (
+      <Shell>
+        <Card className="mt-10 w-full max-w-md border-neutral-800 bg-[#1a1a1a]">
+          <CardHeader className="items-center text-center">
+            <XCircle className="size-10 text-neutral-500" />
+            <CardTitle className="text-neutral-50">Please sign in again</CardTitle>
+            <CardDescription className="text-neutral-400">
+              Your session expired. Please re-login to check this payment.
+            </CardDescription>
+          </CardHeader>
+          <CardFooter>
+            <Button className="w-full" onClick={() => navigate("/login")}>
+              Back to login
+            </Button>
+          </CardFooter>
+        </Card>
+      </Shell>
+    );
+  }
 
   if (!orderId || notFound) {
     return (
@@ -111,8 +173,13 @@ export function PaymentStatusPage() {
       description:
         "The payment was cancelled, declined, or expired. No charge was made — you can try again.",
     },
+    unknown: {
+      icon: <HelpCircle className="size-10 text-neutral-400" />,
+      title: "Unknown status",
+      description: "Unknown status — refresh to check the latest payment status.",
+    },
   } as const;
-  const preset = presets[result.status];
+  const preset = (presets as Record<string, { icon: React.ReactNode; title: string; description: string }>)[result.status] ?? presets.unknown;
 
   return (
     <Shell>
@@ -148,10 +215,28 @@ export function PaymentStatusPage() {
             <span>Total</span>
             <span>{idr.format(result.gross_amount)}</span>
           </div>
-          {result.status === "pending" && (
+          {result.status === "pending" && !pollCapped && (
             <p className="mt-2 flex items-center gap-2 text-[12px] text-neutral-500">
               <Spinner className="size-3.5" /> Checking payment status…
             </p>
+          )}
+          {result.status === "pending" && pollCapped && (
+            <div className="mt-2 flex flex-col gap-2">
+              <p className="text-[12px] text-neutral-500">
+                Still processing — check back in a bit. You can also refresh manually.
+              </p>
+              <Button
+                variant="outline"
+                className="w-full"
+                onClick={() => {
+                  attemptsRef.current = 0;
+                  setPollCapped(false);
+                  setManualRefreshKey((k) => k + 1);
+                }}
+              >
+                Refresh
+              </Button>
+            </div>
           )}
         </CardPanel>
         <CardFooter className="flex-col gap-2">

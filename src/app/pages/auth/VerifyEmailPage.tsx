@@ -3,6 +3,7 @@ import { Link, useLocation } from "react-router";
 import { CheckCircle2, MailCheck } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/cossui/button";
+import { Input } from "@/components/cossui/input";
 import { useAuth } from "../../auth/AuthContext";
 import { resendVerification } from "../../utils/supabase";
 import { AuthShell } from "./AuthShell";
@@ -12,7 +13,10 @@ export function VerifyEmailPage() {
   const { t } = useLang();
   const { user } = useAuth();
   const location = useLocation();
-  const email = (location.state as { email?: string } | null)?.email ?? "";
+  const stateEmail = (location.state as { email?: string } | null)?.email ?? "";
+  // Prefill from navigation state, but allow typing so a refresh or direct
+  // open doesn't strand the user with no resend address.
+  const [email, setEmail] = useState(stateEmail);
   const [cooldown, setCooldown] = useState(0);
   const [sending, setSending] = useState(false);
 
@@ -22,7 +26,9 @@ export function VerifyEmailPage() {
     return () => clearTimeout(tmr);
   }, [cooldown]);
 
-  if (user) {
+  // Only a confirmed email counts as verified — a mere session (e.g. an
+  // unconfirmed sign-in) must not show the success screen.
+  if (user?.email_confirmed_at) {
     return (
       <AuthShell
         title={t("auth.emailVerified")}
@@ -45,19 +51,22 @@ export function VerifyEmailPage() {
   }
 
   const handleResend = async () => {
-    if (!email) {
+    if (!email.trim()) {
       toast.error(t("auth.noEmailFound"));
       return;
     }
     setSending(true);
-    const { error } = await resendVerification(email);
-    setSending(false);
-    if (error) {
-      toast.error(error.message);
-      return;
+    try {
+      const { error } = await resendVerification(email.trim());
+      if (error) {
+        toast.error(error.message);
+        return;
+      }
+      toast.success(t("auth.verificationEmailSent"));
+      setCooldown(30);
+    } finally {
+      setSending(false);
     }
-    toast.success(t("auth.verificationEmailSent"));
-    setCooldown(30);
   };
 
   return (
@@ -82,6 +91,14 @@ export function VerifyEmailPage() {
         <p className="text-sm text-neutral-400">
           {t("auth.verificationLinkSent").replace("{email}", email || t("settings.email"))}
         </p>
+        <Input
+          type="email"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          placeholder="name@company.com"
+          autoComplete="email"
+          className="w-full"
+        />
         <Button
           type="button"
           variant="outline"

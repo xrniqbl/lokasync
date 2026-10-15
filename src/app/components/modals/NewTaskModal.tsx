@@ -1,5 +1,4 @@
-import { useState, useEffect } from "react";
-import { toast } from "sonner";
+import { useEffect, useRef, useState } from "react";
 import { BaseModal, ModalInput, ModalSelect, ModalFooter } from "./BaseModal";
 import * as api from "../../utils/api";
 
@@ -15,7 +14,7 @@ interface NewTask {
 interface NewTaskModalProps {
   open: boolean;
   onClose: () => void;
-  onAdd?: (task: NewTask & { id: number; status: string; completed: boolean }) => void;
+  onAdd?: (task: NewTask & { id: number; status: string; completed: boolean }) => void | Promise<void>;
 }
 
 export function NewTaskModal({ open, onClose, onAdd }: NewTaskModalProps) {
@@ -27,6 +26,11 @@ export function NewTaskModal({ open, onClose, onAdd }: NewTaskModalProps) {
   const [due, setDue] = useState("");
   const [assigneeOptions, setAssigneeOptions] = useState<{ value: string; label: string }[]>([]);
   const [projectOptions, setProjectOptions] = useState<{ value: string; label: string }[]>([]);
+  const [titleError, setTitleError] = useState("");
+  const [dueError, setDueError] = useState("");
+  const [submitError, setSubmitError] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const submittingRef = useRef(false);
 
   useEffect(() => {
     if (!open) return;
@@ -49,34 +53,65 @@ export function NewTaskModal({ open, onClose, onAdd }: NewTaskModalProps) {
     setProject(projectOptions[0]?.value ?? "");
     setAssignee(assigneeOptions[0]?.value ?? "");
     setDue("");
+    setTitleError("");
+    setDueError("");
+    setSubmitError("");
   };
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
+    if (submittingRef.current) return;
+    let valid = true;
     if (!title.trim()) {
-      toast.error("Task title is required");
-      return;
+      setTitleError("Task title is required");
+      valid = false;
+    } else {
+      setTitleError("");
     }
-    const newTask = {
-      id: Date.now(),
-      title: title.trim(),
-      description: description.trim() || "No description",
-      priority,
-      project,
-      assignee,
-      due: due || "No due date",
-      status: "todo",
-      completed: false,
-    };
-    onAdd?.(newTask);
-    toast.success("Task created");
-    reset();
-    onClose();
+    if (due.trim()) {
+      const parsed = new Date(due.trim());
+      if (Number.isNaN(parsed.getTime())) {
+        setDueError("Enter a valid date (e.g. 2026-07-30)");
+        valid = false;
+      } else {
+        setDueError("");
+      }
+    } else {
+      setDueError("");
+    }
+    if (!valid) return;
+    submittingRef.current = true;
+    setSubmitting(true);
+    setSubmitError("");
+    try {
+      const newTask = {
+        id: Date.now(),
+        title: title.trim(),
+        description: description.trim() || "No description",
+        priority,
+        project,
+        assignee,
+        due: due.trim() || "No due date",
+        status: "todo",
+        completed: false,
+      };
+      await onAdd?.(newTask);
+      reset();
+      onClose();
+    } catch (e) {
+      setSubmitError(e instanceof Error ? e.message : "Failed to create task");
+    } finally {
+      submittingRef.current = false;
+      setSubmitting(false);
+    }
   };
 
   return (
     <BaseModal open={open} onClose={() => { reset(); onClose(); }} title="New Task" description="Add a new task to your board">
       <div className="space-y-4">
-        <ModalInput label="Title *" placeholder="What needs to be done?" value={title} onChange={setTitle} />
+        <div>
+          <ModalInput label="Title *" placeholder="What needs to be done?" value={title} onChange={(v) => { setTitle(v); if (titleError) setTitleError(""); }} />
+          {titleError && <p className="text-red-400 text-[11px] mt-1">{titleError}</p>}
+        </div>
         <div>
           <label className="block text-neutral-400 text-[12px] mb-1.5">Description</label>
           <textarea
@@ -112,10 +147,16 @@ export function NewTaskModal({ open, onClose, onAdd }: NewTaskModalProps) {
             onChange={setAssignee}
             options={assigneeOptions}
           />
-          <ModalInput label="Due date" placeholder="Jun 15" value={due} onChange={setDue} />
+          <div>
+            <ModalInput label="Due date" placeholder="2026-07-30" value={due} onChange={(v) => { setDue(v); if (dueError) setDueError(""); }} />
+            {dueError && <p className="text-red-400 text-[11px] mt-1">{dueError}</p>}
+          </div>
         </div>
+        {submitError && (
+          <p role="alert" className="text-red-400 text-[12px] bg-red-950/30 border border-red-900/40 rounded-lg px-3 py-2">{submitError}</p>
+        )}
       </div>
-      <ModalFooter onCancel={() => { reset(); onClose(); }} onConfirm={handleSubmit} confirmLabel="Create task" confirmDisabled={!title.trim()} />
+      <ModalFooter onCancel={() => { reset(); onClose(); }} onConfirm={handleSubmit} confirmLabel={submitting ? "Creating…" : "Create task"} confirmDisabled={!title.trim() || submitting} />
     </BaseModal>
   );
 }

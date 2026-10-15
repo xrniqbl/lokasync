@@ -1,4 +1,4 @@
-import { Link } from "react-router";
+import { Link, useNavigate } from "react-router";
 import { useLang } from "../../i18n";
 import { ChevronRight, FolderKanban } from "lucide-react";
 
@@ -17,6 +17,7 @@ interface ProjectsOverviewProps {
 
 export function ProjectsOverview({ projects }: ProjectsOverviewProps) {
   const { t } = useLang();
+  const navigate = useNavigate();
 
   return (
     <div className="rounded-xl border border-neutral-800 bg-[#1a1a1a]/80 overflow-hidden">
@@ -44,42 +45,46 @@ export function ProjectsOverview({ projects }: ProjectsOverviewProps) {
             <p className="text-xs">No projects yet</p>
           </div>
         ) : (
-          projects.map((project) => (
-            <div
-              key={project.id}
-              className="p-3 rounded-lg bg-neutral-800/30 border border-neutral-800 hover:border-indigo-500/20 transition-colors cursor-pointer"
-            >
-              <div className="flex items-start justify-between mb-2">
-                <span className="text-neutral-200 text-xs font-['Lexend:Medium',_sans-serif] leading-tight">
-                  {project.name}
-                </span>
-                {project.next_milestone && (
-                  <span className="text-neutral-600 text-[10px] shrink-0 ml-2">
-                    {project.next_milestone}
+          projects.map((project) => {
+            const pct = Math.min(Math.max(Math.round(project.progress_percent), 0), 100);
+            return (
+              <div
+                key={project.id}
+                onClick={() => navigate("/app/projects")}
+                className="p-3 rounded-lg bg-neutral-800/30 border border-neutral-800 hover:border-indigo-500/20 transition-colors cursor-pointer"
+              >
+                <div className="flex items-start justify-between mb-2">
+                  <span className="text-neutral-200 text-xs font-['Lexend:Medium',_sans-serif] leading-tight">
+                    {project.name}
                   </span>
-                )}
-              </div>
+                  {project.next_milestone && (
+                    <span className="text-neutral-600 text-[10px] shrink-0 ml-2">
+                      {project.next_milestone}
+                    </span>
+                  )}
+                </div>
 
-              {/* Progress bar */}
-              <div className="w-full h-1.5 bg-neutral-800 rounded-full overflow-hidden mb-2">
-                <div
-                  className="h-full rounded-full bg-indigo-500 transition-all duration-300"
-                  style={{ width: `${Math.min(project.progress_percent, 100)}%` }}
-                />
-              </div>
+                {/* Progress bar */}
+                <div className="w-full h-1.5 bg-neutral-800 rounded-full overflow-hidden mb-2">
+                  <div
+                    className="h-full rounded-full bg-indigo-500 transition-all duration-300"
+                    style={{ width: `${pct}%` }}
+                  />
+                </div>
 
-              {/* Task count */}
-              <div className="flex items-center gap-1">
-                <span className="text-neutral-400 text-[10px]">
-                  {project.completed_tasks}/{project.total_tasks} tasks
-                </span>
-                <span className="text-neutral-700">·</span>
-                <span className="text-indigo-400 text-[10px]">
-                  {project.progress_percent}%
-                </span>
+                {/* Task count */}
+                <div className="flex items-center gap-1">
+                  <span className="text-neutral-400 text-[10px]">
+                    {project.completed_tasks}/{project.total_tasks} tasks
+                  </span>
+                  <span className="text-neutral-700">·</span>
+                  <span className="text-indigo-400 text-[10px]">
+                    {pct}%
+                  </span>
+                </div>
               </div>
-            </div>
-          ))
+            );
+          })
         )}
       </div>
     </div>

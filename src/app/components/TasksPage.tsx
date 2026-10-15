@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { toast } from "sonner";
 import { NewTaskModal } from "./modals/NewTaskModal";
 import { TaskDetailModal } from "./modals/TaskDetailModal";
@@ -22,6 +22,40 @@ const priorityConfig: Record<string, { label: string; color: string; bg: string 
   medium: { label: "Medium", color: "#f59e0b", bg: "bg-amber-950/40" },
   low: { label: "Low", color: "#525252", bg: "bg-neutral-800/40" },
 };
+
+const fallbackStatus = { label: "Todo", dot: "#404040" };
+const fallbackPriority = { label: "—", color: "#a3a3a3", bg: "bg-neutral-800/40" };
+
+function getStatusCfg(status: string) {
+  return statusConfig[status] ?? fallbackStatus;
+}
+
+function getPriorityCfg(priority: string) {
+  return priorityConfig[priority] ?? fallbackPriority;
+}
+
+function isDueToday(due: string | undefined | null): boolean {
+  if (!due) return false;
+  // Plain YYYY-MM-DD date-only strings parse as UTC midnight; comparing with
+  // local getters shifts the day in UTC+ timezones. Compare calendar parts in
+  // the same frame instead.
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(due);
+  const now = new Date();
+  if (m) {
+    return (
+      Number(m[1]) === now.getFullYear() &&
+      Number(m[2]) === now.getMonth() + 1 &&
+      Number(m[3]) === now.getDate()
+    );
+  }
+  const parsed = new Date(due);
+  if (Number.isNaN(parsed.getTime())) return false;
+  return (
+    parsed.getFullYear() === now.getFullYear() &&
+    parsed.getMonth() === now.getMonth() &&
+    parsed.getDate() === now.getDate()
+  );
+}
 
 const tabs = ["All", "Today", "In Progress", "Review", "Completed"];
 
@@ -53,21 +87,29 @@ export function TasksPage() {
   const [filterPriority, setFilterPriority] = useState("all");
   const [filterProject, setFilterProject] = useState("all");
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
+  const activeWorkspaceId = activeWorkspace?.id ?? null;
+  // Remembers each task's last non-completed status so unchecking restores it.
+  const prevStatusRef = useRef<Record<number, string>>({});
+  // Race guard: only the latest fetch may write state.
+  const requestSeqRef = useRef(0);
 
   function fetchTasks() {
+    const seq = ++requestSeqRef.current;
     setLoading(true);
     api.getTasks().then((data) => {
+      if (seq !== requestSeqRef.current) return;
       setTasks(data);
       setCheckedTasks(new Set(data.filter((t) => t.completed).map((t) => t.id)));
     }).catch((e) => {
+      if (seq !== requestSeqRef.current) return;
       console.error("Failed to load tasks:", e);
       toast.error(t("tasks.failedToLoadTasks"));
-    }).finally(() => setLoading(false));
+    }).finally(() => { if (seq === requestSeqRef.current) setLoading(false); });
   }
 
   useEffect(() => {
     fetchTasks();
-  }, []);
+  }, [activeWorkspaceId]);
 
   useRealtimeWorkspace(activeWorkspace?.id ?? null, (table) => {
     if (table === "tasks") fetchTasks();
@@ -79,7 +121,7 @@ export function TasksPage() {
     else if (subSection === "today") { setActiveTab("Today"); setSelectedTask(null); }
     else if (subSection === "in-progress") { setActiveTab("In Progress"); setSelectedTask(null); }
     else if (subSection === "completed") { setActiveTab("Completed"); setSelectedTask(null); }
-    else if (subSection === "priority") { setActiveTab("All"); setFilterPriority("high"); setSelectedTask(null); }
+    else if (subSection === "priority") { setActiveTab("All"); setFilterPriority("high"); setShowFilter(true); setSelectedTask(null); }
     else if (subSection === "all") { setActiveTab("All"); setSelectedTask(null); }
     else if (subSection.startsWith("task-")) {
       const taskId = parseInt(subSection.slice(5), 10);
@@ -92,7 +134,12 @@ export function TasksPage() {
     const task = tasks.find((t) => t.id === id);
     if (!task) return;
     const nowCompleted = !task.completed;
-    const newStatus = nowCompleted ? "completed" : "todo";
+    if (nowCompleted && task.status !== "completed") {
+      prevStatusRef.current[id] = task.status || "todo";
+    }
+    const newStatus = nowCompleted ? "completed" : (prevStatusRef.current[id] || "todo");
+    const prevTasks = tasks;
+    const prevChecked = checkedTasks;
     setTasks((prev) => prev.map((t) => t.id === id ? { ...t, completed: nowCompleted, status: newStatus } : t));
     const next = new Set(checkedTasks);
     if (nowCompleted) next.add(id); else next.delete(id);
@@ -101,6 +148,8 @@ export function TasksPage() {
       await api.updateTask(id, { completed: nowCompleted, status: newStatus });
     } catch (e) {
       console.error("Failed to update task:", e);
+      setTasks(prevTasks);
+      setCheckedTasks(prevChecked);
       toast.error(t("tasks.failedToSaveTaskStatus"));
     }
   };
@@ -116,27 +165,37 @@ export function TasksPage() {
   };
 
   const handleUpdateTask = async (updated: Task) => {
+    const prevTasks = tasks;
+    const prevChecked = checkedTasks;
     setTasks((prev) => prev.map((t) => t.id === updated.id ? updated : t));
     const next = new Set(checkedTasks);
     if (updated.completed) next.add(updated.id); else next.delete(updated.id);
     setCheckedTasks(next);
     try {
       await api.updateTask(updated.id, updated);
+      toast.success(t("tasks.taskUpdated"));
     } catch (e) {
       console.error("Failed to update task:", e);
+      setTasks(prevTasks);
+      setCheckedTasks(prevChecked);
       toast.error(t("tasks.failedToSaveTask"));
     }
   };
 
   const handleDeleteTask = async (id: number) => {
+    const prevTasks = tasks;
+    const prevChecked = checkedTasks;
     setTasks((prev) => prev.filter((t) => t.id !== id));
     const next = new Set(checkedTasks);
     next.delete(id);
     setCheckedTasks(next);
     try {
       await api.deleteTask(id);
+      toast.success(t("tasks.taskDeleted"));
     } catch (e) {
       console.error("Failed to delete task:", e);
+      setTasks(prevTasks);
+      setCheckedTasks(prevChecked);
       toast.error(t("tasks.failedToDeleteTask"));
     }
   };
@@ -144,7 +203,7 @@ export function TasksPage() {
   const filtered = tasks.filter((task) => {
     const tabMatch =
       activeTab === "All" ? true :
-      activeTab === "Today" ? task.due === "Jun 8" || task.due === "Jun 9" :
+      activeTab === "Today" ? isDueToday(task.due) :
       activeTab === "In Progress" ? task.status === "in-progress" :
       activeTab === "Review" ? task.status === "review" :
       activeTab === "Completed" ? task.status === "completed" : true;
@@ -280,15 +339,15 @@ export function TasksPage() {
                 <div className="text-neutral-500 text-[12px] truncate hidden md:block">{task.project}</div>
                 <div className="hidden md:block">
                   <span
-                    className={`inline-flex items-center text-[11px] px-2 py-0.5 rounded ${priorityConfig[task.priority].bg}`}
-                    style={{ color: priorityConfig[task.priority].color }}
+                    className={`inline-flex items-center text-[11px] px-2 py-0.5 rounded ${getPriorityCfg(task.priority).bg}`}
+                    style={{ color: getPriorityCfg(task.priority).color }}
                   >
-                    {priorityConfig[task.priority].label}
+                    {getPriorityCfg(task.priority).label}
                   </span>
                 </div>
                 <div className="hidden md:flex items-center gap-1.5">
-                  <div className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: statusConfig[task.status].dot }} />
-                  <span className="text-neutral-500 text-[12px]">{statusConfig[task.status].label}</span>
+                  <div className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: getStatusCfg(task.status).dot }} />
+                  <span className="text-neutral-500 text-[12px]">{getStatusCfg(task.status).label}</span>
                 </div>
                 <div className="text-neutral-600 text-[11px] hidden md:block">{task.due}</div>
               </div>

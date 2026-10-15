@@ -1,4 +1,4 @@
-import { projectId, publicAnonKey } from "/utils/supabase/info";
+import { projectId } from "/utils/supabase/info";
 
 const BASE = `https://${projectId}.supabase.co/functions/v1/server`;
 
@@ -18,10 +18,21 @@ export const setApiWorkspaceId = (id: string | null) => {
   activeWorkspaceId = id;
 };
 
-/** Error thrown for non-2xx responses; `code` carries the server error code. */
+/** Error thrown for non-2xx responses.
+ *
+ * `status` is the HTTP status code and `code` carries the server error code
+ * (null when the server sent no code). Pages can branch on `err.status`
+ * (e.g. 404 vs 503 on checkout) instead of string-matching messages:
+ *
+ *   catch (e) {
+ *     if (e instanceof ApiError && e.status === 503) { ... }
+ *   }
+ */
 export class ApiError extends Error {
-  status: number;
-  code: string | null;
+  /** HTTP status code of the failed response. */
+  public status: number;
+  /** Server-provided error code, or null when absent. */
+  public code: string | null;
   constructor(message: string, status: number, code: string | null) {
     super(message);
     this.status = status;
@@ -29,25 +40,83 @@ export class ApiError extends Error {
   }
 }
 
+export class UnauthorizedError extends Error {
+  public status = 401;
+  public code = "unauthorized";
+  constructor(message: string = "Unauthorized") {
+    super(message);
+    this.name = "UnauthorizedError";
+  }
+}
+
+/** Redirect to /login SPA-style, preserving the page the user was on. */
+function redirectToLogin() {
+  if (window.location.pathname.startsWith("/login")) return;
+  const target = window.location.pathname + window.location.search;
+  window.location.href = "/login?from=" + encodeURIComponent(target);
+}
+
 async function request<T>(path: string, opts: RequestInit = {}): Promise<T> {
   const headers: Record<string, string> = {
-    Authorization: `Bearer ${userAccessToken ?? publicAnonKey}`,
+    ...(userAccessToken ? { Authorization: `Bearer ${userAccessToken}` } : {}),
     ...(activeWorkspaceId ? { "X-Workspace-Id": activeWorkspaceId } : {}),
   };
   // Don't set Content-Type for FormData — browser sets the boundary automatically
   if (opts?.body && !(opts.body instanceof FormData)) {
     headers["Content-Type"] = "application/json";
   }
-  const res = await fetch(BASE + path, {
-    ...opts,
-    headers: {
-      ...headers,
-      ...opts.headers,
-    },
-  });
+  let res: Response;
+  try {
+    res = await fetch(BASE + path, {
+      ...opts,
+      headers: {
+        ...headers,
+        ...opts.headers,
+      },
+      // 30s guard so background polls can never hang forever.
+      signal: opts.signal ?? AbortSignal.timeout(30_000),
+    });
+  } catch (e) {
+    if (e instanceof DOMException && e.name === "TimeoutError") {
+      throw new ApiError(`API ${opts.method ?? "GET"} ${path} timed out after 30s`, 408, "timeout");
+    }
+    throw e;
+  }
   if (!res.ok) {
-    if (res.status === 401 && !window.location.pathname.startsWith("/login")) {
-      window.location.href = "/login";
+    if (res.status === 401) {
+      // Try one session refresh first — background polls often race a token
+      // rotation. Only bounce to login when the session is truly gone.
+      // Lazy dynamic import avoids a module cycle with the supabase client.
+      try {
+        const { supabase } = await import("../utils/supabase");
+        const { data, error } = await supabase.auth.refreshSession();
+        if (!error && data.session) {
+          setApiAccessToken(data.session.access_token);
+          const retry = await fetch(BASE + path, {
+            ...opts,
+            headers: {
+              ...headers,
+              Authorization: `Bearer ${data.session.access_token}`,
+              ...opts.headers,
+            },
+            signal: opts.signal ?? AbortSignal.timeout(30_000),
+          });
+          if (retry.ok) return retry.json();
+          if (retry.status !== 401) {
+            res = retry;
+          } else {
+            redirectToLogin();
+            throw new UnauthorizedError("Unauthorized");
+          }
+        } else {
+          redirectToLogin();
+          throw new UnauthorizedError("Unauthorized");
+        }
+      } catch (e) {
+        if (e instanceof UnauthorizedError) throw e;
+        redirectToLogin();
+        throw new UnauthorizedError("Unauthorized");
+      }
     }
     const text = await res.text();
     let code: string | null = null;
@@ -440,15 +509,43 @@ export const removeMember = (teamName: string, initials: string) =>
 
 // ── Calendar ──────────────────────────────────────────────────────────────────
 
+/**
+ * Single calendar event as returned by the server (POST /calendar/events
+ * responds 201 with one object, not an array).
+ */
 export interface CalendarEvent {
+  id: string;
   title: string;
-  tag: string;
+  time: string;
   color: string;
 }
 
-export const getCalendarEvents = () => request<Record<string, CalendarEvent[]>>("/calendar");
-export const createCalendarEvent = (dateKey: string, event: CalendarEvent) =>
-  request<CalendarEvent[]>("/calendar/events", { method: "POST", body: JSON.stringify({ dateKey, event }) });
+/**
+ * Transitional list-item shape: the server list still carries the legacy
+ * `tag` field until pages migrate to `time`. Keeps unmigrated page code
+ * compiling; new code should use `time`.
+ */
+export type CalendarEventItem = CalendarEvent & { tag: string };
+
+/** Input accepted when creating an event; `tag` is mapped to `time` for legacy callers. */
+export interface CalendarEventInput {
+  title: string;
+  time?: string;
+  tag?: string;
+  color?: string;
+}
+
+export const getCalendarEvents = () => request<Record<string, CalendarEventItem[]>>("/calendar");
+export const createCalendarEvent = (dateKey: string, event: CalendarEventInput) =>
+  request<CalendarEvent>("/calendar/events", {
+    method: "POST",
+    body: JSON.stringify({
+      dateKey,
+      title: event.title,
+      time: event.time ?? event.tag ?? "",
+      color: event.color ?? "",
+    }),
+  });
 export const deleteCalendarEvent = (id: string) =>
   request<{ ok: boolean }>("/calendar/events", { method: "DELETE", body: JSON.stringify({ id }) });
 
@@ -483,8 +580,12 @@ export interface Folder {
 export const getFiles = () => request<{ files: FileItem[]; folders: Folder[] }>("/files");
 export const createFile = (file: FileItem) =>
   request<FileItem>("/files", { method: "POST", body: JSON.stringify(file) });
+/**
+ * Rename a file by id (PUT /files with {id, name}).
+ * Tolerates the server's {ok:true} acknowledgement shape.
+ */
 export const renameFile = (id: string, newName: string) =>
-  request<FileItem>("/files", { method: "PUT", body: JSON.stringify({ id, name: newName }) });
+  request<FileItem | { ok: boolean }>("/files", { method: "PUT", body: JSON.stringify({ id, name: newName }) });
 export const deleteFile = (name: string) =>
   request<{ ok: boolean }>(`/files/${encodeURIComponent(name)}`, { method: "DELETE" });
 export const createFolder = (folder: Folder) =>
@@ -494,10 +595,10 @@ export const createFolder = (folder: Folder) =>
 
 /** Human-readable size string (e.g. "2.4 MB") */
 export function humanSize(bytes: number): string {
-  if (bytes === 0) return "0 B";
+  if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
   const k = 1024;
-  const sizes = ["B", "KB", "MB", "GB", "TB"];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  const sizes = ["B", "KB", "MB", "GB", "TB", "PB", "EB"];
+  const i = Math.min(sizes.length - 1, Math.floor(Math.log(bytes) / Math.log(k)));
   return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + " " + sizes[i];
 }
 
@@ -670,8 +771,12 @@ export interface WorkspacePlan {
   owner_id: string | null;
 }
 
-export async function getWorkspacePlan() {
-  return request<WorkspacePlan>("/workspace-plan");
+export async function getWorkspacePlan(wsId?: string) {
+  const id = wsId ?? activeWorkspaceId;
+  if (!id) throw new Error("No active workspace");
+  return request<WorkspacePlan>("/workspace-plan", {
+    headers: { "X-Workspace-Id": id },
+  });
 }
 
 // ── Member home (consolidated endpoint for member dashboard) ─────────────────
@@ -861,9 +966,9 @@ export interface Milestone {
   done: boolean;
 }
 
-export const getMilestones = (project: string) => request<Milestone[]>(`/milestones/${project}`);
+export const getMilestones = (project: string) => request<Milestone[]>(`/milestones/${encodeURIComponent(project)}`);
 export const toggleMilestone = (project: string, index: number, done: boolean) =>
-  request<Milestone>(`/milestones/${project}/${index}`, {
+  request<Milestone>(`/milestones/${encodeURIComponent(project)}/${index}`, {
     method: "PUT",
     body: JSON.stringify({ done }),
   });

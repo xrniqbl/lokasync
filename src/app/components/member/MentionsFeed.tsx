@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useLang } from "../../i18n";
 import { AtSign } from "lucide-react";
+import { timeAgo } from "./timeAgo";
 
 interface Mention {
   id: string;
@@ -12,18 +13,6 @@ interface Mention {
 
 interface MentionsFeedProps {
   mentions: Mention[];
-}
-
-function timeAgo(isoString: string): string {
-  const diff = Date.now() - new Date(isoString).getTime();
-  const mins = Math.floor(diff / 60000);
-  if (mins < 1) return "now";
-  if (mins < 60) return `${mins}m ago`;
-  const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs}h ago`;
-  const days = Math.floor(hrs / 24);
-  if (days === 1) return "Yesterday";
-  return `${days}d ago`;
 }
 
 function AvatarInitial({ name }: { name: string }) {
@@ -84,7 +73,7 @@ export function MentionsFeed({ mentions }: MentionsFeedProps) {
                   </span>
                 </div>
                 <span className="text-neutral-600 text-[10px] mt-0.5 block">
-                  {timeAgo(m.time)}
+                  {timeAgo(m.time, t)}
                 </span>
               </div>
             </div>

@@ -24,13 +24,16 @@ export function ForgotPasswordPage() {
     e.preventDefault();
     setError("");
     setSubmitting(true);
-    const { error: resetError } = await resetPassword(email);
-    setSubmitting(false);
-    if (resetError) {
-      setError(resetError.message);
-      return;
+    try {
+      const { error: resetError } = await resetPassword(email);
+      if (resetError) {
+        setError(resetError.message);
+        return;
+      }
+      setSent(true);
+    } finally {
+      setSubmitting(false);
     }
-    setSent(true);
   };
 
   if (sent) {

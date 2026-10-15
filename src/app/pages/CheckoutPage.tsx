@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import {
   Link,
   Navigate,
@@ -27,6 +27,7 @@ import {
   createCheckout,
   getPlans,
   validateVoucher,
+  type ApiError,
   type BillingInterval,
   type Plan,
   type VoucherValidation,
@@ -48,19 +49,50 @@ declare global {
   }
 }
 
-// Loads Midtrans snap.js once; resolves when window.snap is available
+// Loads Midtrans snap.js; reloads/replaces the script when the client key or
+// environment changes, and shares one promise across duplicate in-flight loads.
+// NOTE: SRI is not available for the dynamic Snap loader — Midtrans serves
+// snap.js without published hashes, so the script is allow-listed in the CSP
+// (index.html) instead of integrity-pinned.
+let snapLoadPromise: Promise<void> | null = null;
+
 function loadSnap(clientKey: string, isProduction: boolean): Promise<void> {
-  return new Promise((resolve, reject) => {
-    if (window.snap) return resolve();
+  const src = isProduction
+    ? "https://app.midtrans.com/snap/snap.js"
+    : "https://app.sandbox.midtrans.com/snap/snap.js";
+  const existing = document.querySelector<HTMLScriptElement>(
+    'script[data-midtrans-snap="true"]',
+  );
+  if (
+    existing &&
+    existing.getAttribute("src") === src &&
+    existing.getAttribute("data-client-key") === clientKey &&
+    existing.getAttribute("data-env") === (isProduction ? "production" : "sandbox") &&
+    window.snap
+  ) {
+    return Promise.resolve();
+  }
+  if (snapLoadPromise) return snapLoadPromise;
+  snapLoadPromise = new Promise((resolve, reject) => {
+    if (existing) existing.remove();
+    // A stale window.snap from a previous key/env must not be reused.
+    delete window.snap;
     const script = document.createElement("script");
-    script.src = isProduction
-      ? "https://app.midtrans.com/snap/snap.js"
-      : "https://app.sandbox.midtrans.com/snap/snap.js";
+    script.src = src;
     script.setAttribute("data-client-key", clientKey);
-    script.onload = () => resolve();
-    script.onerror = () => reject(new Error("Failed to load Midtrans Snap"));
+    script.setAttribute("data-env", isProduction ? "production" : "sandbox");
+    script.setAttribute("data-midtrans-snap", "true");
+    script.onload = () => {
+      snapLoadPromise = null;
+      resolve();
+    };
+    script.onerror = () => {
+      snapLoadPromise = null;
+      reject(new Error("Failed to load Midtrans Snap"));
+    };
     document.head.appendChild(script);
   });
+  return snapLoadPromise;
 }
 
 const idr = new Intl.NumberFormat("id-ID", {
@@ -92,15 +124,28 @@ export function CheckoutPage() {
   const [applying, setApplying] = useState(false);
   const [voucher, setVoucher] = useState<VoucherValidation | null>(null);
   const [paying, setPaying] = useState(false);
+  // State lags double-clicks, so a ref guard blocks re-entrant pay() calls.
+  const payingRef = useRef(false);
+  const [plansLoadKey, setPlansLoadKey] = useState(0);
 
   useEffect(() => {
+    let mounted = true;
     getPlans()
-      .then(setPlans)
+      .then((loaded) => {
+        if (mounted) {
+          setPlans(loaded);
+          setPlansError(false);
+        }
+      })
       .catch((e) => {
+        if (!mounted) return;
         console.error("Failed to load plans:", e);
         setPlansError(true);
       });
-  }, []);
+    return () => {
+      mounted = false;
+    };
+  }, [plansLoadKey]);
 
   const plan = plans?.find((p) => p.id === planId);
 
@@ -128,6 +173,13 @@ export function CheckoutPage() {
         <p className="mt-16 text-[14px] text-neutral-500">
           Couldn't load your order. Please try again later.
         </p>
+        <button
+          type="button"
+          onClick={() => setPlansLoadKey((k) => k + 1)}
+          className="mt-4 rounded-lg border border-neutral-700 px-4 py-2 text-[13px] text-neutral-200 hover:border-neutral-500"
+        >
+          Retry
+        </button>
       </CheckoutShell>
     );
   }
@@ -177,7 +229,8 @@ export function CheckoutPage() {
   };
 
   const pay = async () => {
-    if (!session) return;
+    if (!session || payingRef.current) return;
+    payingRef.current = true;
     setPaying(true);
     try {
       const checkout = await createCheckout(session.access_token, {
@@ -195,16 +248,19 @@ export function CheckoutPage() {
           navigate(`/payment/pending?order_id=${checkout.order_id}`),
         onError: () =>
           navigate(`/payment/error?order_id=${checkout.order_id}`),
-        onClose: () => setPaying(false),
+        onClose: () => {
+          payingRef.current = false;
+          setPaying(false);
+        },
       });
     } catch (err) {
       console.error("Checkout failed:", err);
-      const message = String(err);
       toast.error(
-        message.includes("503")
+        (err as ApiError)?.status === 503
           ? "Payments are not configured yet. Please try again later."
           : "Could not start the payment. Please try again.",
       );
+      payingRef.current = false;
       setPaying(false);
     }
   };

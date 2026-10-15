@@ -3,6 +3,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -17,6 +18,12 @@ import {
 } from "../utils/api";
 
 export type PlanId = "free" | "pro" | "business";
+
+function isPlanId(v: unknown): v is PlanId {
+  return v === "free" || v === "pro" || v === "business";
+}
+
+const normalizePlanId = (v: unknown): PlanId => (isPlanId(v) ? v : "free");
 
 /** Order matters: each plan includes everything from the plans before it. */
 const PLAN_RANK: Record<string, number> = { free: 0, pro: 1, business: 2 };
@@ -46,6 +53,8 @@ interface SubscriptionState {
   transactions: TransactionSummary[];
   /** True until the first fetch for the signed-in user resolves. */
   loading: boolean;
+  /** True while the workspace-inherited plan is being resolved. */
+  workspacePlanLoading: boolean;
   /** True when the signed-in user is on the founder allowlist. */
   isAdmin: boolean;
   /** True when the user's plan rank is at least the given plan's rank. */
@@ -61,6 +70,7 @@ const SubscriptionContext = createContext<SubscriptionState>({
   subscription: null,
   transactions: [],
   loading: false,
+  workspacePlanLoading: false,
   isAdmin: false,
   hasPlan: (min) => min === "free",
   refresh: async () => {},
@@ -72,69 +82,112 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
   const [loaded, setLoaded] = useState(false);
   // Fase 14.5 — workspace-level plan for invited members
   const [workspacePlan, setWorkspacePlan] = useState<PlanId>("free");
+  const [workspacePlanLoading, setWorkspacePlanLoading] = useState(false);
 
   const userId = user?.id;
+  const tokenRef = useRef<string | null>(null);
+  tokenRef.current = session?.access_token ?? null;
+
+  const refresh = useCallback(async () => {
+    const token = tokenRef.current;
+    if (!token) return;
+    try {
+      const data = await getSubscription(token);
+      setInfo(data);
+      setLoaded(true);
+      const personalPlan = data?.effective_plan?.id;
+      if (!personalPlan || personalPlan === "free") {
+        setWorkspacePlanLoading(true);
+        try {
+          const wp = await getWorkspacePlan();
+          setWorkspacePlan(normalizePlanId(wp.plan));
+        } catch {
+          /* keep previous workspace plan */
+        } finally {
+          setWorkspacePlanLoading(false);
+        }
+      } else {
+        setWorkspacePlan("free");
+      }
+    } catch (e) {
+      console.error("Failed to refresh subscription:", e);
+      setWorkspacePlanLoading(true);
+      try {
+        const wp = await getWorkspacePlan();
+        setWorkspacePlan(normalizePlanId(wp.plan));
+      } catch {
+        /* keep previous workspace plan */
+      } finally {
+        setWorkspacePlanLoading(false);
+      }
+    }
+  }, []);
 
   useEffect(() => {
-    if (!userId || !session) {
+    const h = () => {
+      void refresh();
+    };
+    window.addEventListener("workspace-changed", h);
+    return () => window.removeEventListener("workspace-changed", h);
+  }, [refresh]);
+
+  useEffect(() => {
+    const token = tokenRef.current;
+    if (!userId || !token) {
       setInfo(null);
       setLoaded(false);
       setWorkspacePlan("free");
+      setWorkspacePlanLoading(false);
       return;
     }
     let cancelled = false;
     setLoaded(false);
     setWorkspacePlan("free");
+    setWorkspacePlanLoading(false);
 
-    getSubscription(session.access_token)
-      .then((data) => {
+    (async () => {
+      try {
+        const data = await getSubscription(token);
         if (cancelled) return;
         setInfo(data);
-        // If personal plan is free or missing, fall back to workspace plan
+        // If personal plan is free or missing, fall back to workspace plan.
+        // Await it BEFORE marking loaded so PlanGate never flashes locked.
+        // Only show the workspace-plan spinner when the fetch actually runs.
         const personalPlan = data?.effective_plan?.id;
         if (!personalPlan || personalPlan === "free") {
-          getWorkspacePlan()
-            .then((wp) => {
-              if (!cancelled) setWorkspacePlan(wp.plan as PlanId);
-            })
-            .catch(() => {
-              /* workspace plan unavailable — keep free */
-            });
+          setWorkspacePlanLoading(true);
+          try {
+            const wp = await getWorkspacePlan();
+            if (!cancelled) setWorkspacePlan(normalizePlanId(wp.plan));
+          } catch {
+            /* workspace plan unavailable — keep free */
+          } finally {
+            if (!cancelled) setWorkspacePlanLoading(false);
+          }
         }
-      })
-      .catch((e) => {
+      } catch (e) {
         if (!cancelled) {
           console.error("Failed to load subscription:", e);
           setInfo(null);
-          // On error, still try workspace plan
-          getWorkspacePlan()
-            .then((wp) => {
-              if (!cancelled) setWorkspacePlan(wp.plan as PlanId);
-            })
-            .catch(() => {
-              /* workspace plan unavailable — keep free */
-            });
+          // On error, still try workspace plan (awaited before loaded).
+          setWorkspacePlanLoading(true);
+          try {
+            const wp = await getWorkspacePlan();
+            if (!cancelled) setWorkspacePlan(normalizePlanId(wp.plan));
+          } catch {
+            /* workspace plan unavailable — keep free */
+          } finally {
+            if (!cancelled) setWorkspacePlanLoading(false);
+          }
         }
-      })
-      .finally(() => {
+      } finally {
         if (!cancelled) setLoaded(true);
-      });
+      }
+    })();
     return () => {
       cancelled = true;
     };
-    // Refetch only when the signed-in user changes, not on token refresh
-  }, [userId]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const refresh = useCallback(async () => {
-    const token = session?.access_token;
-    if (!token) return;
-    try {
-      setInfo(await getSubscription(token));
-      setLoaded(true);
-    } catch (e) {
-      console.error("Failed to refresh subscription:", e);
-    }
-  }, [session?.access_token]);
+  }, [userId]);
 
   const plan = info?.effective_plan ?? FALLBACK_FREE_PLAN;
   // Use whichever plan is higher: personal or workspace-inherited
@@ -153,7 +206,8 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
         plan,
         subscription: info?.subscription ?? null,
         transactions: info?.transactions ?? [],
-        loading: !!user && !loaded,
+        loading: (!!user && !loaded) || workspacePlanLoading,
+        workspacePlanLoading,
         isAdmin: info?.is_admin ?? false,
         hasPlan,
         refresh,

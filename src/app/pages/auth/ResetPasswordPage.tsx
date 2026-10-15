@@ -11,7 +11,7 @@ import { Button } from "@/components/cossui/button";
 import { Field, FieldDescription, FieldLabel } from "@/components/cossui/field";
 import { useAuth } from "../../auth/AuthContext";
 import { FullScreenLoader } from "../../auth/guards";
-import { updatePassword } from "../../utils/supabase";
+import { signInWithEmail, updatePassword } from "../../utils/supabase";
 import { AuthShell } from "./AuthShell";
 import { PasswordInput } from "./PasswordInput";
 import { useLang } from "../../i18n";
@@ -22,8 +22,14 @@ export function ResetPasswordPage() {
   const navigate = useNavigate();
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
+  const [currentPassword, setCurrentPassword] = useState("");
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  // A recovery link lands with a type=recovery hash. A plain signed-in session
+  // has no such token, so password changes there require re-authentication.
+  const isRecoverySession =
+    typeof window !== "undefined" &&
+    /[?#&]type=recovery/.test(window.location.hash + window.location.search);
 
   if (loading) return <FullScreenLoader />;
 
@@ -60,15 +66,37 @@ export function ResetPasswordPage() {
       setError(t("auth.passwordsDoNotMatch"));
       return;
     }
-    setSubmitting(true);
-    const { error: updateError } = await updatePassword(password);
-    setSubmitting(false);
-    if (updateError) {
-      setError(updateError.message);
-      return;
+    // Plain signed-in session (not a recovery link): re-authenticate with the
+    // current password so a stolen unlocked tab can't silently reset it.
+    if (!isRecoverySession) {
+      if (!currentPassword) {
+        setError(t("settings.currentPassword"));
+        return;
+      }
+      if (!user.email) {
+        setError(t("auth.sessionExpired"));
+        return;
+      }
     }
-    toast.success(t("auth.passwordUpdatedSuccess"));
-    navigate("/app/dashboard", { replace: true });
+    setSubmitting(true);
+    try {
+      if (!isRecoverySession && user.email) {
+        const { error: reauthError } = await signInWithEmail(user.email, currentPassword);
+        if (reauthError) {
+          setError(t("auth.incorrectCredentials"));
+          return;
+        }
+      }
+      const { error: updateError } = await updatePassword(password);
+      if (updateError) {
+        setError(updateError.message);
+        return;
+      }
+      toast.success(t("auth.passwordUpdatedSuccess"));
+      navigate("/app/dashboard", { replace: true });
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -83,6 +111,18 @@ export function ResetPasswordPage() {
             <AlertTitle>{t("auth.couldNotUpdatePassword")}</AlertTitle>
             <AlertDescription>{error}</AlertDescription>
           </Alert>
+        )}
+        {!isRecoverySession && (
+          <Field>
+            <FieldLabel>{t("settings.currentPassword")}</FieldLabel>
+            <PasswordInput
+              value={currentPassword}
+              onChange={setCurrentPassword}
+              autoComplete="current-password"
+              required
+            />
+            <FieldDescription>{t("settings.changePasswordDesc")}</FieldDescription>
+          </Field>
         )}
         <Field>
           <FieldLabel>{t("auth.newPassword")}</FieldLabel>

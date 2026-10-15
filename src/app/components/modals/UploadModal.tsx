@@ -1,20 +1,44 @@
-import { useState, useEffect } from "react";
-import { toast } from "sonner";
+import { useEffect, useRef, useState } from "react";
 import { BaseModal, ModalSelect, ModalFooter } from "./BaseModal";
 import * as api from "../../utils/api";
 
 interface UploadModalProps {
   open: boolean;
   onClose: () => void;
-  onUpload?: (file: api.FileItem) => void;
+  onUpload?: (file: api.FileItem) => void | Promise<void>;
+}
+
+export const MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
+
+// Mirror of the backend upload blacklist: executable/active content that must
+// never be stored, even if the server check is bypassed.
+export const BLOCKED_UPLOAD_MIME = new Set([
+  "text/html",
+  "image/svg+xml",
+  "application/javascript",
+  "application/xhtml+xml",
+]);
+
+function validateFile(file: File): string | null {
+  if (file.size > MAX_UPLOAD_BYTES) {
+    return `File is too large (${api.humanSize(file.size)}). Maximum upload size is 50 MB.`;
+  }
+  const mime = (file.type || "").split(";")[0].trim().toLowerCase();
+  if (mime && BLOCKED_UPLOAD_MIME.has(mime)) {
+    return `Files of type "${mime}" are blocked for security (executable content).`;
+  }
+  return null;
 }
 
 export function UploadModal({ open, onClose, onUpload }: UploadModalProps) {
   const [dragging, setDragging] = useState(false);
   const [file, setFile] = useState<File | null>(null);
+  const [fileError, setFileError] = useState("");
+  const [submitError, setSubmitError] = useState("");
   const [uploading, setUploading] = useState(false);
   const [folder, setFolder] = useState("Recent");
   const [ownerInitials, setOwnerInitials] = useState("");
+  const submittingRef = useRef(false);
 
   useEffect(() => {
     if (!open) return;
@@ -24,46 +48,64 @@ export function UploadModal({ open, onClose, onUpload }: UploadModalProps) {
     }).catch(() => {});
   }, [open]);
 
+  const pickFile = (f: File | undefined) => {
+    if (!f) return;
+    const err = validateFile(f);
+    setFileError(err ?? "");
+    if (!err) setFile(f);
+    else setFile(null);
+  };
+
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
     setDragging(false);
-    const f = e.dataTransfer.files[0];
-    if (f) setFile(f);
+    pickFile(e.dataTransfer.files[0]);
   };
 
   const handleFileInput = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const f = e.target.files?.[0];
-    if (f) setFile(f);
+    pickFile(e.target.files?.[0]);
+    e.target.value = "";
   };
 
   const reset = () => {
     setFile(null);
     setFolder("Recent");
     setUploading(false);
+    setFileError("");
+    setSubmitError("");
   };
 
   const handleUpload = async () => {
+    if (submittingRef.current) return;
     if (!file) {
-      toast.error("Select a file to upload");
+      setFileError("Select a file to upload");
       return;
     }
+    const err = validateFile(file);
+    if (err) {
+      setFileError(err);
+      return;
+    }
+    submittingRef.current = true;
     setUploading(true);
+    setSubmitError("");
     try {
       const uploaded = await api.uploadFile(file, {
         owner: ownerInitials || undefined,
         shared: false,
       });
-      onUpload?.(uploaded);
-      toast.success(`"${file.name}" uploaded (${uploaded.sizeHuman})`);
+      await onUpload?.(uploaded);
       reset();
       onClose();
-    } catch (e: any) {
-      if (e.message?.includes("413")) {
-        toast.error("Storage quota exceeded — upgrade your plan to upload more files");
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (msg.includes("413")) {
+        setSubmitError("Upload rejected (413): file too large or storage quota exceeded — upgrade your plan to upload more files.");
       } else {
-        toast.error(`Upload failed: ${e.message}`);
+        setSubmitError(`Upload failed: ${msg}`);
       }
     } finally {
+      submittingRef.current = false;
       setUploading(false);
     }
   };
@@ -76,7 +118,7 @@ export function UploadModal({ open, onClose, onUpload }: UploadModalProps) {
           onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
           onDragLeave={() => setDragging(false)}
           onDrop={handleDrop}
-          className={`border-2 border-dashed rounded-xl p-8 text-center transition-colors cursor-pointer ${dragging ? "border-indigo-500 bg-indigo-950/20" : "border-neutral-800 hover:border-neutral-600"}`}
+          className={`border-2 border-dashed rounded-xl p-8 text-center transition-colors cursor-pointer ${dragging ? "border-indigo-500 bg-indigo-950/20" : fileError ? "border-red-900/60" : "border-neutral-800 hover:border-neutral-600"}`}
           onClick={() => document.getElementById("file-input")?.click()}
         >
           <input id="file-input" type="file" className="hidden" onChange={handleFileInput} />
@@ -90,10 +132,11 @@ export function UploadModal({ open, onClose, onUpload }: UploadModalProps) {
             <div>
               <div className="text-2xl mb-2">☁</div>
               <div className="text-neutral-300 text-[13px]">Drop files here or click to browse</div>
-              <div className="text-neutral-600 text-[12px] mt-1">Max size depends on your plan</div>
+              <div className="text-neutral-600 text-[12px] mt-1">Max 50 MB · HTML, SVG, JS and XHTML files are blocked</div>
             </div>
           )}
         </div>
+        {fileError && <p className="text-red-400 text-[11px]">{fileError}</p>}
 
         <ModalSelect
           label="Upload to"
@@ -106,12 +149,15 @@ export function UploadModal({ open, onClose, onUpload }: UploadModalProps) {
             { value: "Client Deliverables", label: "Client Deliverables" },
           ]}
         />
+        {submitError && (
+          <p role="alert" className="text-red-400 text-[12px] bg-red-950/30 border border-red-900/40 rounded-lg px-3 py-2">{submitError}</p>
+        )}
       </div>
       <ModalFooter
         onCancel={() => { reset(); onClose(); }}
         onConfirm={handleUpload}
         confirmLabel={uploading ? "Uploading..." : "Upload"}
-        confirmDisabled={!file || uploading}
+        confirmDisabled={!file || uploading || !!fileError}
       />
     </BaseModal>
   );

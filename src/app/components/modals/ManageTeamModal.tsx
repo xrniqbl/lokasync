@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { BaseModal } from "./BaseModal";
 
@@ -26,6 +26,8 @@ const statusDot: Record<string, string> = {
 
 export function ManageTeamModal({ open, onClose, teamName, members, onRemove }: ManageTeamModalProps) {
   const [list, setList] = useState(members);
+  // Sync when the parent hands a different team (modal is reused per team).
+  useEffect(() => setList(members), [members, teamName]);
   const [removing, setRemoving] = useState<string | null>(null);
 
   const remove = async (initials: string, name: string) => {

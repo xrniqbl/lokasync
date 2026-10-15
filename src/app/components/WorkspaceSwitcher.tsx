@@ -46,7 +46,8 @@ export function WorkspaceSwitcher({ isCollapsed = false }: { isCollapsed?: boole
       setCreating(false);
       setOpen(false);
       await refreshWorkspaces();
-      switchWorkspace(created.id);
+      const ok = await switchWorkspace(created.id);
+      if (!ok) toast.error("Created, but failed to switch workspace");
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Failed to create workspace");
     }
@@ -59,12 +60,22 @@ export function WorkspaceSwitcher({ isCollapsed = false }: { isCollapsed?: boole
       await api.leaveWorkspace();
       toast.success(`Left workspace "${activeWorkspace.name}"`);
       setShowLeaveConfirm(false);
+      const leftId = activeWorkspace.id;
       await refreshWorkspaces();
-      const remaining = workspaces.filter((w) => w.id !== activeWorkspace.id);
+      // Re-read the fresh list from the server (stale `workspaces` closure
+      // would still contain the workspace just left).
+      let remaining: api.Workspace[] = [];
+      try {
+        const fresh = await api.getWorkspaces();
+        remaining = fresh.workspaces.filter((w) => w.id !== leftId);
+      } catch {
+        remaining = workspaces.filter((w) => w.id !== leftId);
+      }
       if (remaining.length > 0) {
-        switchWorkspace(remaining[0].id);
+        const ok = await switchWorkspace(remaining[0].id);
+        if (!ok) toast.error("Left workspace, but failed to switch");
       } else {
-        navigate("/app/dashboard", { replace: true });
+        navigate("/onboarding", { replace: true });
       }
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Failed to leave workspace");
@@ -106,12 +117,18 @@ export function WorkspaceSwitcher({ isCollapsed = false }: { isCollapsed?: boole
             <div className="text-neutral-600 text-[10px] uppercase tracking-wider px-2 mb-1.5">
               Workspaces
             </div>
-            {workspaces.map((w) => (
+            {workspaces.length === 0 ? (
+              <div className="px-2 py-4 text-center text-[12px] text-neutral-500">
+                No workspaces yet — create one below.
+              </div>
+            ) : (
+              workspaces.map((w) => (
               <button
                 key={w.id}
-                onClick={() => {
-                  switchWorkspace(w.id);
+                onClick={async () => {
                   setOpen(false);
+                  const ok = await switchWorkspace(w.id);
+                  if (!ok) toast.error("Failed to switch workspace");
                 }}
                 className={`w-full flex items-center gap-2.5 px-2 py-1.5 rounded-lg text-[12px] transition-colors text-left ${
                   w.id === activeWorkspace?.id
@@ -128,7 +145,8 @@ export function WorkspaceSwitcher({ isCollapsed = false }: { isCollapsed?: boole
                   <Checkmark size={12} className="text-neutral-300 shrink-0" />
                 )}
               </button>
-            ))}
+                ))
+              )}
           </div>
 
           <div className="border-t border-neutral-800/60 px-2 py-2 space-y-0.5">

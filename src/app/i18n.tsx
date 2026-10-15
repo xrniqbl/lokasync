@@ -1186,6 +1186,8 @@ export const DICT = {
     failedToCreateTask: { en: "Failed to create task", id: "Gagal membuat tugas" },
     failedToSaveTask: { en: "Failed to save task", id: "Gagal menyimpan tugas" },
     failedToDeleteTask: { en: "Failed to delete task", id: "Gagal menghapus tugas" },
+    taskUpdated: { en: "Task updated", id: "Tugas diperbarui" },
+    taskDeleted: { en: "Task deleted", id: "Tugas dihapus" },
   },
 
   projects: {
@@ -1315,6 +1317,10 @@ export const DICT = {
     passwordMin8: { en: "Password must be at least 8 characters", id: "Kata sandi minimal 8 karakter" },
     passwordsDoNotMatch: { en: "Passwords do not match", id: "Kata sandi tidak cocok" },
     passwordUpdated: { en: "Password updated", id: "Kata sandi diperbarui" },
+    currentPassword: { en: "Current password", id: "Kata sandi saat ini" },
+    currentPasswordRequired: { en: "Enter your current password", id: "Masukkan kata sandi Anda saat ini" },
+    currentPasswordIncorrect: { en: "Current password is incorrect", id: "Kata sandi saat ini salah" },
+    sessionExpired: { en: "Session expired — please sign in again", id: "Sesi berakhir — silakan masuk lagi" },
     planLabel: { en: "{plan} plan", id: "Paket {plan}" },
   },
 
@@ -1384,7 +1390,7 @@ export const DICT = {
 
     /* maintenance */
     maintenanceMode: { en: "Maintenance mode", id: "Mode pemeliharaan" },
-    maintenanceModeDesc: { en: "While enabled, signed-in users see a maintenance screen and workspace requests are rejected. Founder accounts, the landing page, billing, and payment webhooks keep working.", id: "Saat diaktifkan, pengguna yang masuk melihat layar pemeliharaan dan permintaan ruang kerja ditolak. Akun pendiri, halaman landiran, tagihan, dan webhook pembayaran terus berfungsi." },
+    maintenanceModeDesc: { en: "While enabled, signed-in users see a maintenance screen and workspace requests are rejected. Founder accounts, the landing page, billing, and payment webhooks keep working.", id: "Saat diaktifkan, pengguna yang masuk melihat layar pemeliharaan dan permintaan ruang kerja ditolak. Akun pendiri, halaman landingan, tagihan, dan webhook pembayaran terus berfungsi." },
     enableMaintenanceMode: { en: "Enable maintenance mode", id: "Aktifkan mode pemeliharaan" },
     messageShownToUsers: { en: "Message shown to users", id: "Pesan yang ditunjukkan kepada pengguna" },
     save: { en: "Save", id: "Simpan" },
@@ -1420,7 +1426,7 @@ export const DICT = {
     send14dayReminders: { en: "Send 14-day reminders", id: "Kirim pengingat 14 hari" },
     send30dayReminders: { en: "Send 30-day reminders", id: "Kirim pengingat 30 hari" },
     sent: { en: "Sent:", id: "Terkirim:" },
-    skippedNoEmail: { en: "Skipped (no email or already reminded):", id: "Dilewati (tanpa email atau sudah dijelaskan):" },
+    skippedNoEmail: { en: "Skipped (no email or already reminded):", id: "Dilewati (tanpa email atau sudah diingatkan):" },
     window: { en: "Window:", id: "Jendela:" },
     days: { en: "days", id: "hari" },
     failedToSendReminders: { en: "Failed to send reminders", id: "Gagal mengirim pengingat" },
@@ -1436,7 +1442,7 @@ export const DICT = {
     runDryRun: { en: "Run dry run", id: "Jalankan dry run" },
     runRealMigration: { en: "Run real migration", id: "Jalankan migrasi nyata" },
     confirmRunRealMigration: { en: "Run the REAL migration? Legacy global keys are kept as a backup.", id: "Jalankan migrasi NYATA? Kunci global lama disimpan sebagai cadangan." },
-    confirmPurgeAndMigrate: { en: "Run the REAL migration AND delete the legacy global keys afterwards? This cannot be undone.", id: "Jalankan migrasi NYATA DAN hapus kunci global lama afterwards? Ini tidak dapat dibatalkan." },
+    confirmPurgeAndMigrate: { en: "Run the REAL migration AND delete the legacy global keys afterwards? This cannot be undone.", id: "Jalankan migrasi NYATA DAN hapus kunci global lama setelahnya? Ini tidak dapat dibatalkan." },
     dryRunReport: { en: "Dry run report", id: "Laporan dry run" },
     migrationReport: { en: "Migration report", id: "Laporan migrasi" },
     legacyKeysFound: { en: "Legacy keys found:", id: "Kunci lama ditemukan:" },
@@ -1532,8 +1538,8 @@ export const DICT = {
     myWorkspace: { en: "My Workspace", id: "Ruang Kerja Saya" },
     quickActions: { en: "Quick Actions", id: "Aksi Cepat" },
     newTask: { en: "New Task", id: "Tugas Baru" },
-    logTime: { en: "Log Time", id: "Catat Waktu" },
-    joinStandup: { en: "Join Standup", id: "Ikut Standup" },
+    logTime: { en: "My Tasks", id: "Tugas Saya" },
+    joinStandup: { en: "Today's Schedule", id: "Jadwal Hari Ini" },
     uploadFile: { en: "Upload File", id: "Unggah Berkas" },
     today: { en: "Today", id: "Hari Ini" },
     events: { en: "Events", id: "Acara" },
@@ -1561,10 +1567,16 @@ export const DICT = {
     leaveWorkspaceTitle: { en: 'Leave "{name}"?', id: 'Keluar dari "{name}"?' },
     cancel: { en: "Cancel", id: "Batal" },
     loadMore: { en: "Load more", id: "Muat lebih banyak" },
+    timeNow: { en: "now", id: "sekarang" },
+    timeMinutesAgo: { en: "{n}m ago", id: "{n}mnt lalu" },
+    timeHoursAgo: { en: "{n}h ago", id: "{n}jam lalu" },
+    timeYesterday: { en: "Yesterday", id: "Kemarin" },
+    timeDaysAgo: { en: "{n}d ago", id: "{n}h lalu" },
   },
 } as const;
 
 /* ── Flattened key type ────────────────────────────────────────────────────── */
+/* Cross-product type: `${section}.${key}` for every top-level DICT section. */
 
 type DictShape = typeof DICT;
 export type DictPath =
@@ -1591,7 +1603,20 @@ export type DictPath =
 export function t(path: DictPath, lang: Lang): string {
   const [section, key] = path.split(".") as [keyof DictShape, string];
   const entry = (DICT[section] as Record<string, { en: string; id: string }>)[key];
+  if (entry === undefined && isDevEnv()) {
+    console.warn(`[i18n] missing key: ${path}`);
+  }
   return entry?.[lang] ?? entry?.["en"] ?? path;
+}
+
+/** Vite-safe dev check (no node `process` types in the browser bundle). */
+function isDevEnv(): boolean {
+  try {
+    const meta = import.meta as unknown as { env?: { DEV?: boolean } };
+    return meta.env?.DEV ?? false;
+  } catch {
+    return false;
+  }
 }
 
 /* ── Lang Context ──────────────────────────────────────────────────────────── */

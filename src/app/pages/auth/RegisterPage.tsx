@@ -42,6 +42,17 @@ const strengthMeta: { label: "" | "weak" | "fair" | "strong"; color: string }[] 
   { label: "strong", color: "#10b981" },
 ];
 
+/** Normalize an Indonesian phone number to E.164.
+ * Accepts "0812…", "62812…", "+62812…", or an already-international "+…"
+ * number — never double-prefixes the country code. Returns "" when blank. */
+function normalizePhone(raw: string): string {
+  const cleaned = raw.trim().replace(/[\s\-.()]/g, "");
+  if (!cleaned) return "";
+  if (cleaned.startsWith("+")) return cleaned;
+  if (cleaned.startsWith("62")) return `+${cleaned}`;
+  return `+62${cleaned.replace(/^0+/, "")}`;
+}
+
 function StepIndicator({ step }: { step: 1 | 2 }) {
   const { t } = useLang();
   return (
@@ -110,31 +121,43 @@ export function RegisterPage() {
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setError("");
+    const normalizedPhone = normalizePhone(phone);
+    if (normalizedPhone) {
+      const digits = normalizedPhone.replace(/\D/g, "");
+      // +62 + 7..13 local digits → 9..15 digits total
+      if (digits.length < 9 || digits.length > 15) {
+        setError(t("auth.phoneRequired"));
+        return;
+      }
+    }
     setSubmitting(true);
-    const { data, error: signUpError } = await signUpWithEmail(
-      email,
-      password,
-      {
-        full_name: fullName.trim(),
-        phone: phone.trim() ? `+62${phone.trim()}` : "",
-        job_title: jobTitle.trim() || undefined,
-        company: company.trim() || undefined,
-      },
-    );
-    setSubmitting(false);
+    try {
+      const { data, error: signUpError } = await signUpWithEmail(
+        email,
+        password,
+        {
+          full_name: fullName.trim(),
+          phone: normalizedPhone,
+          job_title: jobTitle.trim() || undefined,
+          company: company.trim() || undefined,
+        },
+      );
 
-    if (signUpError) {
-      setError(signUpError.message);
-      return;
-    }
-    if (data.user && data.user.identities?.length === 0) {
-      setError(t("auth.emailAlreadyRegistered"));
-      return;
-    }
-    if (data.session) {
-      navigate("/app/dashboard", { replace: true });
-    } else {
-      navigate("/verify-email", { state: { email }, replace: true });
+      if (signUpError) {
+        setError(signUpError.message);
+        return;
+      }
+      if (data.user && data.user.identities?.length === 0) {
+        setError(t("auth.emailAlreadyRegistered"));
+        return;
+      }
+      if (data.session) {
+        navigate("/app/dashboard", { replace: true });
+      } else {
+        navigate("/verify-email", { state: { email }, replace: true });
+      }
+    } finally {
+      setSubmitting(false);
     }
   };
 

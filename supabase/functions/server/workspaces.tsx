@@ -13,6 +13,7 @@
 import * as kv from "./kv_store.tsx";
 import * as sql from "./sql_client.tsx";
 import * as emails from "./emails.tsx";
+import { createClient } from "jsr:@supabase/supabase-js@2.49.8";
 
 export type WorkspaceRole = "owner" | "member";
 
@@ -224,11 +225,65 @@ export async function deleteWorkspace(workspaceId: string) {
   for (const m of members) {
     await removeFromUserIndex(m.user_id, workspaceId);
   }
+  // Workspace-scoped SQL rows (best-effort per table — one failure must not
+  // abort the rest). Tables reference workspaces(id) ON DELETE CASCADE, so
+  // this is defense-in-depth for rows orphaned by partial failures; team
+  // members are covered by deleting their parent teams.
+  const scopedTables = [
+    "tasks",
+    "projects",
+    "calendar_events",
+    "mentions",
+    "team_activity",
+    "files",
+    "file_folders",
+    "teams",
+    "workspace_settings",
+    "workspace_financial",
+    "workspace_integrations",
+    "workspace_sessions",
+    "workspace_dashboard",
+    "workspace_analytics",
+    "workspace_milestones",
+  ];
+  for (const table of scopedTables) {
+    try {
+      await sql.getDbClient().from(table).delete().eq("workspace_id", workspaceId);
+    } catch (e) {
+      console.error(`deleteWorkspace: failed to delete from ${table}:`, e);
+    }
+  }
+  try {
+    await sql.getDbClient().from("workspace_members").delete().eq("workspace_id", workspaceId);
+  } catch (e) {
+    console.error("deleteWorkspace: failed to delete workspace_members:", e);
+  }
   // Delete invitations via SQL CASCADE (workspace_id FK) and workspace data keys
   await sql.getDbClient().from("workspace_invitations").delete().eq("workspace_id", workspaceId);
   await kv.mdel(WORKSPACE_DATA_KEYS.map((k) => wsDataKey(workspaceId, k)));
   await kv.del(`ws_members:${workspaceId}`);
   await kv.del(`workspace:${workspaceId}`);
+  // Remove Storage objects under the workspace prefix (best-effort).
+  try {
+    const url = Deno.env.get("SUPABASE_URL");
+    const key = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+    if (url && key) {
+      const client = createClient(url, key, { auth: { autoRefreshToken: false, persistSession: false } });
+      const { data: objects } = await client.storage.from("workspace-files").list(workspaceId);
+      if (objects?.length) {
+        const paths = objects.map((o: any) => `${workspaceId}/${o.name}`);
+        await client.storage.from("workspace-files").remove(paths);
+      }
+    }
+  } catch (e) {
+    console.error("deleteWorkspace: failed to delete storage objects:", e);
+  }
+  // Delete the workspace row itself (last, after dependents).
+  try {
+    await sql.getDbClient().from("workspaces").delete().eq("id", workspaceId);
+  } catch (e) {
+    console.error("deleteWorkspace: failed to delete workspaces row:", e);
+  }
 }
 
 // ── Invitations (Fase 14.2) ───────────────────────────────────────────────────
@@ -381,15 +436,21 @@ export async function sendInvitationEmail(
   invitation: Invitation,
   inviteUrl: string,
 ): Promise<boolean> {
+  const esc = (s: any) =>
+    String(s ?? "").replace(/[&<>"']/g, (m: any) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m]));
+  const safeUrl = (u: string) =>
+    u.startsWith("http://") || u.startsWith("https://") || u.startsWith("/") ? u : "/";
+  const href = esc(safeUrl(inviteUrl));
+  const subject = `${invitation.invited_by} invited you to "${invitation.workspace_name}" on LokaSync`;
   return emails.sendEmail(
     invitation.email,
-    `${invitation.invited_by} invited you to "${invitation.workspace_name}" on LokaSync`,
+    subject,
     `<div style="font-family:sans-serif;max-width:480px;margin:0 auto">
-      <h2>You're invited to ${invitation.workspace_name}</h2>
-      <p><strong>${invitation.invited_by}</strong> invited you to join the
-      workspace <strong>${invitation.workspace_name}</strong> on LokaSync
-      as a <strong>${invitation.role}</strong>.</p>
-      <p><a href="${inviteUrl}" style="display:inline-block;padding:10px 20px;background:#6366f1;color:#fff;border-radius:6px;text-decoration:none">Accept invitation</a></p>
+      <h2>You're invited to ${esc(invitation.workspace_name)}</h2>
+      <p><strong>${esc(invitation.invited_by)}</strong> invited you to join the
+      workspace <strong>${esc(invitation.workspace_name)}</strong> on LokaSync
+      as a <strong>${esc(invitation.role)}</strong>.</p>
+      <p><a href="${href}" style="display:inline-block;padding:10px 20px;background:#6366f1;color:#fff;border-radius:6px;text-decoration:none">Accept invitation</a></p>
       <p style="color:#888;font-size:13px">This invitation expires on
       ${new Date(invitation.expires_at).toUTCString()}. If you didn't expect
       this email, you can safely ignore it.</p>

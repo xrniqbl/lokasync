@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Link } from "react-router";
 import { Check } from "lucide-react";
 import { Button } from "@/components/cossui/button";
@@ -10,11 +10,18 @@ import {
   CardPanel,
   CardTitle,
 } from "@/components/cossui/card";
+import { Field, FieldLabel } from "@/components/cossui/field";
+import { Input } from "@/components/cossui/input";
 import { Separator } from "@/components/cossui/separator";
 import { Spinner } from "@/components/cossui/spinner";
+import { useAuth } from "../auth/AuthContext";
 import { useNavigation } from "./NavigationContext";
 import { useSubscription } from "../subscription/SubscriptionContext";
-import type { TransactionSummary } from "../utils/api";
+import {
+  validateVoucher,
+  type TransactionSummary,
+  type VoucherValidation,
+} from "../utils/api";
 import { useLang } from "../i18n";
 
 const idr = new Intl.NumberFormat("id-ID", {
@@ -28,6 +35,14 @@ const dateFmt = new Intl.DateTimeFormat("en-US", {
   month: "short",
   year: "numeric",
 });
+
+/** Never throw on invalid dates — fall back to "—". */
+function formatDate(value: string | null | undefined): string {
+  if (!value) return "—";
+  const d = new Date(value);
+  if (isNaN(d.getTime())) return "—";
+  return dateFmt.format(d);
+}
 
 const STATUS_BADGES: Record<string, { labelKey: string; className: string }> = {
   paid: { labelKey: "billingPage.paid", className: "bg-emerald-950/60 text-emerald-400" },
@@ -52,7 +67,7 @@ function TransactionRow({ tx }: { tx: TransactionSummary }) {
           </span>
         </div>
         <div className="mt-0.5 truncate text-[11px] text-neutral-500">
-          {dateFmt.format(new Date(tx.created_at))} · {tx.order_id}
+          {formatDate(tx.created_at)} · {tx.order_id}
           {tx.voucher_code ? ` · voucher ${tx.voucher_code}` : ""}
         </div>
       </div>
@@ -75,14 +90,42 @@ function TransactionRow({ tx }: { tx: TransactionSummary }) {
 
 export function BillingPage() {
   const { t } = useLang();
+  const { session } = useAuth();
   const { subSection } = useNavigation();
   const { plan, subscription, transactions, loading, refresh } =
     useSubscription();
   const historyRef = useRef<HTMLDivElement>(null);
+  const [loadError, setLoadError] = useState(false);
+  const [refreshKey, setRefreshKey] = useState(0);
 
+  // Voucher redeem UI — validates a code against the current plan/interval.
+  const [voucherCode, setVoucherCode] = useState("");
+  const [redeeming, setRedeeming] = useState(false);
+  const [redeemResult, setRedeemResult] = useState<VoucherValidation | null>(null);
+  const [redeemError, setRedeemError] = useState<string | null>(null);
+
+  // Depend on a stable key, not the `refresh` function identity — an
+  // unstable context memo would otherwise re-run this effect in a loop.
+  // Fetch on user (id) / mount only — never on token rotation, or every
+  // background refresh would re-trigger a billing fetch.
+  const userId = session?.user?.id ?? null;
   useEffect(() => {
-    void refresh();
-  }, [refresh]);
+    if (!userId) return;
+    let mounted = true;
+    setLoadError(false);
+    void refresh().catch(() => {
+      if (mounted) setLoadError(true);
+    });
+    return () => {
+      mounted = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userId, refreshKey]);
+
+  const retryLoad = () => {
+    setLoadError(false);
+    setRefreshKey((k) => k + 1);
+  };
 
   useEffect(() => {
     if (subSection === "history") {
@@ -93,6 +136,41 @@ export function BillingPage() {
   const isPaidPlan = plan.monthly > 0;
   const active = subscription?.status === "active";
   const expired = subscription?.status === "expired";
+
+  // Prefer the price actually paid on the subscription's own order — plan
+  // prices may have changed since the purchase. Fall back to the current
+  // plan price when no matching transaction is available.
+  const subscriptionTx = subscription
+    ? transactions.find((tx) => tx.order_id === subscription.order_id)
+    : undefined;
+  const paidAmount =
+    subscriptionTx?.gross_amount ??
+    (subscription?.interval === "yearly" ? plan.yearly : plan.monthly);
+
+  const applyRedeem = async (e: FormEvent) => {
+    e.preventDefault();
+    const trimmed = voucherCode.trim().toUpperCase();
+    if (!trimmed || !session) return;
+    setRedeeming(true);
+    setRedeemError(null);
+    try {
+      const result = await validateVoucher(session.access_token, {
+        code: trimmed,
+        plan_id: plan.id,
+        interval: subscription?.interval ?? "monthly",
+      });
+      setRedeemResult(result);
+      if (!result.valid) {
+        setRedeemError(result.reason ?? "This voucher code is not valid");
+      }
+    } catch (err) {
+      console.error("Voucher redeem failed:", err);
+      setRedeemResult(null);
+      setRedeemError("Could not validate the voucher. Please try again.");
+    } finally {
+      setRedeeming(false);
+    }
+  };
 
   return (
     <div
@@ -113,6 +191,15 @@ export function BillingPage() {
           <div className="flex justify-center py-16">
             <Spinner className="size-6 text-neutral-400" />
           </div>
+        ) : loadError ? (
+          <div className="flex flex-col items-center gap-3 py-16">
+            <p className="text-[13px] text-neutral-500">
+              Couldn't load your billing info. Please try again.
+            </p>
+            <Button variant="outline" onClick={retryLoad}>
+              Retry
+            </Button>
+          </div>
         ) : (
           <>
             {/* Current plan */}
@@ -128,27 +215,24 @@ export function BillingPage() {
                     )}
                     {expired && (
                       <span className="ml-2 rounded-full bg-red-950/60 px-2.5 py-0.5 text-[11px] font-normal text-red-400">
-                        {t("billingPage.inactiveBadge")}
+                        {t("billingPage.subscriptionExpired").split("—")[0]?.trim() ||
+                          t("billingPage.subscriptionExpired")}
                       </span>
                     )}
                   </span>
                   <span className="text-[14px] font-normal text-neutral-300">
                     {isPaidPlan
-                      ? `${idr.format(
-                          subscription?.interval === "yearly"
-                            ? plan.yearly
-                            : plan.monthly,
-                        )} ${
+                      ? `${idr.format(paidAmount)} ${
                           subscription?.interval === "yearly"
                             ? t("billingPage.perYear")
                             : t("billingPage.perMonth")
                         }`
-                      : `Rp 0${t("billingPage.perMonth")}`}
+                      : `${idr.format(0)}${t("billingPage.perMonth")}`}
                   </span>
                 </CardTitle>
                 <CardDescription className="text-neutral-400">
                   {active && subscription
-                    ? t("billingPage.activeUntil").replace("{date}", dateFmt.format(new Date(subscription.current_period_end)))
+                    ? t("billingPage.activeUntil").replace("{date}", formatDate(subscription.current_period_end))
                     : expired
                       ? t("billingPage.subscriptionExpired")
                       : t("billingPage.freePlanDesc")}
@@ -211,6 +295,54 @@ export function BillingPage() {
                   </>
                 )}
               </CardFooter>
+            </Card>
+
+            {/* Voucher redeem */}
+            <Card className="border-neutral-800 bg-[#1a1a1a]">
+              <CardHeader>
+                <CardTitle className="text-neutral-50">Voucher</CardTitle>
+                <CardDescription className="text-neutral-400">
+                  Have a voucher code? Validate it against your current plan.
+                </CardDescription>
+              </CardHeader>
+              <CardPanel>
+                <form onSubmit={applyRedeem} className="flex flex-col gap-2">
+                  <Field>
+                    <FieldLabel>Voucher code</FieldLabel>
+                    <div className="flex gap-2">
+                      <Input
+                        type="text"
+                        value={voucherCode}
+                        onChange={(e) => setVoucherCode(e.target.value.toUpperCase())}
+                        placeholder="LOKA20"
+                        className="uppercase"
+                      />
+                      <Button
+                        type="submit"
+                        variant="outline"
+                        loading={redeeming}
+                        disabled={!voucherCode.trim() || !session}
+                      >
+                        Apply
+                      </Button>
+                    </div>
+                  </Field>
+                  {redeemResult?.valid && (
+                    <p className="text-[12px] text-emerald-400">
+                      {redeemResult.code} —{" "}
+                      {redeemResult.type === "percent"
+                        ? `${redeemResult.value}% off`
+                        : `${idr.format(redeemResult.value ?? 0)} off`}
+                      {redeemResult.total != null
+                        ? ` · total ${idr.format(redeemResult.total)}`
+                        : ""}
+                    </p>
+                  )}
+                  {redeemError && (
+                    <p className="text-[12px] text-red-400">{redeemError}</p>
+                  )}
+                </form>
+              </CardPanel>
             </Card>
 
             {/* Payment history */}

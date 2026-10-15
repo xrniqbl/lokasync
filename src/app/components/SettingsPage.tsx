@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { useNavigation } from "./NavigationContext";
 import { InviteMemberModal } from "./modals/InviteMemberModal";
+import { OwnerOnly } from "./OwnerOnly";
 import { useLang, LangToggle } from "../i18n";
 import * as api from "../utils/api";
 import { supabase, signInWithEmail, updatePassword as updateAuthPassword } from "../utils/supabase";
@@ -62,15 +63,17 @@ function Section({ title, description, children }: { title: string; description?
   );
 }
 
-function ToggleRow({ label, description, defaultChecked = false }: { label: string; description?: string; defaultChecked?: boolean }) {
-  const [checked, setChecked] = useState(defaultChecked);
+function ToggleRow({ label, description, defaultChecked = false, checked, onChange }: { label: string; description?: string; defaultChecked?: boolean; checked?: boolean; onChange?: () => void }) {
+  const [internal, setInternal] = useState(defaultChecked);
+  const isControlled = checked !== undefined;
+  const value = isControlled ? checked : internal;
   return (
     <div className="flex items-center justify-between py-3 gap-4">
       <div className="min-w-0">
         <div className="text-neutral-200 text-[13px]">{label}</div>
         {description && <div className="text-neutral-600 text-[12px] mt-0.5">{description}</div>}
       </div>
-      <Toggle checked={checked} onChange={() => setChecked(!checked)} />
+      <Toggle checked={value} onChange={isControlled ? onChange ?? (() => {}) : () => setInternal(!internal)} />
     </div>
   );
 }
@@ -144,8 +147,8 @@ export function SettingsPage() {
   const [integrations, setIntegrations] = useState<any[]>([]);
   const [sessions, setSessions] = useState<{ device: string; location: string; ip: string; lastActive: string; current: boolean }[]>([]);
   const [loginHistory, setLoginHistory] = useState<{ date: string; ip: string; device: string; status: string }[]>([]);
-  const [members, setMembers] = useState<any[]>([]);
-  const [pendingList, setPendingList] = useState<any[]>([]);
+  const [members, setMembers] = useState<api.WorkspaceMember[]>([]);
+  const [invitesList, setInvitesList] = useState<api.WorkspaceInvitation[]>([]);
   const [billing, setBilling] = useState<any | null>(null);
   const [quota, setQuota] = useState<api.QuotaInfo | null>(null);
   const [profileData, setProfileData] = useState<any>({});
@@ -177,6 +180,7 @@ export function SettingsPage() {
   const [timeFormat, setTimeFormat] = useState("12h");
   const [weekStart, setWeekStart] = useState("Monday");
   const [auditFilter, setAuditFilter] = useState("All");
+  const [auditVisible, setAuditVisible] = useState(20);
   const [auditLogData, setAuditLogData] = useState<any[]>([]);
   const [memberRoles, setMemberRoles] = useState<Record<string, string>>({});
   const [apiKeysList, setApiKeysList] = useState<any[]>([]);
@@ -188,7 +192,7 @@ export function SettingsPage() {
   const [dangerEmail, setDangerEmail] = useState("");
   const [dangerReset, setDangerReset] = useState("");
   const [exportFormats, setExportFormats] = useState<Record<string, string>>({
-    "All tasks": "CSV", "All projects": "CSV", "Team data": "CSV", "Files & attachments": "CSV",
+    tasks: "CSV", projects: "CSV", team: "CSV", files: "CSV",
   });
   const [showWebhookForm, setShowWebhookForm] = useState(false);
   const [newWebhookUrl, setNewWebhookUrl] = useState("");
@@ -206,8 +210,25 @@ export function SettingsPage() {
   const [transferCandidates, setTransferCandidates] = useState<api.WorkspaceMember[]>([]);
   const [transferTarget, setTransferTarget] = useState("");
   const [transferring, setTransferring] = useState(false);
+  const [confirmingTransfer, setConfirmingTransfer] = useState(false);
+  const [settingsLoading, setSettingsLoading] = useState(true);
+  const [logoSrc, setLogoSrc] = useState<string | null>(null);
+  const [sidebarPosition, setSidebarPosition] = useState<"left" | "right">("left");
+  const [workspacePrefs, setWorkspacePrefs] = useState({
+    showCompleted: false, compactView: false, publicLinks: true, require2FA: false, guestAccess: true,
+  });
+  const [securityPrefs, setSecurityPrefs] = useState({
+    trustedDevices: true, loginNotifications: true, sessionTimeout: false,
+  });
+  const [defaultNotifs, setDefaultNotifs] = useState({
+    taskAssigned: true, taskDue: true, comments: true, projectStatus: false,
+    newMember: false, digest: true, productUpdates: false, security: true,
+  });
+  const [retention, setRetention] = useState({
+    autoArchive: true, autoDelete: false, retainAudit: true,
+  });
 
-  const { activeWorkspace } = useWorkspace();
+  const { activeWorkspace, isOwner } = useWorkspace();
   useRealtimeWorkspace(activeWorkspace?.id ?? null, (table) => {
     if (table === "workspace_settings") {
       api.getSettings("appearance").then((data) => {
@@ -223,39 +244,55 @@ export function SettingsPage() {
 
   // Load settings sections from Supabase
   useEffect(() => {
-    api.getSettings("members").then((data) => {
-      if (data?.rows) {
-        setMembers(data.rows);
-        setMemberRoles(Object.fromEntries(data.rows.map((m: any) => [m.initials, m.role])));
-      }
-      if (data?.pending) setPendingList(data.pending);
-    }).catch((e) => console.error("Failed to load members settings:", e));
+    const loads: Promise<unknown>[] = [];
+    loads.push(
+      api.getSettings("workspace-prefs").then((data) => {
+        if (data && typeof data === "object") setWorkspacePrefs((prev) => ({ ...prev, ...data }));
+      }).catch((e) => console.error("Failed to load workspace-prefs:", e)),
+    );
+    loads.push(
+      api.getSettings("default-notifications").then((data) => {
+        if (data && typeof data === "object") setDefaultNotifs((prev) => ({ ...prev, ...data }));
+      }).catch((e) => console.error("Failed to load default-notifications:", e)),
+    );
+    loads.push(
+      api.getSettings("security-prefs").then((data) => {
+        if (data && typeof data === "object") setSecurityPrefs((prev) => ({ ...prev, ...data }));
+      }).catch((e) => console.error("Failed to load security-prefs:", e)),
+    );
+    loads.push(
+      api.getSettings("retention").then((data) => {
+        if (data && typeof data === "object") setRetention((prev) => ({ ...prev, ...data }));
+      }).catch((e) => console.error("Failed to load retention:", e)),
+    );
+    loads.push(
+      api.getSettings("api-keys").then((data) => {
+        if (Array.isArray(data)) setApiKeysList(data);
+      }).catch((e) => console.error("Failed to load api-keys:", e)),
+    );
 
-    api.getSettings("api-keys").then((data) => {
-      if (Array.isArray(data)) setApiKeysList(data);
-    }).catch((e) => console.error("Failed to load api-keys:", e));
-
-    api.getSettings("webhooks").then((data) => {
+    loads.push(api.getSettings("webhooks").then((data) => {
       if (Array.isArray(data)) setWebhooksList(data);
-    }).catch((e) => console.error("Failed to load webhooks:", e));
+    }).catch((e) => console.error("Failed to load webhooks:", e)));
 
-    api.getSettings("audit-log").then((data) => {
+    loads.push(api.getSettings("audit-log").then((data) => {
       if (Array.isArray(data)) setAuditLogData(data.map((e: any) => ({
         actor: e.actor, name: e.actorName, action: e.action, target: e.target,
         ip: e.ip, time: e.timestamp, category: e.category,
       })));
-    }).catch((e) => console.error("Failed to load audit-log:", e));
+    }).catch((e) => console.error("Failed to load audit-log:", e)));
 
-    api.getSettings("appearance").then((data) => {
+    loads.push(api.getSettings("appearance").then((data) => {
       if (data) {
         if (data.theme) setTheme(data.theme);
         if (data.accent) setAccentColor(accentColors.find((a) => a.label.toLowerCase() === data.accent)?.value ?? "#6366f1");
         if (data.fontSize) setFontSize(data.fontSize);
         if (data.density) setDensity(data.density);
+        if (data.sidebarPosition === "left" || data.sidebarPosition === "right") setSidebarPosition(data.sidebarPosition);
       }
-    }).catch((e) => console.error("Failed to load appearance:", e));
+    }).catch((e) => console.error("Failed to load appearance:", e)));
 
-    api.getSettings("timezone").then((data) => {
+    loads.push(api.getSettings("timezone").then((data) => {
       if (data) {
         if (data.dateFormat) setDateFormat(data.dateFormat);
         if (data.timeFormat) setTimeFormat(data.timeFormat);
@@ -269,37 +306,53 @@ export function SettingsPage() {
         }
         if (typeof data.autoDetect === "boolean") setAutoDetectTz(data.autoDetect);
       }
-    }).catch((e) => console.error("Failed to load timezone:", e));
+    }).catch((e) => console.error("Failed to load timezone:", e)));
 
-    api.getSettings("notifications").then((data) => {
+    loads.push(api.getSettings("notifications").then((data) => {
       if (data && typeof data === "object") setNotifState((prev) => ({ ...prev, ...data }));
-    }).catch((e) => console.error("Failed to load notifications:", e));
+    }).catch((e) => console.error("Failed to load notifications:", e)));
 
     // Fetch integrations from Supabase
-    api.getIntegrations().then((data) => {
+    loads.push(api.getIntegrations().then((data) => {
       if (Array.isArray(data)) {
         setIntegrations(data.map((d: any) => ({ ...d, icon: integrationIcons[d.name] ?? <Zap size={16} /> })));
       }
-    }).catch((e) => console.error("Failed to load integrations:", e));
+    }).catch((e) => console.error("Failed to load integrations:", e)));
 
-    api.getSettings("billing").then((data) => {
+    loads.push(api.getSettings("billing").then((data) => {
       if (data) setBilling(data);
-    }).catch((e) => console.error("Failed to load billing:", e));
+    }).catch((e) => console.error("Failed to load billing:", e)));
 
-    api.getSettings("profile").then((data) => {
+    loads.push(api.getSettings("profile").then((data) => {
       if (data) setProfileData(data);
-    }).catch((e) => console.error("Failed to load profile:", e));
+    }).catch((e) => console.error("Failed to load profile:", e)));
 
-    api.getSettings("workspace").then((data) => {
+    loads.push(api.getSettings("workspace").then((data) => {
       if (data) setWorkspaceData(data);
-    }).catch((e) => console.error("Failed to load workspace:", e));
+    }).catch((e) => console.error("Failed to load workspace:", e)));
 
     // Fetch sessions from Supabase
-    api.getSessions().then((data) => {
+    loads.push(api.getSessions().then((data) => {
       if (data?.active) setSessions(data.active);
       if (data?.loginHistory) setLoginHistory(data.loginHistory);
-    }).catch((e) => console.error("Failed to load sessions:", e));
-  }, []);
+    }).catch((e) => console.error("Failed to load sessions:", e)));
+
+    Promise.allSettled(loads).then(() => setSettingsLoading(false));
+  }, [activeWorkspace?.id]);
+
+  // Canonical members list: same workspace_members API as WorkspaceMembersModal.
+  useEffect(() => {
+    if (activeNav !== "Members" || !activeWorkspace) return;
+    api.getWorkspaceMembers(activeWorkspace.id)
+      .then((list) => {
+        setMembers(list);
+        setMemberRoles(Object.fromEntries(list.map((m) => [m.user_id, m.role])));
+      })
+      .catch((e) => console.error("Failed to load workspace members:", e));
+    api.getWorkspaceInvites(activeWorkspace.id)
+      .then((list) => setInvitesList(list.filter((i) => i.status === "pending")))
+      .catch((e) => console.error("Failed to load workspace invites:", e));
+  }, [activeNav, activeWorkspace?.id]);
 
   // Ownership-transfer candidates: workspace members excluding self.
   // Loaded lazily when the Danger Zone opens so non-owners pay no extra fetch.
@@ -318,14 +371,28 @@ export function SettingsPage() {
   const handleTransferOwnership = async () => {
     if (!activeWorkspace || !transferTarget) return;
     const target = transferCandidates.find((m) => m.user_id === transferTarget);
+    const myId = user?.id;
+    // Demote self to member after the promotion succeeds so there is never
+    // more than one owner. Snapshot the target's previous role for rollback.
+    const targetPrevRole = (target?.role ?? "member") as api.WorkspaceRole;
     setTransferring(true);
     try {
       await api.updateWorkspaceMemberRole(activeWorkspace.id, transferTarget, "owner");
+      if (myId && myId !== transferTarget) {
+        try {
+          await api.updateWorkspaceMemberRole(activeWorkspace.id, myId, "member");
+        } catch (demoteErr) {
+          // Roll the promotion back — two owners is worse than a failed transfer.
+          await api.updateWorkspaceMemberRole(activeWorkspace.id, transferTarget, targetPrevRole).catch(() => {});
+          throw demoteErr;
+        }
+      }
       toast.success(
         target ? `Ownership transferred to ${target.name}` : "Ownership transferred",
       );
       setTransferCandidates((prev) => prev.filter((m) => m.user_id !== transferTarget));
       setTransferTarget("");
+      setConfirmingTransfer(false);
     } catch (e) {
       console.error("Failed to transfer ownership:", e);
       toast.error(e instanceof Error ? e.message : "Failed to transfer ownership");
@@ -388,9 +455,8 @@ export function SettingsPage() {
     }
   };
 
-  // Workspace logo uses the same avatar pipeline (server validates type/size,
-  // persists to profiles + user_metadata). The logo preview reads avatarSrc
-  // too, so both surfaces stay in sync without a dedicated logo endpoint.
+  // Workspace logo uses the same avatar pipeline (server validates type/size).
+  // Kept in a SEPARATE logoSrc state so it never overwrites the profile avatar.
   const handleLogoChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -405,7 +471,7 @@ export function SettingsPage() {
     setUploadingLogo(true);
     try {
       const uploaded = await api.uploadAvatar(file);
-      setAvatarSrc(uploaded.url);
+      setLogoSrc(uploaded.url);
       toast.success("Workspace logo updated");
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to upload logo");
@@ -460,7 +526,8 @@ export function SettingsPage() {
       await api.verify2FA(twoFACode);
       const { data, error } = await supabase.auth.refreshSession();
       if (error) throw error;
-      setIs2FAEnabled(!!(data.session?.user?.user_metadata?.totp_enabled));
+      const meta = (data.session?.user?.user_metadata ?? {}) as Record<string, unknown>;
+      setIs2FAEnabled(!!(meta.totp_enabled || meta.email_otp_enabled));
       toast.success(t("settings.twoFAEnabledToast"));
       setShow2FA(false);
       setTwoFASetup(null);
@@ -494,23 +561,9 @@ export function SettingsPage() {
   };
 
   const generateApiKey = async () => {
-    if (!newKeyName.trim()) return toast.error("Enter a name for the key");
-    // Cryptographically secure random key (never Math.random for secrets).
-    const rand = new Uint8Array(24);
-    crypto.getRandomValues(rand);
-    const raw = btoa(String.fromCharCode(...rand)).replace(/[^a-zA-Z0-9]/g, "").slice(0, 32);
-    const key = `sk-${raw.slice(0, 12)}-${raw.slice(12, 32)}`;
-    // Store only a SHA-256 hash + prefix server-side; the full key is shown
-    // once and never persisted anywhere.
-    const hashBuf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(key));
-    const keyHash = [...new Uint8Array(hashBuf)].map((b) => b.toString(16).padStart(2, "0")).join("");
-    setGeneratedKey(key);
-    const newEntry = { id: Date.now(), name: newKeyName.trim(), prefix: `sk_${key.slice(3, 7)}`, keyHash, created: new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }), lastUsed: "Never" };
-    const updated = [...apiKeysList, newEntry];
-    setApiKeysList(updated);
-    setNewKeyName("");
-    toast.success("API key generated — copy it now, it won't be shown again");
-    try { await api.saveSettings("api-keys", updated); } catch (e) { console.error("Failed to save api keys:", e); }
+    // Client-minted secrets removed: API keys are server-managed.
+    // Key creation is disabled here until the server issuance endpoint lands.
+    toast.error("Server-managed API keys — coming soon");
   };
 
   const copyKey = () => {
@@ -521,10 +574,11 @@ export function SettingsPage() {
     }
   };
 
-  const revokeKey = async (name: string) => {
-    const updated = apiKeysList.filter((k) => k.name !== name);
+  const revokeKey = async (id: number) => {
+    const revoked = apiKeysList.find((k) => k.id === id);
+    const updated = apiKeysList.filter((k) => k.id !== id);
     setApiKeysList(updated);
-    toast.success(`API key "${name}" revoked`);
+    toast.success(revoked ? `API key "${revoked.name}" revoked` : "API key revoked");
     try { await api.saveSettings("api-keys", updated); } catch (e) { console.error("Failed to save api keys:", e); }
   };
 
@@ -541,15 +595,53 @@ export function SettingsPage() {
     try { await api.saveSettings("webhooks", updated); } catch (e) { console.error("Failed to save webhooks:", e); }
   };
 
-  const saveMembers = async (updatedMembers: any[], updatedPending?: any[]) => {
-    const data = { rows: updatedMembers, pending: updatedPending ?? pendingList };
-    try { await api.saveSettings("members", data); } catch (e) { console.error("Failed to save members:", e); }
+  const saveWorkspacePrefs = async () => {
+    try {
+      await api.saveSettings("workspace-prefs", workspacePrefs);
+      toast.success("Workspace settings saved");
+    } catch (e) { console.error("Failed to save workspace prefs:", e); toast.error("Failed to save"); }
+  };
+
+  const saveSecurityPrefs = async () => {
+    try {
+      await api.saveSettings("security-prefs", securityPrefs);
+      toast.success("Security settings saved");
+    } catch (e) { console.error("Failed to save security prefs:", e); toast.error("Failed to save"); }
+  };
+
+  const saveRetention = async () => {
+    try {
+      await api.saveSettings("retention", retention);
+      toast.success("Retention settings saved");
+    } catch (e) { console.error("Failed to save retention:", e); toast.error("Failed to save"); }
+  };
+
+  // Never reuse projects-CSV for invoices: build a receipt Blob instead.
+  const handleInvoiceDownload = (inv: { date: string; amount: string; status: string }) => {
+    const lines = [
+      `Invoice — ${billing?.plan ?? "Workspace"} plan`,
+      `Invoice ID: INV-${String(inv.date).replace(/[^0-9]/g, "").slice(0, 8) || "00000000"}-${String(billing?.seats ?? 0).padStart(2, "0")}`,
+      `Date: ${inv.date}`,
+      `Plan: ${billing?.plan ?? "—"} (${billing?.seats ?? 0} seats)`,
+      `Amount: ${inv.amount}`,
+      `Status: ${inv.status}`,
+    ];
+    const blob = new Blob([lines.join("\n")], { type: "text/plain" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `invoice-${String(inv.date).replace(/[^0-9]/g, "").slice(0, 8) || "receipt"}.txt`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    toast.success("Invoice downloaded");
   };
 
   const saveAppearance = async () => {
     const accentLabel = accentColors.find((a) => a.value === accentColor)?.label.toLowerCase() ?? "indigo";
     try {
-      await api.saveSettings("appearance", { theme, accent: accentLabel, fontSize, density, sidebarPosition: "left" });
+      await api.saveSettings("appearance", { theme, accent: accentLabel, fontSize, density, sidebarPosition });
       toast.success("Appearance settings saved");
     } catch (e) { console.error("Failed to save appearance:", e); toast.error("Failed to save"); }
   };
@@ -571,7 +663,21 @@ export function SettingsPage() {
 
   const saveProfile = async () => {
     try {
-      await api.saveSettings("profile", { firstName: "", lastName: "", email: "", phone: "", title: "", department: "Engineering", bio: "", github: "", linkedin: "", ...profileData });
+      // Email changes go through Supabase Auth (may require re-verification);
+      // everything else persists to the settings store.
+      const currentEmail = user?.email ?? "";
+      const nextEmail = (profileData.email ?? "").trim();
+      if (nextEmail && nextEmail !== currentEmail) {
+        const { error } = await supabase.auth.updateUser({ email: nextEmail });
+        if (error) {
+          toast.error(error.message);
+          return;
+        }
+        toast.success("Verification email sent — confirm your new address to finish changing email");
+      }
+      const { email: _email, ...rest } = profileData;
+      void _email;
+      await api.saveSettings("profile", { firstName: "", lastName: "", phone: "", title: "", department: "Engineering", bio: "", github: "", linkedin: "", ...rest });
       toast.success("Profile saved");
     } catch (e) { console.error("Failed to save profile:", e); toast.error("Failed to save"); }
   };
@@ -583,14 +689,15 @@ export function SettingsPage() {
     } catch (e) { console.error("Failed to save notifications:", e); toast.error("Failed to save"); }
   };
 
-  const handleExport = async (label: string) => {
-    const format = exportFormats[label] ?? "CSV";
+  const handleExport = async (key: string, downloadName?: string) => {
+    const label = downloadName ?? key;
+    const format = exportFormats[key] ?? "CSV";
     try {
       let data: any;
-      if (label === "All tasks") data = await api.getTasks();
-      else if (label === "All projects") data = await api.getProjects();
-      else if (label === "Team data") data = await api.getTeams();
-      else if (label === "Files & attachments") { const res = await api.getFiles(); data = res.files; }
+      if (key === "tasks") data = await api.getTasks();
+      else if (key === "projects") data = await api.getProjects();
+      else if (key === "team") data = await api.getTeams();
+      else if (key === "files") { const res = await api.getFiles(); data = res.files; }
       if (!data) { toast.error("No data to export"); return; }
       let content: string;
       if (format === "JSON") {
@@ -608,16 +715,25 @@ export function SettingsPage() {
       const a = document.createElement("a");
       a.href = url;
       a.download = `${label.toLowerCase().replace(/\s+/g, "-")}.${ext}`;
+      document.body.appendChild(a);
       a.click();
+      a.remove();
       URL.revokeObjectURL(url);
       toast.success(`${label} exported as ${format}`);
     } catch (e) { console.error("Export failed:", e); toast.error("Export failed"); }
   };
 
   const addWebhook = async () => {
-    if (!newWebhookUrl.trim()) return toast.error("Enter a webhook URL");
-    if (!newWebhookEvents.trim()) return toast.error("Enter at least one event");
-    const newHook = { url: newWebhookUrl.trim(), events: newWebhookEvents.trim(), active: true };
+    const url = newWebhookUrl.trim();
+    const events = newWebhookEvents.split(",").map((e) => e.trim()).filter(Boolean);
+    try {
+      const parsed = new URL(url);
+      if (parsed.protocol !== "https:" && parsed.protocol !== "http:") throw new Error("bad-protocol");
+    } catch {
+      return toast.error("Enter a valid webhook URL (http(s)://…)");
+    }
+    if (events.length === 0) return toast.error("Enter at least one event");
+    const newHook = { url, events: events.join(", "), active: true };
     const updated = [...webhooksList, newHook];
     setWebhooksList(updated);
     setShowWebhookForm(false);
@@ -627,7 +743,9 @@ export function SettingsPage() {
     try { await api.saveSettings("webhooks", updated); } catch (e) { console.error("Failed to save webhooks:", e); }
   };
 
+  const AUDIT_CATEGORIES = ["All", "Security", "Members", "Integrations", "API", "Settings"] as const;
   const filteredLogs = auditFilter === "All" ? auditLogData : auditLogData.filter((l) => l.category === auditFilter);
+  const visibleLogs = filteredLogs.slice(0, auditVisible);
 
   return (
     <div className="flex flex-col lg:flex-row h-full font-['Lexend:Regular',_sans-serif]">
@@ -674,6 +792,17 @@ export function SettingsPage() {
 
       {/* Content */}
       <div className="flex-1 overflow-y-auto p-4 md:p-6 lg:p-8">
+        {settingsLoading ? (
+          <div className="max-w-2xl space-y-7 lg:space-y-8" aria-label="Loading settings">
+            {[0, 1, 2].map((i) => (
+              <div key={i} className="space-y-3">
+                <div className="h-5 w-48 animate-pulse rounded bg-neutral-800" />
+                <div className="h-3 w-72 animate-pulse rounded bg-neutral-800/70" />
+                <div className="h-24 animate-pulse rounded-xl bg-neutral-800/40" />
+              </div>
+            ))}
+          </div>
+        ) : (
         <div className="max-w-2xl space-y-7 lg:space-y-8">
 
           {/* ── Profile ── */}
@@ -882,6 +1011,7 @@ export function SettingsPage() {
               </Section>
 
               <Section title={t("settings.activeSessions")} description={t("settings.activeSessionsDesc")}>
+                <p className="text-neutral-500 text-[12px] mb-3">Revoking signs out all sessions server-side.</p>
                 <div className="space-y-2">
                   {(sessions.length > 0 ? sessions : [
                     { device: t("settings.loadingSessions"), location: "", ip: "", lastActive: "", current: true },
@@ -926,11 +1056,12 @@ export function SettingsPage() {
 
               <Section title={t("settings.securityPreferences")}>
                 <div className="divide-y divide-neutral-800/40">
-                  <ToggleRow label={t("settings.trustedDevices")} description={t("settings.trustedDevicesDesc")} defaultChecked />
-                  <ToggleRow label={t("settings.loginNotifications")} description={t("settings.loginNotificationsDesc")} defaultChecked />
-                  <ToggleRow label={t("settings.sessionTimeout")} description={t("settings.sessionTimeoutDesc")} />
+                  <ToggleRow label={t("settings.trustedDevices")} description={t("settings.trustedDevicesDesc")} checked={securityPrefs.trustedDevices} onChange={() => setSecurityPrefs((p) => ({ ...p, trustedDevices: !p.trustedDevices }))} />
+                  <ToggleRow label={t("settings.loginNotifications")} description={t("settings.loginNotificationsDesc")} checked={securityPrefs.loginNotifications} onChange={() => setSecurityPrefs((p) => ({ ...p, loginNotifications: !p.loginNotifications }))} />
+                  <ToggleRow label={t("settings.sessionTimeout")} description={t("settings.sessionTimeoutDesc")} checked={securityPrefs.sessionTimeout} onChange={() => setSecurityPrefs((p) => ({ ...p, sessionTimeout: !p.sessionTimeout }))} />
                 </div>
               </Section>
+              <SaveRow onSave={saveSecurityPrefs} label={t("settings.saveChanges")} />
             </>
           )}
 
@@ -999,7 +1130,11 @@ export function SettingsPage() {
               <Section title={t("settings.workspaceIdentity")} description={t("settings.workspaceIdentityDesc")}>
                 <div className="space-y-4">
                   <div className="flex items-center gap-4">
-                    <div className="w-14 h-14 rounded-xl bg-indigo-900/60 flex items-center justify-center text-indigo-300 text-[20px] font-['Lexend:SemiBold',_sans-serif] shrink-0">{workspaceData.name?.[0]?.toUpperCase() ?? "?"}</div>
+                    {logoSrc ? (
+                      <img src={logoSrc} alt="workspace logo" className="w-14 h-14 rounded-xl object-cover shrink-0" />
+                    ) : (
+                      <div className="w-14 h-14 rounded-xl bg-indigo-900/60 flex items-center justify-center text-indigo-300 text-[20px] font-['Lexend:SemiBold',_sans-serif] shrink-0">{workspaceData.name?.[0]?.toUpperCase() ?? "?"}</div>
+                    )}
                     <div>
                       <button onClick={() => logoInputRef.current?.click()} disabled={uploadingLogo} className="border border-neutral-800 hover:bg-neutral-800 disabled:opacity-50 text-neutral-300 text-[12px] px-3 py-1.5 rounded-lg transition-colors">{uploadingLogo ? t("settings.uploading") : t("settings.uploadLogo")}</button>
                       <p className="text-neutral-600 text-[11px] mt-1">{t("settings.pngOrSvg")}</p>
@@ -1060,15 +1195,18 @@ export function SettingsPage() {
               </Section>
               <Section title={t("settings.workspacePreferences")}>
                 <div className="divide-y divide-neutral-800/40">
-                  <ToggleRow label={t("settings.showCompletedTasks")} description={t("settings.showCompletedTasksDesc")} />
-                  <ToggleRow label={t("settings.compactView")} description={t("settings.compactViewDesc")} />
-                  <ToggleRow label={t("settings.publicProjectLinks")} description={t("settings.publicProjectLinksDesc")} defaultChecked />
-                  <ToggleRow label={t("settings.require2FA")} description={t("settings.require2FADesc")} />
-                  <ToggleRow label={t("settings.guestAccess")} description={t("settings.guestAccessDesc")} defaultChecked />
+                  <ToggleRow label={t("settings.showCompletedTasks")} description={t("settings.showCompletedTasksDesc")} checked={workspacePrefs.showCompleted} onChange={() => setWorkspacePrefs((p) => ({ ...p, showCompleted: !p.showCompleted }))} />
+                  <ToggleRow label={t("settings.compactView")} description={t("settings.compactViewDesc")} checked={workspacePrefs.compactView} onChange={() => setWorkspacePrefs((p) => ({ ...p, compactView: !p.compactView }))} />
+                  <ToggleRow label={t("settings.publicProjectLinks")} description={t("settings.publicProjectLinksDesc")} checked={workspacePrefs.publicLinks} onChange={() => setWorkspacePrefs((p) => ({ ...p, publicLinks: !p.publicLinks }))} />
+                  <ToggleRow label={t("settings.require2FA")} description={t("settings.require2FADesc")} checked={workspacePrefs.require2FA} onChange={() => setWorkspacePrefs((p) => ({ ...p, require2FA: !p.require2FA }))} />
+                  <ToggleRow label={t("settings.guestAccess")} description={t("settings.guestAccessDesc")} checked={workspacePrefs.guestAccess} onChange={() => setWorkspacePrefs((p) => ({ ...p, guestAccess: !p.guestAccess }))} />
                 </div>
               </Section>
               <SaveRow onSave={async () => {
-                try { await api.saveSettings("workspace", { name: "", url: "", industry: "", teamSize: "", region: "", ...workspaceData }); toast.success("Workspace settings saved"); }
+                try {
+                  await api.saveSettings("workspace", { name: "", url: "", industry: "", teamSize: "", region: "", ...workspaceData });
+                  await saveWorkspacePrefs();
+                }
                 catch (e) { console.error("Failed to save workspace:", e); toast.error("Failed to save"); }
               }} />
             </>
@@ -1082,7 +1220,7 @@ export function SettingsPage() {
                   {(["dark", "light", "system"] as const).map((opt) => (
                     <button
                       key={opt}
-                      onClick={() => { setTheme(opt); toast.success(`Theme set to ${opt}`); }}
+                      onClick={() => setTheme(opt)}
                       className={`relative p-3 rounded-xl border transition-all text-left ${theme === opt ? "border-indigo-500 bg-indigo-950/20" : "border-neutral-800 hover:border-neutral-700"}`}
                     >
                       <div className={`h-14 rounded-lg mb-2.5 overflow-hidden ${opt === "dark" ? "bg-neutral-900" : opt === "light" ? "bg-neutral-200" : "bg-gradient-to-br from-neutral-900 to-neutral-200"}`}>
@@ -1104,7 +1242,7 @@ export function SettingsPage() {
                   {accentColors.map((c) => (
                     <button
                       key={c.value}
-                      onClick={() => { setAccentColor(c.value); toast.success(`Accent: ${c.label}`); }}
+                      onClick={() => setAccentColor(c.value)}
                       title={c.label}
                       className={`w-8 h-8 rounded-full transition-transform hover:scale-110 ${accentColor === c.value ? "ring-2 ring-offset-2 ring-offset-[#0f0f0f] ring-white/30 scale-110" : ""}`}
                       style={{ backgroundColor: c.value }}
@@ -1134,10 +1272,10 @@ export function SettingsPage() {
               </Section>
               <Section title={t("settings.sidebarPosition")}>
                 <div className="flex items-center gap-2">
-                  {["Left", "Right"].map((p, i) => (
-                    <button key={p} onClick={() => toast.success(`Sidebar position: ${p}`)}
-                      className={`flex-1 py-2 rounded-lg text-[12px] border transition-colors ${i === 0 ? "border-indigo-500 bg-indigo-950/20 text-neutral-50" : "border-neutral-800 text-neutral-500 hover:border-neutral-700 hover:text-neutral-300"}`}>
-                      {p}
+                  {(["left", "right"] as const).map((p) => (
+                    <button key={p} onClick={() => setSidebarPosition(p)}
+                      className={`flex-1 py-2 rounded-lg text-[12px] capitalize border transition-colors ${sidebarPosition === p ? "border-indigo-500 bg-indigo-950/20 text-neutral-50" : "border-neutral-800 text-neutral-500 hover:border-neutral-700 hover:text-neutral-300"}`}>
+                      {p === "left" ? t("settings.left") : t("settings.right")}
                     </button>
                   ))}
                 </div>
@@ -1244,26 +1382,28 @@ export function SettingsPage() {
                   {t("settings.changesApplyToNewMembers")}
                 </div>
                 <div className="divide-y divide-neutral-800/40">
-                  <ToggleRow label={t("settings.taskAssigned")} defaultChecked />
-                  <ToggleRow label={t("settings.taskDue")} defaultChecked />
-                  <ToggleRow label={t("settings.commentsAndMentions")} defaultChecked />
-                  <ToggleRow label={t("settings.projectStatusChangesDefault")} />
-                  <ToggleRow label={t("settings.newTeamMemberDefault")} />
-                  <ToggleRow label={t("settings.weeklyDigestEmail")} defaultChecked />
-                  <ToggleRow label={t("settings.productUpdatesDefault")} />
-                  <ToggleRow label={t("settings.securityAlertsDefault")} defaultChecked />
+                  <ToggleRow label={t("settings.taskAssigned")} checked={defaultNotifs.taskAssigned} onChange={() => setDefaultNotifs((p) => ({ ...p, taskAssigned: !p.taskAssigned }))} />
+                  <ToggleRow label={t("settings.taskDue")} checked={defaultNotifs.taskDue} onChange={() => setDefaultNotifs((p) => ({ ...p, taskDue: !p.taskDue }))} />
+                  <ToggleRow label={t("settings.commentsAndMentions")} checked={defaultNotifs.comments} onChange={() => setDefaultNotifs((p) => ({ ...p, comments: !p.comments }))} />
+                  <ToggleRow label={t("settings.projectStatusChangesDefault")} checked={defaultNotifs.projectStatus} onChange={() => setDefaultNotifs((p) => ({ ...p, projectStatus: !p.projectStatus }))} />
+                  <ToggleRow label={t("settings.newTeamMemberDefault")} checked={defaultNotifs.newMember} onChange={() => setDefaultNotifs((p) => ({ ...p, newMember: !p.newMember }))} />
+                  <ToggleRow label={t("settings.weeklyDigestEmail")} checked={defaultNotifs.digest} onChange={() => setDefaultNotifs((p) => ({ ...p, digest: !p.digest }))} />
+                  <ToggleRow label={t("settings.productUpdatesDefault")} checked={defaultNotifs.productUpdates} onChange={() => setDefaultNotifs((p) => ({ ...p, productUpdates: !p.productUpdates }))} />
+                  <ToggleRow label={t("settings.securityAlertsDefault")} checked={defaultNotifs.security} onChange={() => setDefaultNotifs((p) => ({ ...p, security: !p.security }))} />
                 </div>
               </Section>
               <div className="flex items-center justify-between">
-                <button onClick={() => toast.success("Defaults reset to system values")} className="text-neutral-500 hover:text-neutral-300 text-[13px] flex items-center gap-1.5 transition-colors">
+                <button onClick={async () => {
+                  const sysDefaults = { taskAssigned: true, taskDue: true, comments: true, projectStatus: false, newMember: false, digest: true, productUpdates: false, security: true };
+                  setDefaultNotifs(sysDefaults);
+                  try { await api.saveSettings("default-notifications", sysDefaults); toast.success("Defaults reset to system values"); }
+                  catch (e) { console.error("Failed to reset defaults:", e); toast.error("Failed to save"); }
+                }} className="text-neutral-500 hover:text-neutral-300 text-[13px] flex items-center gap-1.5 transition-colors">
                   <RefreshCw size={13} /> {t("settings.resetToSystemDefaults")}
                 </button>
                 <button onClick={async () => {
                   try {
-                    await api.saveSettings("default-notifications", {
-                      taskAssigned: true, taskDue: true, comments: true, projectStatus: false,
-                      newMember: false, digest: true, productUpdates: false, security: true,
-                    });
+                    await api.saveSettings("default-notifications", defaultNotifs);
                     toast.success("Default notification settings saved");
                   } catch (e) { console.error("Failed to save defaults:", e); toast.error("Failed to save"); }
                 }} className="bg-indigo-600 hover:bg-indigo-500 text-white text-[13px] px-5 py-2 rounded-lg transition-colors">
@@ -1290,68 +1430,94 @@ export function SettingsPage() {
                     ))}
                   </div>
                   <div className="divide-y divide-neutral-800/40">
-                    {members.map((m) => (
-                      <div key={m.initials} className="grid grid-cols-[1fr_auto] md:grid-cols-[1fr_100px_80px_32px] gap-3 md:gap-4 px-4 py-3 items-center">
+                    {members.map((m) => {
+                      const isSelf = m.user_id === user?.id;
+                      const isRowOwner = m.role === "owner";
+                      return (
+                      <div key={m.user_id} className="grid grid-cols-[1fr_auto] md:grid-cols-[1fr_100px_80px_32px] gap-3 md:gap-4 px-4 py-3 items-center">
                         <div className="flex items-center gap-3 min-w-0">
-                          <div className="w-7 h-7 rounded-full bg-indigo-900/60 flex items-center justify-center text-indigo-300 text-[11px] font-['Lexend:SemiBold',_sans-serif] shrink-0">{m.initials}</div>
+                          <div className="w-7 h-7 rounded-full bg-indigo-900/60 flex items-center justify-center text-indigo-300 text-[11px] font-['Lexend:SemiBold',_sans-serif] shrink-0">{(m.name || m.email).slice(0, 2).toUpperCase()}</div>
                           <div className="min-w-0">
-                            <div className="text-neutral-200 text-[13px] truncate">{m.name}</div>
+                            <div className="text-neutral-200 text-[13px] truncate">{m.name}{isSelf ? " (you)" : ""}</div>
                             <div className="text-neutral-600 text-[11px] truncate">{m.email}</div>
                           </div>
                         </div>
+                        {isOwner && !isRowOwner && !isSelf ? (
                         <select
-                          value={memberRoles[m.initials]}
-                          disabled={m.role === "Owner"}
+                          value={memberRoles[m.user_id] ?? m.role}
                           onChange={async (e) => {
-                            const newRole = e.target.value;
-                            const updated = members.map((x) => x.initials === m.initials ? { ...x, role: newRole } : x);
-                            setMemberRoles((prev) => ({ ...prev, [m.initials]: newRole }));
-                            setMembers(updated);
-                            toast.success(`${m.name} role updated to ${newRole}`);
-                            await saveMembers(updated);
+                            const newRole = e.target.value as api.WorkspaceRole;
+                            const prevRole = m.role;
+                            setMemberRoles((prev) => ({ ...prev, [m.user_id]: newRole }));
+                            setMembers((prev) => prev.map((x) => x.user_id === m.user_id ? { ...x, role: newRole } : x));
+                            try {
+                              if (!activeWorkspace) throw new Error("No active workspace");
+                              await api.updateWorkspaceMemberRole(activeWorkspace.id, m.user_id, newRole);
+                              toast.success(`${m.name} role updated to ${newRole}`);
+                            } catch (err) {
+                              setMemberRoles((prev) => ({ ...prev, [m.user_id]: prevRole }));
+                              setMembers((prev) => prev.map((x) => x.user_id === m.user_id ? { ...x, role: prevRole } : x));
+                              toast.error(err instanceof Error ? err.message : "Failed to update role");
+                            }
                           }}
                           className="bg-neutral-800 border border-neutral-700 text-neutral-300 text-[12px] px-2 py-1.5 rounded-lg outline-none cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                         >
-                          {["Owner", "Admin", "Member", "Viewer"].map((r) => <option key={r}>{r === "Owner" ? t("settings.owner") : r === "Admin" ? t("settings.admin") : r === "Member" ? t("settings.member") : t("settings.viewer")}</option>)}
+                          <option value="owner">{t("settings.owner")}</option>
+                          <option value="member">{t("settings.member")}</option>
                         </select>
+                        ) : (
+                        <span className="text-neutral-500 text-[12px] capitalize">
+                          {m.role === "owner" ? t("settings.owner") : m.role === "member" ? t("settings.member") : m.role}
+                        </span>
+                        )}
                         <div className="hidden md:flex items-center gap-1.5">
-                          <div className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: m.status === "online" ? "#10b981" : m.status === "away" ? "#f59e0b" : "#404040" }} />
-                          <span className="text-neutral-500 text-[12px] capitalize">{m.status}</span>
+                          <div className="w-1.5 h-1.5 rounded-full bg-neutral-500" />
+                          <span className="text-neutral-500 text-[12px] capitalize">{t("settings.active")}</span>
                         </div>
                         <button
-                          disabled={m.role === "Owner"}
-                          onClick={async () => { const updated = members.filter((x) => x.initials !== m.initials); setMembers(updated); toast.success(`${m.name} removed`); await saveMembers(updated); }}
+                          disabled={!isOwner || isRowOwner || isSelf}
+                          onClick={async () => {
+                            if (!activeWorkspace) return;
+                            const snapshot = members;
+                            setMembers((prev) => prev.filter((x) => x.user_id !== m.user_id));
+                            try {
+                              await api.removeWorkspaceMember(activeWorkspace.id, m.user_id);
+                              toast.success(`${m.name} removed`);
+                            } catch (err) {
+                              setMembers(snapshot);
+                              toast.error(err instanceof Error ? err.message : "Failed to remove member");
+                            }
+                          }}
                           className="text-neutral-600 hover:text-red-400 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
                         >
                           <X size={14} />
                         </button>
                       </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </div>
               </Section>
               <Section title={t("settings.pendingInvites")} description={t("settings.pendingInvitesDesc")}>
                 <div className="space-y-2">
-                  {pendingList.map((inv) => (
-                    <div key={inv.email} className="flex items-center justify-between p-3 bg-[#141414] border border-neutral-800/60 rounded-xl gap-3">
+                  {invitesList.map((inv) => (
+                    <div key={inv.token ?? inv.email} className="flex items-center justify-between p-3 bg-[#141414] border border-neutral-800/60 rounded-xl gap-3">
                       <div>
                         <div className="text-neutral-300 text-[13px]">{inv.email}</div>
-                        <div className="text-neutral-600 text-[11px] mt-0.5">{inv.role} · Sent {inv.sent}</div>
+                        <div className="text-neutral-600 text-[11px] mt-0.5">{inv.role} · {t("settings.expires")} {inv.expires_at ? new Date(inv.expires_at).toLocaleDateString() : "—"}</div>
                       </div>
+                      {isOwner && (
                       <div className="flex items-center gap-2 shrink-0">
                         <button onClick={async () => {
-                          const updated = pendingList.map((p) => p.email === inv.email ? { ...p, sent: new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) } : p);
-                          setPendingList(updated);
-                          toast.success(`Invite resent to ${inv.email}`);
-                          await saveMembers(members, updated);
-                        }} className="text-neutral-400 hover:text-neutral-200 text-[12px] px-2.5 py-1 rounded-lg border border-neutral-800 hover:bg-neutral-800 transition-colors">{t("settings.resend")}</button>
-                        <button onClick={async () => {
-                          const updated = pendingList.filter((p) => p.email !== inv.email);
-                          setPendingList(updated);
-                          toast.success(`Invite to ${inv.email} cancelled`);
-                          await saveMembers(members, updated);
+                          if (!activeWorkspace || !inv.token) return;
+                          try {
+                            await api.revokeWorkspaceInvite(activeWorkspace.id, inv.token);
+                            setInvitesList((prev) => prev.filter((p) => p.token !== inv.token));
+                            toast.success(`Invite to ${inv.email} cancelled`);
+                          } catch (err) { toast.error(err instanceof Error ? err.message : "Failed to revoke invite"); }
                         }} className="text-red-400 hover:text-red-300 text-[12px] px-2.5 py-1 rounded-lg border border-red-900/40 hover:bg-red-950/30 transition-colors">{t("common.cancel")}</button>
                       </div>
+                      )}
                     </div>
                   ))}
                 </div>
@@ -1428,7 +1594,7 @@ export function SettingsPage() {
                         </div>
                         <div className="text-neutral-50 text-[13px] font-['Lexend:SemiBold',_sans-serif]">{inv.amount}</div>
                         <span className="text-[11px] px-1.5 py-0.5 rounded-full bg-emerald-900/40 text-emerald-400 text-center">{inv.status}</span>
-                        <button onClick={() => handleExport("All projects")} className="text-neutral-600 hover:text-neutral-400 transition-colors" title="Download as CSV">
+                        <button onClick={() => handleInvoiceDownload(inv)} className="text-neutral-600 hover:text-neutral-400 transition-colors" title="Download invoice">
                           <Download size={14} />
                         </button>
                       </div>
@@ -1500,7 +1666,7 @@ export function SettingsPage() {
                       </div>
                       <div className="hidden md:block text-neutral-500 text-[12px]">{k.created}</div>
                       <div className="hidden md:block text-neutral-500 text-[12px]">{k.lastUsed}</div>
-                      <button onClick={() => revokeKey(k.name)} className="text-red-400 hover:text-red-300 text-[12px] px-2.5 py-1 rounded-lg border border-red-900/40 hover:bg-red-950/30 transition-colors whitespace-nowrap">{t("settings.revokeKey")}</button>
+                      <button onClick={() => revokeKey(k.id)} className="text-red-400 hover:text-red-300 text-[12px] px-2.5 py-1 rounded-lg border border-red-900/40 hover:bg-red-950/30 transition-colors whitespace-nowrap">{t("settings.revokeKey")}</button>
                     </div>
                   ))}
                   {apiKeysList.length === 0 && (
@@ -1509,9 +1675,12 @@ export function SettingsPage() {
                 </div>
 
                 {!showNewKey ? (
-                  <button onClick={() => setShowNewKey(true)} className="flex items-center gap-2 border border-neutral-800 hover:bg-neutral-800 text-neutral-300 text-[13px] px-4 py-2 rounded-lg transition-colors">
-                    <Plus size={14} /> {t("settings.generateNewKey")}
-                  </button>
+                  <div className="space-y-2">
+                    <button disabled className="flex cursor-not-allowed items-center gap-2 border border-neutral-800 text-neutral-600 text-[13px] px-4 py-2 rounded-lg opacity-50">
+                      <Plus size={14} /> {t("settings.generateNewKey")}
+                    </button>
+                    <p className="text-neutral-500 text-[12px]">Server-managed API keys — coming soon. Existing entries below are read-only.</p>
+                  </div>
                 ) : generatedKey ? (
                   <div className="p-4 bg-emerald-950/20 border border-emerald-800/40 rounded-xl space-y-3">
                     <div className="text-emerald-300 text-[13px] font-['Lexend:SemiBold',_sans-serif]">{t("settings.keyGenerated")}</div>
@@ -1603,16 +1772,24 @@ export function SettingsPage() {
           {activeNav === "Audit Log" && (
             <Section title={t("settings.auditLog")} description={t("settings.auditLogDesc")}>
               <div className="flex items-center gap-1 mb-4 overflow-x-auto pb-0.5">
-                {[t("settings.all"), t("settings.security"), t("sidebar.members"), t("settings.integrations"), t("settings.api"), t("settings.settings")].map((f) => (
-                  <button key={f} onClick={() => setAuditFilter(f)}
-                    className={`px-3 py-1.5 rounded-lg text-[12px] whitespace-nowrap transition-colors ${auditFilter === f ? "bg-neutral-800 text-neutral-50" : "text-neutral-500 hover:text-neutral-300 hover:bg-neutral-800/40"}`}>
-                    {f}
+                {AUDIT_CATEGORIES.map((cat) => {
+                  const label = cat === "All" ? t("settings.all")
+                    : cat === "Security" ? t("settings.security")
+                    : cat === "Members" ? t("sidebar.members")
+                    : cat === "Integrations" ? t("settings.integrations")
+                    : cat === "API" ? t("settings.api")
+                    : t("settings.settings");
+                  return (
+                  <button key={cat} onClick={() => { setAuditFilter(cat); setAuditVisible(20); }}
+                    className={`px-3 py-1.5 rounded-lg text-[12px] whitespace-nowrap transition-colors ${auditFilter === cat ? "bg-neutral-800 text-neutral-50" : "text-neutral-500 hover:text-neutral-300 hover:bg-neutral-800/40"}`}>
+                    {label}
                   </button>
-                ))}
+                  );
+                })}
               </div>
               <div className="bg-[#141414] border border-neutral-800/60 rounded-xl overflow-hidden">
                 <div className="divide-y divide-neutral-800/40">
-                  {filteredLogs.map((log, i) => (
+                  {visibleLogs.map((log, i) => (
                     <div key={i} className="flex items-start gap-3 px-4 py-3 hover:bg-neutral-800/10 transition-colors">
                       <div className="w-6 h-6 rounded-full bg-neutral-800 flex items-center justify-center text-[10px] text-neutral-400 shrink-0 mt-0.5">{log.actor}</div>
                       <div className="flex-1 min-w-0">
@@ -1636,9 +1813,11 @@ export function SettingsPage() {
                   ))}
                 </div>
               </div>
-              <button onClick={() => toast.success("No older entries available")} className="w-full mt-3 py-2 text-neutral-600 hover:text-neutral-400 text-[12px] transition-colors">
+              {filteredLogs.length > auditVisible ? (
+              <button onClick={() => setAuditVisible((v) => v + 20)} className="w-full mt-3 py-2 text-neutral-600 hover:text-neutral-400 text-[12px] transition-colors">
                 {t("settings.loadMore")}
               </button>
+              ) : null}
             </Section>
           )}
 
@@ -1648,26 +1827,26 @@ export function SettingsPage() {
               <Section title={t("settings.exportData")} description={t("settings.exportDataDesc")}>
                 <div className="space-y-3">
                   {[
-                    { label: t("settings.allTasks"), description: t("settings.allTasksDesc") },
-                    { label: t("settings.allProjects"), description: t("settings.allProjectsDesc") },
-                    { label: t("settings.teamData"), description: t("settings.teamDataDesc") },
-                    { label: t("settings.filesAttachments"), description: t("settings.filesAttachmentsDesc") },
+                    { key: "tasks", label: t("settings.allTasks"), description: t("settings.allTasksDesc") },
+                    { key: "projects", label: t("settings.allProjects"), description: t("settings.allProjectsDesc") },
+                    { key: "team", label: t("settings.teamData"), description: t("settings.teamDataDesc") },
+                    { key: "files", label: t("settings.filesAttachments"), description: t("settings.filesAttachmentsDesc") },
                   ].map((item) => (
-                    <div key={item.label} className="flex items-center justify-between p-3 bg-[#141414] border border-neutral-800/60 rounded-xl gap-3 flex-wrap">
+                    <div key={item.key} className="flex items-center justify-between p-3 bg-[#141414] border border-neutral-800/60 rounded-xl gap-3 flex-wrap">
                       <div>
                         <div className="text-neutral-200 text-[13px]">{item.label}</div>
                         <div className="text-neutral-600 text-[11px] mt-0.5">{item.description}</div>
                       </div>
                       <div className="flex items-center gap-2 shrink-0">
                         <select
-                          value={exportFormats[item.label]}
-                          onChange={(e) => setExportFormats((prev) => ({ ...prev, [item.label]: e.target.value }))}
+                          value={exportFormats[item.key] ?? "CSV"}
+                          onChange={(e) => setExportFormats((prev) => ({ ...prev, [item.key]: e.target.value }))}
                           className="bg-neutral-800 border border-neutral-700 text-neutral-300 text-[12px] px-2 py-1 rounded-lg outline-none cursor-pointer"
                         >
                           <option>CSV</option>
                           <option>JSON</option>
                         </select>
-                        <button onClick={() => handleExport(item.label)} className="flex items-center gap-1.5 border border-neutral-800 hover:bg-neutral-800 text-neutral-300 text-[12px] px-3 py-1.5 rounded-lg transition-colors">
+                        <button onClick={() => handleExport(item.key, item.label)} className="flex items-center gap-1.5 border border-neutral-800 hover:bg-neutral-800 text-neutral-300 text-[12px] px-3 py-1.5 rounded-lg transition-colors">
                           <Download size={13} /> {t("settings.download")}
                         </button>
                       </div>
@@ -1677,11 +1856,12 @@ export function SettingsPage() {
               </Section>
               <Section title={t("settings.dataRetention")} description={t("settings.dataRetentionDesc")}>
                 <div className="divide-y divide-neutral-800/40">
-                  <ToggleRow label={t("settings.autoArchiveCompletedTasks")} description={t("settings.autoArchiveCompletedTasksDesc")} defaultChecked />
-                  <ToggleRow label={t("settings.autoDeleteArchivedFiles")} description={t("settings.autoDeleteArchivedFilesDesc")} />
-                  <ToggleRow label={t("settings.retainAuditLogs")} description={t("settings.retainAuditLogsDesc")} defaultChecked />
+                  <ToggleRow label={t("settings.autoArchiveCompletedTasks")} description={t("settings.autoArchiveCompletedTasksDesc")} checked={retention.autoArchive} onChange={() => setRetention((p) => ({ ...p, autoArchive: !p.autoArchive }))} />
+                  <ToggleRow label={t("settings.autoDeleteArchivedFiles")} description={t("settings.autoDeleteArchivedFilesDesc")} checked={retention.autoDelete} onChange={() => setRetention((p) => ({ ...p, autoDelete: !p.autoDelete }))} />
+                  <ToggleRow label={t("settings.retainAuditLogs")} description={t("settings.retainAuditLogsDesc")} checked={retention.retainAudit} onChange={() => setRetention((p) => ({ ...p, retainAudit: !p.retainAudit }))} />
                 </div>
               </Section>
+              <SaveRow onSave={saveRetention} label={t("settings.saveChanges")} />
               <Section title={t("settings.privacyGdpr")}>
                 <div className="space-y-3">
                   <div className="flex items-center justify-between p-3 bg-[#141414] border border-neutral-800/60 rounded-xl gap-3">
@@ -1689,7 +1869,7 @@ export function SettingsPage() {
                       <div className="text-neutral-200 text-[13px]">{t("settings.downloadPersonalData")}</div>
                       <div className="text-neutral-600 text-[11px] mt-0.5">{t("settings.downloadPersonalDataDesc")}</div>
                     </div>
-                    <button onClick={() => handleExport("All tasks")} className="border border-neutral-800 hover:bg-neutral-800 text-neutral-300 text-[12px] px-3 py-1.5 rounded-lg transition-colors shrink-0">{t("settings.requestDownload")}</button>
+                    <button onClick={() => handleExport("tasks")} className="border border-neutral-800 hover:bg-neutral-800 text-neutral-300 text-[12px] px-3 py-1.5 rounded-lg transition-colors shrink-0">{t("settings.requestDownload")}</button>
                   </div>
                   <div className="flex items-center justify-between p-3 bg-[#141414] border border-neutral-800/60 rounded-xl gap-3">
                     <div>
@@ -1705,6 +1885,7 @@ export function SettingsPage() {
 
           {/* ── Danger Zone ── */}
           {activeNav === "Danger Zone" && (
+            <OwnerOnly fallback={<p className="text-neutral-500 text-[13px]">Only workspace owners can access the Danger Zone.</p>}>
             <div className="space-y-4">
               <div className="pb-4 border-b border-neutral-800/40">
                 <h2 className="text-neutral-50 text-[14px] lg:text-[15px] font-['Lexend:SemiBold',_sans-serif] mb-1">{t("settings.dangerZone")}</h2>
@@ -1720,18 +1901,30 @@ export function SettingsPage() {
                   <label className="block text-neutral-300 text-[13px] mb-1.5">{t("settings.newOwner")}</label>
                   <select
                     value={transferTarget}
-                    onChange={(e) => setTransferTarget(e.target.value)}
+                    onChange={(e) => { setTransferTarget(e.target.value); setConfirmingTransfer(false); }}
                     className="w-full bg-[#0f0f0f] border border-neutral-800 rounded-lg px-3 py-2.5 text-neutral-200 text-[13px] outline-none appearance-none cursor-pointer"
                   >
-                    <option value="">{t("settings.noAdminsFound")}</option>
+                    <option value="">{transferCandidates.length === 0 ? t("settings.noAdminsFound") : "Select a member…"}</option>
                     {transferCandidates.map((m) => (
                       <option key={m.user_id} value={m.user_id}>{m.name} ({m.email})</option>
                     ))}
                   </select>
                 </div>
-                <button onClick={handleTransferOwnership} disabled={transferring || !transferTarget} className="border border-amber-800/60 hover:bg-amber-950/30 disabled:opacity-40 disabled:cursor-not-allowed text-amber-400 hover:text-amber-300 text-[13px] px-4 py-2 rounded-lg transition-colors">
-                  {transferring ? t("settings.transferring") : t("settings.transfer")}
+                {!confirmingTransfer ? (
+                <button onClick={() => transferTarget && setConfirmingTransfer(true)} disabled={transferring || !transferTarget} className="border border-amber-800/60 hover:bg-amber-950/30 disabled:opacity-40 disabled:cursor-not-allowed text-amber-400 hover:text-amber-300 text-[13px] px-4 py-2 rounded-lg transition-colors">
+                  {t("settings.transfer")}
                 </button>
+                ) : (
+                <div className="space-y-3">
+                  <p className="text-amber-300/90 text-[12px]">Transfer ownership to {transferCandidates.find((m) => m.user_id === transferTarget)?.name ?? "this member"}? You will be demoted to member.</p>
+                  <div className="flex gap-2">
+                    <button onClick={() => setConfirmingTransfer(false)} disabled={transferring} className="border border-neutral-800 hover:bg-neutral-800 text-neutral-400 text-[13px] px-4 py-2 rounded-lg transition-colors">{t("common.cancel")}</button>
+                    <button onClick={handleTransferOwnership} disabled={transferring} className="border border-amber-800/60 hover:bg-amber-950/30 disabled:opacity-40 disabled:cursor-not-allowed text-amber-400 hover:text-amber-300 text-[13px] px-4 py-2 rounded-lg transition-colors">
+                      {transferring ? t("settings.transferring") : t("settings.transfer")}
+                    </button>
+                  </div>
+                </div>
+                )}
               </div>
 
               <div className="p-4 border border-red-900/30 rounded-xl space-y-4">
@@ -1752,7 +1945,16 @@ export function SettingsPage() {
                 <button
                   disabled={dangerReset !== "RESET"}
                   onClick={async () => {
+                    // Typed confirm + fresh member fetch before the destructive call.
+                    const typed = window.prompt('Type RESET to confirm wiping all workspace data:');
+                    if (typed !== "RESET") {
+                      if (typed !== null) toast.error('Type RESET exactly to confirm');
+                      return;
+                    }
                     try {
+                      if (activeWorkspace) {
+                        await api.getWorkspaceMembers(activeWorkspace.id);
+                      }
                       await api.resetWorkspaceData();
                       toast.success("Workspace data has been reset. Refresh to see changes.");
                       setDangerReset("");
@@ -1781,25 +1983,44 @@ export function SettingsPage() {
                 </div>
                 <button
                   disabled={!profileData.email || dangerEmail !== profileData.email}
-                  onClick={() => toast.error("Account deletion is disabled in this demo")}
+                  onClick={async () => {
+                    // Typed email confirm + fresh profile fetch before anything destructive.
+                    const typed = window.prompt(`Type your email (${profileData.email}) to confirm account deletion:`);
+                    if (typed !== profileData.email) {
+                      if (typed !== null) toast.error("Email does not match");
+                      return;
+                    }
+                    try {
+                      const fresh = await api.getSettings("profile").catch(() => null);
+                      if (fresh && (fresh as { email?: string }).email && (fresh as { email?: string }).email !== profileData.email) {
+                        toast.error("Profile changed — refresh before deleting");
+                        return;
+                      }
+                    } catch { /* fall through to the disabled demo path */ }
+                    toast.error("Account deletion is disabled in this demo");
+                  }}
                   className="bg-red-700 hover:bg-red-600 disabled:opacity-40 disabled:cursor-not-allowed text-white text-[13px] px-4 py-2 rounded-lg transition-colors flex items-center gap-2"
                 >
                   <Trash2 size={14} /> {t("settings.deleteMyAccount")}
                 </button>
               </div>
             </div>
+            </OwnerOnly>
           )}
 
         </div>
+        )}
       </div>
 
-      <InviteMemberModal open={showInvite} onClose={() => setShowInvite(false)} onInvite={async (teamName, member) => {
-        const newMember = { initials: member.initials, name: member.name, email: "", role: "Member", status: "online", joined: new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) };
-        const updated = [...members, newMember];
-        setMembers(updated);
-        setMemberRoles((prev) => ({ ...prev, [member.initials]: "Member" }));
-        toast.success(`${member.name} added`);
-        await saveMembers(updated);
+      <InviteMemberModal open={showInvite} onClose={() => setShowInvite(false)} onInvite={async (_teamName, member) => {
+        if (!activeWorkspace) throw new Error("No active workspace");
+        // Canonical flow: real workspace-members API, same as WorkspaceMembersModal.
+        const created = await api.createWorkspaceInvite(activeWorkspace.id, {
+          email: member.email,
+          role: "member",
+        });
+        setInvitesList((prev) => [created, ...prev]);
+        toast.success(`Invitation sent to ${member.email}`);
       }} />
     </div>
   );

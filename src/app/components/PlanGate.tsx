@@ -7,6 +7,12 @@ import {
   type PlanId,
 } from "../subscription/SubscriptionContext";
 
+const PLAN_NAMES: Record<PlanId, string> = {
+  free: "Free",
+  pro: "Pro",
+  business: "Business",
+};
+
 /**
  * Blocks the page behind it until the user's plan rank reaches `min`.
  * UI-level gating only — real entitlements (prices, subscription state) are
@@ -21,11 +27,14 @@ export function PlanGate({
   feature: string;
   children: React.ReactNode;
 }) {
-  const { hasPlan, loading, plan } = useSubscription();
+  const { hasPlan, loading, workspacePlanLoading, plan, workspacePlan } =
+    useSubscription();
 
   if (hasPlan(min)) return <>{children}</>;
 
-  if (loading) {
+  // Wait for the inherited workspace plan too — members with an inherited
+  // plan must not flash the locked screen while it resolves.
+  if (loading || workspacePlanLoading) {
     return (
       <div className="flex h-full items-center justify-center bg-[#0f0f0f]">
         <Spinner className="size-6 text-neutral-400" />
@@ -34,6 +43,12 @@ export function PlanGate({
   }
 
   const requiredName = min === "business" ? "Business" : "Pro";
+  const personalName = plan.name || PLAN_NAMES.free;
+  const inheritedName = PLAN_NAMES[workspacePlan] ?? PLAN_NAMES.free;
+  const effectiveName =
+    inheritedName !== PLAN_NAMES.free && inheritedName !== personalName
+      ? `${personalName} (workspace: ${inheritedName})`
+      : personalName;
 
   return (
     <div
@@ -48,7 +63,7 @@ export function PlanGate({
           {feature} is a {requiredName} feature
         </h2>
         <p className="mx-auto mt-1 max-w-sm text-[13px] text-neutral-500">
-          You are on the {plan.name} plan. Upgrade to {requiredName} to unlock{" "}
+          You are on the {effectiveName} plan. Upgrade to {requiredName} to unlock{" "}
           {feature.toLowerCase()} for your workspace.
         </p>
       </div>

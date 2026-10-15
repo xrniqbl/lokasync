@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router";
 import { toast } from "sonner";
 import { TrendingUp, TrendingDown, CheckCircle, Circle, Clock, Users, BarChart2, AlertCircle, ChevronRight } from "lucide-react";
@@ -62,11 +62,17 @@ const priorityCfg: Record<string, { label: string; color: string }> = {
   low: { label: "Low", color: "#525252" },
 };
 
+const fallbackPriorityCfg = { label: "—", color: "#a3a3a3" };
+const fallbackProjectStatusCfg = { label: "Unknown", color: "#6366f1", bg: "bg-indigo-950/40" };
+
 const projectStatusConfig: Record<string, { label: string; color: string; bg: string }> = {
   active: { label: "Active", color: "#10b981", bg: "bg-emerald-950/40" },
   paused: { label: "Paused", color: "#f59e0b", bg: "bg-amber-950/40" },
   completed: { label: "Completed", color: "#6366f1", bg: "bg-indigo-950/40" },
 };
+
+const pctOf = (done: number, total: number) =>
+  total > 0 ? Math.round((done / total) * 100) : 0;
 
 const tagColors = [
   "text-neutral-400 bg-neutral-800/60",
@@ -150,7 +156,7 @@ function TaskTable({ tasks }: { tasks: TaskItem[] }) {
               ? <Clock size={14} className="text-amber-400 shrink-0" />
               : <Circle size={14} className="text-neutral-600 shrink-0" />}
             <span className={`flex-1 text-[12px] truncate ${t.status === "completed" ? "line-through text-neutral-600" : "text-neutral-300"}`}>{t.title}</span>
-            <span className="text-[10px] shrink-0" style={{ color: priorityCfg[t.priority].color }}>{priorityCfg[t.priority].label}</span>
+            <span className="text-[10px] shrink-0" style={{ color: (priorityCfg[t.priority] ?? fallbackPriorityCfg).color }}>{(priorityCfg[t.priority] ?? fallbackPriorityCfg).label}</span>
             <div className="w-5 h-5 rounded-full bg-neutral-800 flex items-center justify-center text-[9px] text-neutral-400 shrink-0">{t.assignee}</div>
             <span className="text-neutral-600 text-[10px] w-10 text-right shrink-0 hidden sm:block">{t.due}</span>
           </div>
@@ -207,9 +213,9 @@ function ProjectGrid({
               className="bg-[#141414] border border-neutral-800/60 rounded-xl p-4 lg:p-5 hover:border-neutral-700/60 transition-colors cursor-pointer">
               <div className="flex items-start justify-between mb-3">
                 <h3 className="text-neutral-50 text-[13px] lg:text-[14px] font-['Lexend:SemiBold',_sans-serif] truncate mr-3 flex-1">{project.name}</h3>
-                <span className={`inline-flex items-center text-[11px] px-2 py-0.5 rounded shrink-0 ${projectStatusConfig[project.status].bg}`}
-                  style={{ color: projectStatusConfig[project.status].color }}>
-                  {projectStatusConfig[project.status].label}
+                <span className={`inline-flex items-center text-[11px] px-2 py-0.5 rounded shrink-0 ${(projectStatusConfig[project.status] ?? fallbackProjectStatusCfg).bg}`}
+                  style={{ color: (projectStatusConfig[project.status] ?? fallbackProjectStatusCfg).color }}>
+                  {(projectStatusConfig[project.status] ?? { ...fallbackProjectStatusCfg, label: String(project.status) }).label}
                 </span>
               </div>
               <p className="text-neutral-500 text-[12px] leading-relaxed mb-4 line-clamp-2">{project.description}</p>
@@ -242,19 +248,25 @@ function ProjectGrid({
 
 // ── View: Web Application overview ────────────────────────────────────────────
 
-function WebAppView({ onDrillDown, allTasks, webMilestones, projects, t, onToggleMilestone }: { onDrillDown: (v: ProjView) => void; allTasks: TaskItem[]; webMilestones: { milestone: string; date: string; done: boolean }[]; projects: Project[]; t: (path: string) => string; onToggleMilestone: (project: "web" | "mobile", index: number, done: boolean) => void; }){
+function WebAppView({ onDrillDown, allTasks, webMilestones, projects, t, onToggleMilestone }: { onDrillDown: (v: ProjView) => void; allTasks: TaskItem[]; webMilestones: { milestone: string; date: string; done: boolean }[]; projects: Project[]; t: (path: string) => string; onToggleMilestone: (scope: "web" | "mobile", index: number, done: boolean) => void; }){
   const proj = projects.find((p) => p.name.toLowerCase().includes("web app") || p.name.toLowerCase().includes("web application"));
-  const webTasks = allTasks.filter((t) => t.project === "Web Application v2" || t.project === "Web App v2");
-  const frontendTasks = webTasks.filter((t) => !t.title.toLowerCase().includes("api") && !t.title.toLowerCase().includes("test") && !t.title.toLowerCase().includes("auth endpoint"));
-  const apiTasks = webTasks.filter((t) => t.title.toLowerCase().includes("api") || t.title.toLowerCase().includes("endpoint") || t.title.toLowerCase().includes("webhook"));
-  const qaTasks = webTasks.filter((t) => t.title.toLowerCase().includes("test") || t.title.toLowerCase().includes("qa") || t.title.toLowerCase().includes("bug"));
+  const projId = proj != null ? String(proj.id) : null;
+  const webTasks = allTasks.filter((t) => t.project === "Web Application v2" || t.project === "Web App v2" || (projId != null && (t.project === projId || t.project === proj?.name)));
+  // Group by the task's project field (per sub-area project name); fall back to
+  // the parent web project bucket so tasks are never silently dropped.
+  const frontendTasks = webTasks.filter((t) => t.project === "Frontend Development" || t.project === "proj-web-frontend");
+  const apiTasks = webTasks.filter((t) => t.project === "API Integration" || t.project === "proj-web-api");
+  const qaTasks = webTasks.filter((t) => t.project === "Testing & QA" || t.project === "proj-web-qa");
+  const assigned = new Set([...frontendTasks, ...apiTasks, ...qaTasks]);
+  const unassignedWeb = webTasks.filter((t) => !assigned.has(t));
+  const frontendAll = [...frontendTasks, ...unassignedWeb];
   const areas = [
-    { label: t("projects.frontendDevelopment"), view: "proj-web-frontend" as ProjView, tasks: frontendTasks, color: "#818cf8", team: [...new Set(frontendTasks.map((t) => t.assignee))] },
+    { label: t("projects.frontendDevelopment"), view: "proj-web-frontend" as ProjView, tasks: frontendAll, color: "#818cf8", team: [...new Set(frontendAll.map((t) => t.assignee))] },
     { label: t("projects.apiIntegration"), view: "proj-web-api" as ProjView, tasks: apiTasks, color: "#10b981", team: [...new Set(apiTasks.map((t) => t.assignee))] },
     { label: t("projects.testingQa"), view: "proj-web-qa" as ProjView, tasks: qaTasks, color: "#f59e0b", team: [...new Set(qaTasks.map((t) => t.assignee))] },
   ];
   const totalDone = webTasks.filter(t => t.status === "completed").length;
-  const pct = webTasks.length > 0 ? Math.round((totalDone / webTasks.length) * 100) : 0;
+  const pct = pctOf(totalDone, webTasks.length);
   return (
     <div className="space-y-5">
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
@@ -285,6 +297,9 @@ function WebAppView({ onDrillDown, allTasks, webMilestones, projects, t, onToggl
 
         <Card>
           <SectionHeader title={t("projects.milestones")} sub={t("projects.keyDeliveryDates")} />
+          {webMilestones.length === 0 ? (
+            <div className="flex items-center justify-center h-20 text-neutral-600 text-[12px]">{t("projects.noTasksFoundArea")}</div>
+          ) : (
           <div className="space-y-3">
             {webMilestones.map((m, i) => (
               <button key={m.milestone} onClick={() => onToggleMilestone("web", i, !m.done)} className="w-full flex items-center gap-3 p-2.5 rounded-lg bg-neutral-800/20 hover:bg-neutral-800/40 transition-colors text-left" title={m.done ? t("projects.markAsNotDone") : t("projects.markAsDone")}>
@@ -298,13 +313,14 @@ function WebAppView({ onDrillDown, allTasks, webMilestones, projects, t, onToggl
               </button>
             ))}
           </div>
+          )}
         </Card>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         {areas.map((a) => {
           const done = a.tasks.filter((t) => t.status === "completed").length;
-          const pct = Math.round((done / a.tasks.length) * 100);
+          const pct = pctOf(done, a.tasks.length);
           return (
             <div key={a.label} onClick={() => onDrillDown(a.view)}
               className="bg-[#141414] border border-neutral-800/60 rounded-xl p-4 hover:border-neutral-700/60 transition-colors cursor-pointer group">
@@ -332,17 +348,21 @@ function WebAppView({ onDrillDown, allTasks, webMilestones, projects, t, onToggl
 
 // ── View: Mobile App overview ─────────────────────────────────────────────────
 
-function MobileAppView({ onDrillDown, allTasks, mobileMilestones, projects, t, onToggleMilestone }: { onDrillDown: (v: ProjView) => void; allTasks: TaskItem[]; mobileMilestones: { milestone: string; date: string; done: boolean }[]; projects: Project[]; t: (path: string) => string; onToggleMilestone: (project: "web" | "mobile", index: number, done: boolean) => void; }) {
+function MobileAppView({ onDrillDown, allTasks, mobileMilestones, projects, t, onToggleMilestone }: { onDrillDown: (v: ProjView) => void; allTasks: TaskItem[]; mobileMilestones: { milestone: string; date: string; done: boolean }[]; projects: Project[]; t: (path: string) => string; onToggleMilestone: (scope: "web" | "mobile", index: number, done: boolean) => void; }) {
   const proj = projects.find((p) => p.name.toLowerCase().includes("mobile"));
-  const mobileTasks = allTasks.filter((t) => t.project === "Mobile App");
-  const designTasks = mobileTasks.filter((t) => t.title.toLowerCase().includes("design") || t.title.toLowerCase().includes("ui") || t.title.toLowerCase().includes("wireframe") || t.title.toLowerCase().includes("mockup"));
-  const nativeTasks = mobileTasks.filter((t) => !t.title.toLowerCase().includes("design") && !t.title.toLowerCase().includes("ui") && !t.title.toLowerCase().includes("wireframe"));
+  const projId = proj != null ? String(proj.id) : null;
+  const mobileTasks = allTasks.filter((t) => t.project === "Mobile App" || (projId != null && (t.project === projId || t.project === proj?.name)));
+  // Group by the task's project field (per sub-area project name); fall back to
+  // the parent mobile project bucket so tasks are never silently dropped.
+  const designTasks = mobileTasks.filter((t) => t.project === "UI/UX Design" || t.project === "proj-mobile-design");
+  const areaAssigned = new Set(designTasks);
+  const nativeTasks = mobileTasks.filter((t) => t.project === "Native Development" || t.project === "proj-mobile-native" || !areaAssigned.has(t));
   const areas = [
     { label: t("projects.uiUxDesign"), view: "proj-mobile-design" as ProjView, tasks: designTasks, color: "#818cf8", team: [...new Set(designTasks.map((t) => t.assignee))] },
     { label: t("projects.nativeDevelopment"), view: "proj-mobile-native" as ProjView, tasks: nativeTasks, color: "#10b981", team: [...new Set(nativeTasks.map((t) => t.assignee))] },
   ];
   const totalDone = mobileTasks.filter(t => t.status === "completed").length;
-  const pct = mobileTasks.length > 0 ? Math.round((totalDone / mobileTasks.length) * 100) : 0;
+  const pct = pctOf(totalDone, mobileTasks.length);
   return (
     <div className="space-y-5">
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
@@ -360,12 +380,12 @@ function MobileAppView({ onDrillDown, allTasks, mobileMilestones, projects, t, o
               { platform: t("projects.uiUxDesign"), done: designTasks.filter((t) => t.status === "completed").length, total: designTasks.length, color: "#818cf8" },
               { platform: t("projects.nativeDevelopment"), done: nativeTasks.filter((t) => t.status === "completed").length, total: nativeTasks.length, color: "#10b981" },
             ].map((p) => {
-              const progress = Math.round((p.done / Math.max(p.total, 1)) * 100);
+              const progress = pctOf(p.done, p.total);
               return (
               <div key={p.platform}>
                 <div className="flex items-center justify-between mb-1.5">
                   <span className="text-neutral-300 text-[12px]">{p.platform}</span>
-                  <span className="text-neutral-500 text-[11px]">{p.done}/{p.total} ${t("projects.tasks")} — {progress}%</span>
+                  <span className="text-neutral-500 text-[11px]">{p.done}/{p.total} {t("projects.tasks")} — {progress}%</span>
                 </div>
                 <ProgressBar value={progress} color={p.color} />
               </div>
@@ -376,6 +396,9 @@ function MobileAppView({ onDrillDown, allTasks, mobileMilestones, projects, t, o
 
         <Card>
           <SectionHeader title={t("projects.milestones")} sub={t("projects.keyDeliveryDates")} />
+          {mobileMilestones.length === 0 ? (
+            <div className="flex items-center justify-center h-20 text-neutral-600 text-[12px]">{t("projects.noTasksFoundArea")}</div>
+          ) : (
           <div className="space-y-3">
             {mobileMilestones.map((m, i) => (
               <button key={m.milestone} onClick={() => onToggleMilestone("mobile", i, !m.done)} className="w-full flex items-center gap-3 p-2.5 rounded-lg bg-neutral-800/20 hover:bg-neutral-800/40 transition-colors text-left" title={m.done ? t("projects.markAsNotDone") : t("projects.markAsDone")}>
@@ -389,13 +412,14 @@ function MobileAppView({ onDrillDown, allTasks, mobileMilestones, projects, t, o
               </button>
             ))}
           </div>
+          )}
         </Card>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         {areas.map((a) => {
           const done = a.tasks.filter((t) => t.status === "completed").length;
-          const pct = Math.round((done / a.tasks.length) * 100);
+          const pct = pctOf(done, a.tasks.length);
           return (
             <div key={a.label} onClick={() => onDrillDown(a.view)}
               className="bg-[#141414] border border-neutral-800/60 rounded-xl p-4 hover:border-neutral-700/60 transition-colors cursor-pointer group">
@@ -519,7 +543,7 @@ function ProjectAreaView({ tasks, label1, label2, teamLabel, milestones, deadlin
 }) {
   const done = tasks.filter((t) => t.status === "completed").length;
   const inProg = tasks.filter((t) => t.status === "in-progress").length;
-  const pct = tasks.length > 0 ? Math.round((done / tasks.length) * 100) : 0;
+  const pct = pctOf(done, tasks.length);
   if (tasks.length === 0) {
     return (
       <div className="flex items-center justify-center h-48 text-neutral-600 text-[13px]">
@@ -545,12 +569,14 @@ function ProjectAreaView({ tasks, label1, label2, teamLabel, milestones, deadlin
 
 function CompletedView({ projects, t }: { projects: Project[]; t: (path: string) => string; }) {
   const completed = projects.filter((p) => p.status === "completed");
+  const byDate = [...completed].sort((a, b) => new Date(b.due).getTime() - new Date(a.due).getTime());
+  const latest = byDate[0];
   return (
     <div className="space-y-5">
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <StatCard label={t("projects.completedNav")} value={`${completed.length}`} sub={t("projects.completedShipped")} up={true} />
         <StatCard label={t("projects.totalTasksStat")} value={`${completed.reduce((a, p) => a + p.tasks.total, 0)}`} sub={t("projects.allDone")} up={true} />
-        <StatCard label={t("projects.latestShip")} value={completed.length > 0 ? completed[completed.length - 1].due : "—"} sub={completed.length > 0 ? completed[completed.length - 1].name : t("projects.noCompletedProjectsYet")} />
+        <StatCard label={t("projects.latestShip")} value={latest ? latest.due : "—"} sub={latest ? latest.name : t("projects.noCompletedProjectsYet")} />
         <StatCard label={t("projects.avgProgress")} value="100%" sub={t("projects.allComplete")} up={true} />
       </div>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -589,14 +615,17 @@ function CompletedView({ projects, t }: { projects: Project[]; t: (path: string)
 // ── View: Archived / Paused projects ─────────────────────────────────────────
 
 function ArchivedView({ projects, t }: { projects: Project[]; t: (path: string) => string; }) {
+  // The API only models "paused" for on-hold projects — filter and label those.
   const paused = projects.filter((p) => p.status === "paused");
+  const avgProgress = paused.length > 0 ? Math.round(paused.reduce((a, p) => a + p.progress, 0) / paused.length) : 0;
+  const earliestDue = [...paused].sort((a, b) => new Date(a.due).getTime() - new Date(b.due).getTime())[0]?.due ?? "—";
   return (
     <div className="space-y-5">
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <StatCard label={t("projects.pausedProjects")} value={`${paused.length}`} sub={t("projects.projectsOnHold")} />
         <StatCard label={t("projects.tasksPending")} value={`${paused.reduce((a, p) => a + (p.tasks.total - p.tasks.done), 0)}`} sub={t("projects.awaitingResume")} />
-        <StatCard label={t("projects.avgProgressPaused")} value={`${Math.round(paused.reduce((a, p) => a + p.progress, 0) / Math.max(paused.length, 1))}%`} sub={t("projects.atPauseTime")} />
-        <StatCard label={t("projects.estResume")} value={paused[0]?.due ?? "—"} sub={t("projects.earliestDueDate")} />
+        <StatCard label={t("projects.avgProgressPaused")} value={`${avgProgress}%`} sub={t("projects.atPauseTime")} />
+        <StatCard label={t("projects.estResume")} value={earliestDue} sub={t("projects.earliestDueDate")} />
       </div>
 
       {paused.length === 0 ? (
@@ -663,7 +692,7 @@ export function ProjectsPage() {
   const { t } = useLang();
   const { subSection } = useNavigation();
   const routerNavigate = useNavigate();
-  const { plan } = useSubscription();
+  const { plan, hasPlan } = useSubscription();
   const [view, setView] = useState<ProjView>("grid");
   const [gridFilter, setGridFilter] = useState("All");
   const [projects, setProjects] = useState<Project[]>([]);
@@ -673,38 +702,78 @@ export function ProjectsPage() {
   const [showNew, setShowNew] = useState(false);
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
   const { activeWorkspace } = useWorkspace();
+  const activeWorkspaceId = activeWorkspace?.id ?? null;
+  const [projectsLoading, setProjectsLoading] = useState(true);
+  // Race guard: only the latest fetch may write state.
+  const requestSeqRef = useRef(0);
 
   function fetchData() {
-    api.getProjects().then((data) => setProjects(data)).catch((e) => {
+    const seq = ++requestSeqRef.current;
+    setProjectsLoading(true);
+    api.getProjects().then((data) => { if (seq === requestSeqRef.current) setProjects(data); }).catch((e) => {
+      if (seq !== requestSeqRef.current) return;
       console.error("Failed to load projects:", e);
       toast.error(t("projects.failedToLoadProjectsToast"));
-    });
-    api.getTasks().then((data) => setAllTasks(data)).catch((e) => {
+    }).finally(() => { if (seq === requestSeqRef.current) setProjectsLoading(false); });
+    api.getTasks().then((data) => { if (seq === requestSeqRef.current) setAllTasks(data); }).catch((e) => {
+      if (seq !== requestSeqRef.current) return;
       console.error("Failed to load tasks:", e);
     });
-    api.getMilestones("web").then(setWebMilestones).catch(() => {});
-    api.getMilestones("mobile").then(setMobileMilestones).catch(() => {});
   }
 
-  useRealtimeWorkspace(activeWorkspace?.id ?? null, (table) => {
+  // Milestones belong to a real project id; legacy global "web"/"mobile" keys
+  // are kept as a fallback for older server data.
+  const webProj = projects.find((p) => p.name.toLowerCase().includes("web app") || p.name.toLowerCase().includes("web application"));
+  const mobileProj = projects.find((p) => p.name.toLowerCase().includes("mobile"));
+  const webProjId = webProj != null ? String(webProj.id) : null;
+  const mobileProjId = mobileProj != null ? String(mobileProj.id) : null;
+
+  useEffect(() => {
+    const loadMilestones = (
+      projectId: string | null,
+      legacyKey: string,
+      setList: React.Dispatch<React.SetStateAction<{ milestone: string; date: string; done: boolean }[]>>,
+    ) => {
+      if (projectId) {
+        api.getMilestones(projectId).then(setList).catch(() => {
+          api.getMilestones(legacyKey).then(setList).catch(() => setList([]));
+        });
+      } else {
+        api.getMilestones(legacyKey).then(setList).catch(() => setList([]));
+      }
+    };
+    loadMilestones(webProjId, "web", setWebMilestones);
+    loadMilestones(mobileProjId, "mobile", setMobileMilestones);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [webProjId, mobileProjId, activeWorkspaceId]);
+
+  useRealtimeWorkspace(activeWorkspaceId, (table) => {
     if (table === "projects" || table === "tasks" || table === "workspace_milestones") fetchData();
   });
 
   // Toggle a milestone's done state (PUT /milestones/:project/:index).
   // Optimistic update with rollback on failure.
-  const handleToggleMilestone = (project: "web" | "mobile", index: number, done: boolean) => {
-    const setList = project === "web" ? setWebMilestones : setMobileMilestones;
+  const handleToggleMilestone = (scope: "web" | "mobile", index: number, done: boolean) => {
+    const projectId = scope === "mobile" ? (mobileProjId ?? "mobile") : (webProjId ?? "web");
+    const setList = scope === "mobile" ? setMobileMilestones : setWebMilestones;
     setList((prev) => prev.map((m, i) => (i === index ? { ...m, done } : m)));
-    api.toggleMilestone(project, index, done).catch((e) => {
+    api.toggleMilestone(projectId, index, done).catch((e) => {
       console.error("Failed to toggle milestone:", e);
       toast.error(t("projects.failedToLoadProjectsToast"));
       setList((prev) => prev.map((m, i) => (i === index ? { ...m, done: !done } : m)));
     });
   };
 
-  // Plan-based gating: the Free plan caps how many projects can be created
-  const maxProjects = PLAN_LIMITS[plan.id as PlanId]?.maxProjects ?? null;
+  // Plan-based gating: the Free plan caps how many projects can be created.
+  // Block while the list is still loading so the check can't be bypassed.
+  // Uses the effective plan rank (personal or workspace-inherited) so invited
+  // members on a Pro workspace are not wrongly capped by a Free personal plan.
+  const maxProjects = hasPlan("pro") ? null : (PLAN_LIMITS[plan.id as PlanId]?.maxProjects ?? null);
   const openNewProject = () => {
+    if (projectsLoading) {
+      toast.error(t("projects.failedToLoadProjectsToast"));
+      return;
+    }
     if (maxProjects != null && projects.length >= maxProjects) {
       toast.error(`The ${plan.name} plan is limited to ${maxProjects} projects`, {
         description: "Upgrade to Pro for unlimited projects.",
@@ -726,9 +795,6 @@ export function ProjectsPage() {
   }, [subSection]);
 
   const isGridView = view === "grid";
-
-  const webProj = projects.find((p) => p.name.toLowerCase().includes("web app") || p.name.toLowerCase().includes("web application"));
-  const mobileProj = projects.find((p) => p.name.toLowerCase().includes("mobile"));
 
   const navTabs: { view: ProjView; label: string }[] = [
     { view: "grid", label: t("projects.allProjectsNav") },
@@ -827,7 +893,21 @@ export function ProjectsPage() {
         })()}
       </div>
 
-      <NewProjectModal open={showNew} onClose={() => setShowNew(false)} onAdd={(p) => setProjects((prev) => [p, ...prev])} />
+      <NewProjectModal open={showNew} onClose={() => setShowNew(false)} onAdd={async (p) => {
+        try { const created = await api.createProject(p); setProjects((prev) => [created, ...prev]); }
+        catch (e) {
+          console.error("Failed to create project:", e);
+          // The server enforces the plan limit too (in case the UI is stale)
+          if (e instanceof api.ApiError && e.code === "project_limit") {
+            toast.error(e.message, {
+              action: { label: "Upgrade", onClick: () => routerNavigate("/pricing") },
+            });
+          } else {
+            toast.error(t("projects.failedToCreateProjectToast"));
+          }
+          throw e;
+        }
+      }} />
     </div>
   );
 }
