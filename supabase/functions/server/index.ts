@@ -1930,7 +1930,6 @@ app.post("/profile/avatar", async (c) => {
       ? prev.avatar_url.replace(/^avatars\//, "").replace(/^\/+/, "")
       : null;
 
-    const ext = (file.name.split(".").pop() ?? "png").toLowerCase().replace(/[^a-z0-9]/g, "") || "png";
     const storagePath = `${user.id}/${Date.now()}.${ext}`;
     const bytes = new Uint8Array(await file.arrayBuffer());
     // Magic-byte check: PNG 89 50 4E 47, JPEG FF D8 FF, GIF 47 49 46 38,

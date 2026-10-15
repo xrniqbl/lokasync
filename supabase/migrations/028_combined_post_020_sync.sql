@@ -58,34 +58,62 @@ UPDATE profiles
 SET created_at = COALESCE(created_at, updated_at, now())
 WHERE created_at IS NULL;
 
--- ── 024: non-recursive workspace_members helpers + policies ──────────────────
-CREATE OR REPLACE FUNCTION public.is_workspace_member(ws uuid)
-RETURNS boolean LANGUAGE sql SECURITY DEFINER STABLE SET search_path = public
-AS $$ SELECT EXISTS (
-  SELECT 1 FROM workspace_members WHERE workspace_id = ws AND user_id = auth.uid()
-); $$;
-CREATE OR REPLACE FUNCTION public.is_workspace_owner(ws uuid)
-RETURNS boolean LANGUAGE sql SECURITY DEFINER STABLE SET search_path = public
-AS $$ SELECT EXISTS (
-  SELECT 1 FROM workspace_members
-  WHERE workspace_id = ws AND user_id = auth.uid() AND role = 'owner'
-); $$;
+-- ── 024: non-recursive workspace_members policies ────────────────────────────
+-- NOTE: the helper-function form (CREATE FUNCTION public.is_workspace_member
+-- + policies calling it) is intentionally NOT replayed here. Production
+-- carries a legacy is_workspace_member(uuid, text) overload with dozens of
+-- dependent dashboard-era policies, so a bare helper name is ambiguous
+-- (SQLSTATE 42725) and CREATE OR REPLACE FUNCTION cannot resolve it either.
+-- These EXISTS-subquery policies are semantically identical to 024 (they
+-- avoid the self-referencing EXISTS that caused infinite recursion in 002:
+-- the outer reference is qualified to the policy's own row, and the inner
+-- scan is a plain membership lookup, not a recursive policy invocation —
+-- the same shape already proven in production by the dashboard-era policies).
 DROP POLICY IF EXISTS workspace_members_select ON workspace_members;
 CREATE POLICY workspace_members_select ON workspace_members
   FOR SELECT TO authenticated
-  USING (user_id = (select auth.uid()) OR public.is_workspace_member(workspace_id));
+  USING (
+    workspace_members.user_id = (select auth.uid())
+    OR EXISTS (
+      SELECT 1 FROM workspace_members AS self
+      WHERE self.workspace_id = workspace_members.workspace_id
+        AND self.user_id = (select auth.uid())
+    )
+  );
 DROP POLICY IF EXISTS workspace_members_insert ON workspace_members;
 CREATE POLICY workspace_members_insert ON workspace_members
   FOR INSERT TO authenticated
-  WITH CHECK (public.is_workspace_owner(workspace_id));
+  WITH CHECK (
+    EXISTS (
+      SELECT 1 FROM workspace_members AS owner_check
+      WHERE owner_check.workspace_id = workspace_members.workspace_id
+        AND owner_check.user_id = (select auth.uid())
+        AND owner_check.role = 'owner'
+    )
+  );
 DROP POLICY IF EXISTS workspace_members_delete ON workspace_members;
 CREATE POLICY workspace_members_delete ON workspace_members
   FOR DELETE TO authenticated
-  USING (user_id = (select auth.uid()) OR public.is_workspace_owner(workspace_id));
+  USING (
+    workspace_members.user_id = (select auth.uid())
+    OR EXISTS (
+      SELECT 1 FROM workspace_members AS owner_check
+      WHERE owner_check.workspace_id = workspace_members.workspace_id
+        AND owner_check.user_id = (select auth.uid())
+        AND owner_check.role = 'owner'
+    )
+  );
 DROP POLICY IF EXISTS workspaces_select ON workspaces;
 CREATE POLICY workspaces_select ON workspaces
   FOR SELECT TO authenticated
-  USING (owner_id = (select auth.uid()) OR public.is_workspace_member(id));
+  USING (
+    workspaces.owner_id = (select auth.uid())
+    OR EXISTS (
+      SELECT 1 FROM workspace_members m
+      WHERE m.workspace_id = workspaces.id
+        AND m.user_id = (select auth.uid())
+    )
+  );
 
 -- ── 025: avatars bucket (private) + owner policies ───────────────────────────
 INSERT INTO storage.buckets (id, name, public)
@@ -157,44 +185,47 @@ DROP POLICY IF EXISTS notifications_update ON notifications;
 INSERT INTO storage.buckets (id, name, public)
 VALUES ('workspace-files', 'workspace-files', false)
 ON CONFLICT (id) DO NOTHING;
+-- NOTE: storage policies use a direct EXISTS subquery on workspace_members
+-- instead of the public.is_workspace_member()/is_workspace_owner() helpers:
+-- production carries a legacy is_workspace_member(uuid, text) overload whose
+-- policies depend on it, so a bare helper name is ambiguous there (SQLSTATE
+-- 42725). The subquery is equivalent and unambiguous on all environments.
 DROP POLICY IF EXISTS workspace_files_select ON storage.objects;
 CREATE POLICY workspace_files_select ON storage.objects
   FOR SELECT TO authenticated
   USING (
     bucket_id = 'workspace-files'
-    AND public.is_workspace_member(((string_to_array(name, '/'))[1])::uuid)
+    AND EXISTS (
+      SELECT 1 FROM workspace_members m
+      WHERE m.workspace_id = ((string_to_array(storage.objects.name, '/'))[1])::uuid
+        AND m.user_id = auth.uid()
+    )
   );
+
 DROP POLICY IF EXISTS workspace_files_insert ON storage.objects;
 CREATE POLICY workspace_files_insert ON storage.objects
   FOR INSERT TO authenticated
   WITH CHECK (
     bucket_id = 'workspace-files'
-    AND public.is_workspace_member(((string_to_array(name, '/'))[1])::uuid)
+    AND EXISTS (
+      SELECT 1 FROM workspace_members m
+      WHERE m.workspace_id = ((string_to_array(storage.objects.name, '/'))[1])::uuid
+        AND m.user_id = auth.uid()
+    )
   );
+
 DROP POLICY IF EXISTS workspace_files_delete ON storage.objects;
 CREATE POLICY workspace_files_delete ON storage.objects
   FOR DELETE TO authenticated
   USING (
     bucket_id = 'workspace-files'
-    AND public.is_workspace_owner(((string_to_array(name, '/'))[1])::uuid)
+    AND EXISTS (
+      SELECT 1 FROM workspace_members m
+      WHERE m.workspace_id = ((string_to_array(storage.objects.name, '/'))[1])::uuid
+        AND m.user_id = auth.uid() AND m.role = 'owner'
+    )
   );
-DO $$
-BEGIN
-  IF EXISTS (SELECT 1 FROM pg_publication WHERE pubname = 'supabase_realtime') THEN
-    IF EXISTS (SELECT 1 FROM pg_publication_tables WHERE pubname = 'supabase_realtime' AND tablename = 'vouchers') THEN
-      ALTER PUBLICATION supabase_realtime DROP TABLE vouchers;
-    END IF;
-    IF EXISTS (SELECT 1 FROM pg_publication_tables WHERE pubname = 'supabase_realtime' AND tablename = 'subscriptions') THEN
-      ALTER PUBLICATION supabase_realtime DROP TABLE subscriptions;
-    END IF;
-    IF EXISTS (SELECT 1 FROM pg_publication_tables WHERE pubname = 'supabase_realtime' AND tablename = 'transactions') THEN
-      ALTER PUBLICATION supabase_realtime DROP TABLE transactions;
-    END IF;
-    IF EXISTS (SELECT 1 FROM pg_publication_tables WHERE pubname = 'supabase_realtime' AND tablename = 'system_config') THEN
-      ALTER PUBLICATION supabase_realtime DROP TABLE system_config;
-    END IF;
-  END IF;
-END $$;
+
 CREATE OR REPLACE FUNCTION public.consume_voucher(p_code TEXT)
 RETURNS boolean LANGUAGE plpgsql SECURITY DEFINER SET search_path = public
 AS $$

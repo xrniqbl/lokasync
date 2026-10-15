@@ -67,12 +67,21 @@ INSERT INTO storage.buckets (id, name, public)
 VALUES ('workspace-files', 'workspace-files', false)
 ON CONFLICT (id) DO NOTHING;
 
+-- NOTE: storage policies use a direct EXISTS subquery on workspace_members
+-- instead of the public.is_workspace_member()/is_workspace_owner() helpers:
+-- production carries a legacy is_workspace_member(uuid, text) overload whose
+-- policies depend on it, so a bare helper name is ambiguous there (SQLSTATE
+-- 42725). The subquery is equivalent and unambiguous on all environments.
 DROP POLICY IF EXISTS workspace_files_select ON storage.objects;
 CREATE POLICY workspace_files_select ON storage.objects
   FOR SELECT TO authenticated
   USING (
     bucket_id = 'workspace-files'
-    AND public.is_workspace_member(((string_to_array(name, '/'))[1])::uuid)
+    AND EXISTS (
+      SELECT 1 FROM workspace_members m
+      WHERE m.workspace_id = ((string_to_array(storage.objects.name, '/'))[1])::uuid
+        AND m.user_id = auth.uid()
+    )
   );
 
 DROP POLICY IF EXISTS workspace_files_insert ON storage.objects;
@@ -80,7 +89,11 @@ CREATE POLICY workspace_files_insert ON storage.objects
   FOR INSERT TO authenticated
   WITH CHECK (
     bucket_id = 'workspace-files'
-    AND public.is_workspace_member(((string_to_array(name, '/'))[1])::uuid)
+    AND EXISTS (
+      SELECT 1 FROM workspace_members m
+      WHERE m.workspace_id = ((string_to_array(storage.objects.name, '/'))[1])::uuid
+        AND m.user_id = auth.uid()
+    )
   );
 
 DROP POLICY IF EXISTS workspace_files_delete ON storage.objects;
@@ -88,7 +101,11 @@ CREATE POLICY workspace_files_delete ON storage.objects
   FOR DELETE TO authenticated
   USING (
     bucket_id = 'workspace-files'
-    AND public.is_workspace_owner(((string_to_array(name, '/'))[1])::uuid)
+    AND EXISTS (
+      SELECT 1 FROM workspace_members m
+      WHERE m.workspace_id = ((string_to_array(storage.objects.name, '/'))[1])::uuid
+        AND m.user_id = auth.uid() AND m.role = 'owner'
+    )
   );
 
 -- ── 9. Prune sensitive tables from realtime publication ───────────────────────
