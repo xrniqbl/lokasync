@@ -438,7 +438,7 @@ function Navbar({
 
   return (
     <header className="fixed inset-x-0 top-4 z-50 px-4">
-      <div className="mx-auto max-w-3xl rounded-2xl border border-white/[0.08] bg-white/[0.06] shadow-[0_8px_32px_rgba(0,0,0,0.45)] backdrop-blur-xl">
+      <div className="mx-auto max-w-5xl rounded-2xl border border-white/[0.08] bg-white/[0.06] shadow-[0_8px_32px_rgba(0,0,0,0.45)] backdrop-blur-xl">
         <div className="flex h-14 items-center justify-between pl-5 pr-3">
           <Logo small />
 
@@ -531,7 +531,7 @@ function ProductVignette() {
   return (
     <div
       aria-hidden="true"
-      className="loka-vignette group relative mx-auto mt-14 w-full max-w-2xl overflow-hidden rounded-2xl border border-white/[0.08] bg-[#141414]/90 text-left shadow-[0_24px_80px_-32px_rgba(0,0,0,0.9)] backdrop-blur-sm transition-transform duration-300 hover:-translate-y-1"
+      className="loka-vignette group relative mx-auto mt-16 w-full max-w-5xl overflow-hidden rounded-2xl border border-white/[0.08] bg-[#141414]/90 text-left shadow-[0_24px_80px_-32px_rgba(0,0,0,0.9)] backdrop-blur-sm transition-transform duration-300 hover:-translate-y-1"
     >
       {/* Ambient glow border */}
       <div className="pointer-events-none absolute -inset-px rounded-2xl border border-indigo-500/20 opacity-0 transition-opacity duration-500 group-hover:opacity-100" />
@@ -619,11 +619,11 @@ function SocialProof({
     { value: s.countryCount, label: s.countryLabel },
   ];
   return (
-    <div className="mx-auto mt-8 flex max-w-xl flex-wrap items-center justify-center gap-6 sm:gap-10">
+    <div className="mx-auto mt-10 flex max-w-3xl flex-wrap items-center justify-center gap-8 sm:gap-14">
       {counters.map((c) => (
         <div key={c.label} className="text-center">
-          <div className="text-[24px] font-semibold text-neutral-100 sm:text-[28px]">{c.value}</div>
-          <div className="text-[12px] text-neutral-500">{c.label}</div>
+          <div className="text-[30px] font-semibold text-neutral-100 sm:text-[36px]">{c.value}</div>
+          <div className="mt-1 text-[13px] text-neutral-500">{c.label}</div>
         </div>
       ))}
     </div>
@@ -646,7 +646,7 @@ function IntegrationStrip({
     { name: "Midtrans", color: "#0F82E4" },
   ];
   return (
-    <div className="mx-auto w-full max-w-5xl px-6 py-10 text-center">
+    <div className="mx-auto w-full max-w-7xl px-6 sm:px-10 py-10 text-center">
       <p className="text-[12px] uppercase tracking-wider text-neutral-600">{title}</p>
       <div className="mt-5 flex flex-wrap items-center justify-center gap-6 sm:gap-10">
         {tools.map((tool) => (
@@ -795,7 +795,7 @@ export function LandingPage() {
 
       <main className="relative">
         {/* Hero — pt offsets the floating navbar */}
-        <section className="mx-auto w-full max-w-5xl px-6 pb-24 pt-36 text-center sm:pt-40">
+        <section className="mx-auto w-full max-w-7xl px-6 sm:px-10 pb-24 pt-36 text-center sm:pt-40">
           <Reveal>
             <p
               className="text-[12px] tracking-wide text-neutral-500"
@@ -808,14 +808,14 @@ export function LandingPage() {
                 /ˈlo·ka/ — {t.hero.eyebrow}
               </span>
             </p>
-            <h1 className="mx-auto mt-5 max-w-2xl text-[40px] leading-[1.12] sm:text-[52px]">
+            <h1 className="mx-auto mt-5 max-w-4xl text-[44px] leading-[1.08] sm:text-[64px] lg:text-[76px]">
               {t.hero.titleA}
               <br />
               <span className="bg-gradient-to-r from-indigo-300 via-neutral-50 to-neutral-50 bg-clip-text text-transparent">
                 {t.hero.titleB}
               </span>
             </h1>
-            <p className="mx-auto mt-5 max-w-xl text-[15px] leading-relaxed text-neutral-400">
+            <p className="mx-auto mt-6 max-w-3xl text-[16px] leading-relaxed text-neutral-400 sm:text-[18px]">
               {t.hero.sub}
             </p>
           </Reveal>
@@ -860,16 +860,16 @@ export function LandingPage() {
 
         {/* Features — the app's actual sections */}
         <section id="features" className="border-t border-neutral-800/70">
-          <div className="mx-auto w-full max-w-5xl px-6 py-20">
+          <div className="mx-auto w-full max-w-7xl px-6 sm:px-10 py-20">
             <Reveal>
-              <h2 className="text-[22px] text-neutral-50">
+              <h2 className="text-[26px] text-neutral-50 sm:text-[32px]">
                 {t.features.title}
               </h2>
-              <p className="mt-2 max-w-lg text-[14px] text-neutral-400">
+              <p className="mt-3 max-w-2xl text-[14px] text-neutral-400 sm:text-[16px]">
                 {t.features.sub}
               </p>
             </Reveal>
-            <div className="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            <div className="mt-12 grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
               {t.features.items.map((feature, i) => (
                 <Reveal key={feature.name} delay={(i % 3) * 70}>
                   <div className="group h-full rounded-2xl border border-white/[0.06] bg-[#1a1a1a]/80 p-5 transition-all duration-200 hover:-translate-y-0.5 hover:border-indigo-500/30 hover:bg-[#1d1d1f]">
@@ -893,16 +893,16 @@ export function LandingPage() {
 
         {/* Testimonials — dummy quotes until real customers replace them */}
         <section className="border-t border-neutral-800/70">
-          <div className="mx-auto w-full max-w-5xl px-6 py-20">
+          <div className="mx-auto w-full max-w-7xl px-6 sm:px-10 py-20">
             <Reveal>
-              <h2 className="text-[22px] text-neutral-50">
+              <h2 className="text-[26px] text-neutral-50 sm:text-[32px]">
                 {t.testimonials.title}
               </h2>
-              <p className="mt-2 max-w-lg text-[14px] text-neutral-400">
+              <p className="mt-3 max-w-2xl text-[14px] text-neutral-400 sm:text-[16px]">
                 {t.testimonials.sub}
               </p>
             </Reveal>
-            <div className="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            <div className="mt-12 grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
               {t.testimonials.items.map((item, i) => (
                 <Reveal key={item.name} delay={i * 80}>
                   <figure className="flex h-full flex-col rounded-2xl border border-white/[0.06] bg-[#1a1a1a]/80 p-5 transition-all duration-200 hover:-translate-y-0.5 hover:border-indigo-500/30">
@@ -941,7 +941,7 @@ export function LandingPage() {
 
         {/* Trust badges */}
         <section className="border-t border-neutral-800/70">
-          <div className="mx-auto w-full max-w-5xl px-6 py-16 text-center">
+          <div className="mx-auto w-full max-w-7xl px-6 sm:px-10 py-16 text-center">
             <Reveal>
               <h2 className="text-[18px] text-neutral-50">{t.trust?.title ?? "Built with security in mind"}</h2>
             </Reveal>
@@ -969,11 +969,11 @@ export function LandingPage() {
         {/* Pricing strip — amounts come from the server, same source as /pricing */}
         {plans && plans.length > 0 && (
           <section className="border-t border-neutral-800/70">
-            <div className="mx-auto w-full max-w-5xl px-6 py-20">
+            <div className="mx-auto w-full max-w-7xl px-6 sm:px-10 py-20">
               <Reveal>
                 <div className="flex flex-wrap items-end justify-between gap-4">
                   <div>
-                    <h2 className="text-[22px] text-neutral-50">
+                    <h2 className="text-[26px] text-neutral-50 sm:text-[32px]">
                       {t.pricing.title}
                     </h2>
                     <p className="mt-2 text-[14px] text-neutral-400">
@@ -1055,9 +1055,9 @@ export function LandingPage() {
 
         {/* FAQ */}
         <section id="faq" className="scroll-mt-24 border-t border-neutral-800/70">
-          <div className="mx-auto w-full max-w-3xl px-6 py-20">
+          <div className="mx-auto w-full max-w-4xl px-6 py-20 sm:px-10">
             <Reveal>
-              <h2 className="text-center text-[22px] text-neutral-50">
+              <h2 className="text-center text-[26px] text-neutral-50 sm:text-[32px]">
                 {t.faq.title}
               </h2>
               <p className="mt-2 text-center text-[14px] text-neutral-400">
@@ -1091,10 +1091,10 @@ export function LandingPage() {
 
         {/* Final CTA */}
         <section className="border-t border-neutral-800/70">
-          <div className="mx-auto w-full max-w-5xl px-6 py-20 text-center">
+          <div className="mx-auto w-full max-w-7xl px-6 sm:px-10 py-20 text-center">
             <Reveal>
-              <h2 className="text-[26px] text-neutral-50">{t.cta.title}</h2>
-              <p className="mx-auto mt-3 max-w-md text-[14px] text-neutral-400">
+              <h2 className="text-[26px] text-neutral-50 sm:text-[32px]">{t.cta.title}</h2>
+              <p className="mx-auto mt-3 max-w-xl text-[14px] text-neutral-400 sm:text-[16px]">
                 {t.cta.sub}
               </p>
               <div className="mt-7 flex items-center justify-center">
@@ -1119,7 +1119,7 @@ export function LandingPage() {
 
       {/* Footer */}
       <footer className="relative border-t border-neutral-800/70">
-        <div className="mx-auto w-full max-w-5xl px-6 pb-8 pt-14">
+        <div className="mx-auto w-full max-w-7xl px-6 sm:px-10 pb-8 pt-14">
           {/* Newsletter */}
           <Reveal>
             <div className="mb-12 rounded-xl border border-white/[0.04] bg-[#1a1a1e] p-7 sm:p-9">
